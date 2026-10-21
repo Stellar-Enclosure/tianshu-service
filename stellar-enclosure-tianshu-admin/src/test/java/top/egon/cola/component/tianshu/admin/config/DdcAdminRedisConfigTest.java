@@ -1,0 +1,110 @@
+package top.egon.cola.component.tianshu.admin.config;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.Test;
+import org.redisson.api.RedissonClient;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.transaction.PlatformTransactionManager;
+import top.egon.cola.component.tianshu.admin.repository.DdcInstanceRepository;
+import top.egon.cola.component.tianshu.admin.service.notification.DdcNotificationPublisher;
+import top.egon.cola.component.tianshu.admin.security.registration.DdcRegistrationCredentialVerifier;
+import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantAdminProperties;
+import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextExecutor;
+import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantRegistry;
+import top.egon.cola.component.tianshu.admin.service.metadata.DdcScopeGate;
+import top.egon.cola.platform.tianquan.shoubing.starter.autoconfigure.IdpStarterAutoConfiguration;
+import top.egon.cola.platform.tianquan.shoubing.starter.state.IdentityResourceServerStateReader;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+
+class DdcAdminRedisConfigTest {
+
+    @Test
+    void createsRegistrationVerifierWhenIdpServiceTokenVerifierComesFromAutoConfiguration() {
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(
+                        IdpStarterAutoConfiguration.class
+                ))
+                .withUserConfiguration(
+                        TestInfrastructure.class,
+                        DdcAdminRedisConfig.class
+                )
+                .withBean("additionalIdpProperties",
+                        top.egon.cola.platform.tianquan.shoubing.starter.autoconfigure.IdpStarterProperties.class,
+                        top.egon.cola.platform.tianquan.shoubing.starter.autoconfigure.IdpStarterProperties::new)
+                .withPropertyValues(
+                        "egon.cola.platform.tianquan.shoubing.enabled=true",
+                        "egon.cola.platform.tianquan.shoubing.issuer=https://tianquan-shoubing.example",
+                        "egon.cola.platform.tianquan.shoubing.jwk-set-uri=https://tianquan-shoubing.example/oauth2/jwks",
+                        "egon.cola.platform.tianquan.shoubing.resource-server-id=tianshu-local",
+                        "egon.cola.platform.tianquan.shoubing.resource-uri=https://resource.example/tianshu"
+                )
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(
+                            IdentityResourceServerStateReader.class
+                    );
+                    assertThat(context).hasSingleBean(
+                            DdcRegistrationCredentialVerifier.class
+                    ).hasBean("ddcNonceStore");
+                });
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class TestInfrastructure {
+
+        @Bean("ddcAdminRedissonClient")
+        RedissonClient ddcAdminRedissonClient() {
+            return mock(RedissonClient.class);
+        }
+
+        @Bean("rbac3RuntimeRedissonClient")
+        RedissonClient identityRuntimeRedissonClient() {
+            return mock(RedissonClient.class);
+        }
+
+        @Bean("jacksonObjectMapper")
+        ObjectMapper objectMapper() {
+            return new ObjectMapper();
+        }
+
+        @Bean("ddcNotificationPublisher")
+        DdcNotificationPublisher ddcNotificationPublisher() {
+            return mock(DdcNotificationPublisher.class);
+        }
+
+        @Bean
+        DdcInstanceRepository ddcInstanceRepository() {
+            return mock(DdcInstanceRepository.class);
+        }
+
+        @Bean
+        DdcScopeGate ddcScopeGate() {
+            return mock(DdcScopeGate.class);
+        }
+
+        @Bean("egon.cola.component.tianshu.admin.tenancy-top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantAdminProperties")
+        DdcTenantAdminProperties ddcTenantAdminProperties() {
+            return new DdcTenantAdminProperties();
+        }
+
+        @Bean("ddcTenantRegistry")
+        DdcTenantRegistry ddcTenantRegistry() {
+            return mock(DdcTenantRegistry.class);
+        }
+
+        @Bean("ddcTenantContextExecutor")
+        DdcTenantContextExecutor ddcTenantContextExecutor() {
+            return new DdcTenantContextExecutor();
+        }
+
+        @Bean
+        PlatformTransactionManager transactionManager() {
+            return mock(PlatformTransactionManager.class);
+        }
+    }
+}

@@ -1,0 +1,583 @@
+# Stellar Enclosure 动态配置中心
+
+[English](README.md) | [中文](README.zh-CN.md)
+
+## 范围
+
+`stellar-enclosure-tianshu` 提供基于 Spring Boot ConfigData、每个作用域
+一份 YAML 业务配置文档的 SDK、类型化管理 API、可独立部署的 Admin 应用，以及面向
+RPC Provider 和内部 Yuheng 的 Redis 服务注册中心。
+
+Maven Artifact 统一使用 `stellar-enclosure-tianshu-*` 前缀，由 `stellar-enclosure-platform-parent`
+聚合。Starter Java API 已按领域重新组织，
+不为旧技术分层包保留转发类型；外部 `egon.cola.component.tianshu` 配置命名空间保持不变。
+
+V1 支持由共享 PostgreSQL 和 Redis 支撑的一个逻辑控制面。多个 Admin 进程可以服务
+同一个控制面：发布准备通过 PostgreSQL 行锁、版本条件更新和持久化发布任务完成，
+等待完成时则回退为轮询共享任务状态。不实现 Raft、Leader 选举、共识日志或分布式锁
+服务。Admin 和 SDK 的 Redis 客户端通过 Redisson 支持 `SINGLE`、`SENTINEL` 和
+`CLUSTER` 拓扑。PostgreSQL 是生产数据库，SQLite 仅保留给测试使用。服务注册信息
+是 Redis 中的临时租约状态，不新增 JPA Entity 或数据库表。
+
+## 部署拓扑
+
+```text
+配置客户端     ─┐
+RPC Provider   ─┼── 直连 gRPC / HMAC ──> Tianshu 逻辑目标 ──> Admin 集合 ──┬──> PostgreSQL
+HTTP Provider  ─┤                                                          └──> 共享 Redis
+内部 Yuheng    ─┘
+
+共享 Redis ── Redis Pub/Sub ──> 配置客户端
+共享 Redis ── Redis Pub/Sub ──> 注册订阅方
+```
+
+Admin 进程是唯一的机器控制面 RPC Provider。客户端通过本地配置的
+`dns:///`、VIP 或负载均衡目标直连，不通过 Tianshu 服务发现引导 Tianshu 自身。
+Admin HTTP 仅保留给人工管理 API 和 Actuator 健康检查。各 Admin 共享 PostgreSQL 和 Redis；已完成
+发布的事实不依赖某个 Admin 的本地状态。Redis 保存配置缓存、发布通知、配置客户端
+当前租约和服务注册租约。PostgreSQL 保存配置、版本、发布、ACK、操作日志和配置
+客户端管理投影数据。
+
+## 模块
+
+| 模块 | 职责 |
+|---|---|
+| `stellar-enclosure-tianshu-starter` | 传输无关 SDK 运行时与端口：ConfigData、`@DdcValue`、选择性刷新、ACK、租约、管理和注册契约 |
+| `stellar-enclosure-tianshu-http-registration-starter` | Spring HTTP 服务注册、Tianshu 租约心跳/恢复和注册元数据贡献 SPI |
+| `stellar-enclosure-tianshu-ai-starter` | 下游 AI Starter：非阻塞使用反馈上报、已发布 Skill 工作区（原子落盘、Redis 发布订阅、周期对账）与创作目录上传（可选自动发布） |
+| `stellar-enclosure-component-rpc-tianshu-adapter` | 位于 `components/rpc` 的组装适配器：Protobuf 契约、直连 gRPC Client/Provider、HMAC Metadata 和 Spring Boot 装配 |
+| `stellar-enclosure-tianshu-admin` | 人工 REST Admin 与直连 gRPC Facade、PostgreSQL 持久化、Redis 缓存/租约和同步发布状态机 |
+| `stellar-enclosure-tianshu-admin-web` | 独立管理控制台（React + antd + Vite，纯 Node 工程，不进 Maven reactor）；构建与部署说明见 `stellar-enclosure-tianshu-admin-web/README.md` |
+| `stellar-enclosure-tianshu-test` | Starter 样例应用、黑盒消费端验证，以及租约/注册/资源准入生命周期验收测试；仅在 test 作用域依赖 Admin |
+
+Admin 的 webui 已从 jar 中摘出（`/tianshu-admin` 不再由 Admin 提供服务）：管理控制台以
+独立容器部署，经 `TIANSHU_ADMIN_API_BASE_URL` 指向 Admin，`/api` 请求由 static-server
+同源反代，Admin 侧无需 CORS 配置。
+
+## Admin 分页查询
+
+Tianshu Admin 为人工管理场景提供以下增量式服务端分页查询：
+
+```text
+GET /api/v1/tianshu/bizs/page
+GET /api/v1/tianshu/namespaces/page
+GET /api/v1/tianshu/envs/page
+GET /api/v1/tianshu/apps/page
+GET /api/v1/tianshu/namespace-env-app-bindings/page
+GET /api/v1/tianshu/configs/page
+GET /api/v1/tianshu/configs/{id}/versions/page
+GET /api/v1/tianshu/publish-tasks/page
+GET /api/v1/tianshu/instances/page
+GET /api/v1/tianshu/cache/check/page
+GET /api/v1/tianshu/registry/services/page
+GET /api/v1/tianshu/registry/instances/page
+```
+
+例如：
+
+```text
+GET /api/v1/tianshu/bizs/page?pageNo=1&pageSize=10
+成功 -> PageResultRecord { records, page }
+失败 -> 现有 ResultRecord 错误信封
+旧有列表、目录和快照接口继续保留
+```
+
+页码从 1 开始。这些 REST 接口服务于 Admin Web 和其他人工管理客户端；Starter 与
+RPC 机器客户端仍消费完整目录和快照，不使用 Admin 分页契约。
+
+## Prompt 与 Skill 资源
+
+Admin 管理按 tenant 隔离的 Prompt 文本和 Skill 文件树。Skill 文件以文本保存，界面不提供按文件格式定制的渲染。发布版本不可变；消费者同时固定 `resourceId` 与 `versionNo`。同 tenant 内可将指定源版本复制发布到明确的目标 scope，目标现有草稿保持不变。
+
+Starter 分别提供 `egon.cola.component.tianshu.prompt.enabled` 和 `skill.enabled` 开关，默认关闭。直接调用方必须配置正数 `TIANSHU_TENANT_ID`；Redis 启用时还必须配置该 tenant 的 `TIANSHU_REDIS_USERNAME`。Prompt/Skill RPC 读取只需要只读 `AI_READ` 操作权限。tenant 登记、DDL 就绪、V9 导入、回滚边界及 opt-in PostgreSQL/Redis 集成测试见 [Prompt/Skill 上线与迁移手册](docs/tianshu-ai-migration-runbook.md)。
+
+### 使用反馈与自动优化
+
+下游通过 `DdcAiUsageReporter` 上报每次 Prompt/Skill 使用（`ReportUsage`，操作权限 `AI_REPORT`）。上报先进入内存队列，按每批最多 100 条发送，并以 `usageId` 去重。没有显式分数的样本由经玉衡网关调用的 LLM 评分。每个资源可配置一个优化策略：当前版本在评估窗口内的平均分低于阈值时，Admin 调用优化模型生成改进后的 Prompt 或 Skill 写入草稿；策略开启 `autoPublish` 时直接发布。每次发布、回滚与推广都会通过事务性 Outbox 发出租户级发布事件。管理台在“反馈与优化”页签展示策略、运行与反馈。
+
+`stellar-enclosure-tianshu-ai-starter` 提供三个相互独立的开关：
+
+```yaml
+egon.cola.component.tianshu.ai.feedback.enabled: true
+egon.cola.component.tianshu.ai.skill.workspace: { enabled: true, root: /var/lib/app/skills, subscription-enabled: true, resources: [ { namespaceCode: ns-a, resourceKey: order-skill, resourceId: 123 } ] }
+egon.cola.component.tianshu.ai.skill.authoring: { enabled: false, root: /var/lib/app/skill-authoring }
+```
+
+工作区把已发布 Skill 落盘到 `versions/v{n}` 并原子切换 `current` 标记；创作监视器把本地目录作为草稿上传（`AI_WRITE`），并可继续发布（`AI_PUBLISH`）。部署顺序、凭据与冲突处置见手册“AI 反馈与自动优化（DDL-201）”一节。
+
+## Starter 分包
+
+```text
+top.egon.cola.component.tianshu
+├── annotation
+├── autoconfigure
+├── configuration
+│   ├── binding
+│   ├── bootstrap
+│   ├── client
+│   ├── environment
+│   ├── format
+│   ├── model
+│   ├── refresh
+│   ├── runtime
+│   └── subscription
+├── error
+├── lease
+├── management
+│   ├── client
+│   └── model
+├── observability
+├── registry
+│   ├── client
+│   ├── model
+│   ├── state
+│   └── subscription
+└── transport
+    └── redis
+```
+
+`DdcConfigClient`、`DdcServiceRegistryClient`、`DdcManagementClient` 仍是三套独立
+领域门面，RPC-Tianshu Adapter 通过三个 unary gRPC Service 实现它们。基础 Starter 不依赖
+RPC；HTTP 注册 Starter 属于应用组装 Starter，因此会引入向 Tianshu 发送注册操作所需的
+RPC-Tianshu Adapter。HTTP 注册配置统一使用
+`egon.cola.component.tianshu.registry.http` 命名空间。
+
+## 运维端点
+
+Tianshu Admin 使用 `GET /actuator/health/readiness` 作为启动与就绪探针。
+`GET /actuator/info` 在 `app.name` 和 `app.version` 中暴露应用名称与 Maven
+过滤后的组件版本。
+
+可执行业务应用引入 RPC-Tianshu Adapter，并通过 `spring.config.import` 导入 `tianshu:application.yml`。
+`egon.cola.component.tianshu.enabled=true` 会在 ConfigData 阶段加载远端 YAML，随后启动
+`CONFIG_CLIENT` 注册、配置拉取、Redis 订阅、心跳和停机下线闭环；
+`egon.cola.component.tianshu.registry.enabled=true` 独立启用 RPC/Yuheng 服务注册，
+其中 `RPC_PROVIDER`、`HTTP_PROVIDER` 和 `INTERNAL_GATEWAY` 租约不是配置客户端注册。启用任一远程
+路径时都必须在本地显式配置直连 RPC 目标、匹配的最小权限 HMAC 凭据和 Redis 拓扑。
+`redis.enabled=false` 时不会执行注册、拉取、订阅、心跳或 ACK。生产多 Admin
+入口由外部 DNS、VIP 或支持 HTTP/2 的负载均衡提供，客户端使用
+`round_robin`。Tianshu 不发现自身 Admin，也不保留机器 HTTP 兼容端点。
+
+```xml
+<dependency>
+    <groupId>top.egon</groupId>
+    <artifactId>stellar-enclosure-component-rpc-tianshu-adapter</artifactId>
+    <version>5.4.1</version>
+</dependency>
+```
+
+## Trace 传播
+
+Starter 和 RPC-Tianshu Adapter 的 gRPC Facade 调用、心跳、拉取、ACK 重试、Redis
+Topic 回调和租约恢复任务统一使用 `stellar-enclosure-component-common-trace`。业务请求触发的
+Tianshu 调用会继承当前 `traceId` 并创建 child span；后台任务没有上游 Trace 时会为每次
+逻辑操作打开新的 `TraceContext`，并在结束后恢复原线程 MDC。出站只写
+`traceparent`、`tracestate` 和 `x-egon-request-id`，不写 `x-egon-trace-id`。
+
+Spring MVC Admin 侧直接引入 `stellar-enclosure-component-common-trace-spring-boot-starter`，不再维护
+Tianshu 私有 Trace Filter。
+
+## 配置客户端生命周期
+
+初始远端 YAML 由 Spring Boot ConfigData 在 Bean 绑定前加载。之后
+`DdcRuntimeCoordinator` 只在 Redis 订阅已经可用后启动，并严格按以下顺序执行：
+
+1. 注册配置客户端并取得新的 `leaseId`；
+2. 拉取通过 ConfigData 导入的 YAML 资源并与启动快照校准；
+3. 进入 `READY`；
+4. 按配置周期发送心跳；
+5. 停止时主动下线当前租约。
+
+每次注册都会替换旧租约。心跳和下线原子匹配
+`instanceId + leaseId`，旧租约不能续期或删除替换后的新租约。当前租约丢失或
+不匹配时，SDK 会重新注册并重复首次同步。
+
+远端 `application.yml` 可以使用任意层级，例如：
+
+```yaml
+order:
+  rate-limit:
+    permits-per-second: 200
+  downgrade:
+    enabled: false
+```
+
+`@DdcValue` 与 Spring `@Value` 使用相同表达式语义，层级由点路径访问，冒号后的
+值只在属性不存在时作为默认值；字段类型由 Spring 转换服务推断：
+
+```java
+@DdcValue("${order.rate-limit.permits-per-second:100}")
+private volatile Integer permitsPerSecond;
+
+@DdcValue("${order.downgrade.enabled:false}")
+private volatile Boolean downgradeEnabled;
+```
+
+运行期发布会原子替换 Tianshu PropertySource，并按 YAML 叶子计算差异。显式注册的
+`DdcConfigApplier` 与允许刷新的 `@DdcValue` 字段接收对应叶子；只有标注
+`@DdcRefreshable` 且采用 setter 绑定的 `@ConfigurationProperties` 会被重新绑定。
+不可变配置和其他变更会被标记为需要重启，但不会重启 ApplicationContext。
+
+## 租约协议
+
+所有角色复用同一注册、心跳和注销语义，由调用方使用各自的默认参数：
+
+| 角色 | 默认租约 | 默认心跳 | 存储 |
+|---|---:|---:|---|
+| `CONFIG_CLIENT` | 30 秒 | 10 秒 | Redis 租约，加 `ddc_instance` 管理投影 |
+| `RPC_PROVIDER` | 30 秒 | 10 秒 | 仅 Redis |
+| `HTTP_PROVIDER` | 30 秒 | 10 秒 | 仅 Redis |
+| `INTERNAL_GATEWAY` | 15 秒 | 5 秒 | 仅 Redis |
+
+Admin 接受 5～300 秒租约，心跳周期必须短于租约。每次 Register 都生成新的
+`leaseId`。Redis Bucket TTL 是当前租约事实；Heartbeat 不会隐式重建丢失租约。
+
+### Tianquan-Shoubing SERVICE Token 与租约边界
+
+配置客户端、HTTP Provider、RPC Provider 和内部 Yuheng 的每次注册或心跳，都通过标准
+Spring OAuth2 Client `client_credentials` 流程取得一枚新的 Tianquan-Shoubing SERVICE
+Token。该授权面向 Tianshu Resource，携带 `grantContext: PLATFORM` 和最小权限的注册
+scope。Tianshu 校验签名 Token、精确 Audience、来源/应用身份、Scope、实例绑定、
+nonce 重放状态和过期时间；不接受第二套注册票据或 RPC 凭据。
+
+已启用的 Resource 按其逻辑 `bizCode + appCode + env` 三元组批准，因此实例不需要逐个
+进入目录审批。租约有效期受 SERVICE Token 有效期上界约束，注册表或审计状态中不保存
+原始 Token，缺失或过期的 Token 既不能创建也不能续期租约。Tianquan-Shoubing 不可用时，
+已有租约只能运行到当前 Token 边界有效期；无法安全续期时运行期进入恢复态并转为 not ready。
+
+禁用 Resource 只摘除逻辑三元组匹配的租约。恢复方式是重新启用 Resource、恢复所需的
+Tianquan-Shoubing Grant，并让每个实例取得新的 SERVICE Token 和租约。Tianquan-Shoubing V5
+与兼容的 Tianshu 发布必须一起应用；这是破坏性协议迁移，已有 Flyway 文件不得编辑或回退。
+
+## 服务注册中心
+
+服务身份为：
+
+```text
+env + namespace + serviceKind + serviceName + group + version + protocol
+```
+
+支持的 `serviceKind` 是 `HTTP_PROVIDER`、`RPC_PROVIDER` 和 `INTERNAL_GATEWAY`。
+注册信息包含
+`instanceId`、主机、端口、secure 标志、元数据、租约秒数和心跳周期。
+元数据有数量和长度边界，并拒绝保留前缀与敏感字段。
+
+直连 unary gRPC Service：
+
+| Service | 操作 |
+|---|---|
+| `DdcConfigRuntimeService` | 注册、心跳、下线、拉取、发布 ACK |
+| `DdcServiceRegistryService` | 注册、心跳、注销、实例快照、服务目录 |
+| `DdcManagementService` | 配置 CRUD、发布/任务、配置客户端、Scope 和注册信息查询 |
+
+`DdcServiceRegistryClient` 同时提供实例快照和服务目录订阅。Redis Revision 和
+Pub/Sub 通知会触发校准，过期实例从快照中摘除。Redis 重启后注册状态按设计
+丢失，客户端应使用新租约重新注册。
+
+## 同步发布
+
+V1 只有一种发布模式：`SYNC_ALL_ACK`。
+
+调用方传入 UUIDv7 `changeId`。准备事务会对配置行加悲观锁，拒绝同一资源已有的
+活跃任务，更新配置版本，并将 Redis 当前配置客户端租约固化为精确的
+`instanceId + leaseId` 目标集合。数据库任务和行条件更新负责协调
+`bizCode + env + appCode + resourceName` 的并发 Admin；进程内 Waiter 只负责唤醒优化。
+完成轮询读取共享任务状态；Admin 启动恢复会把过期的 `PENDING` 或 `PUBLISHING`
+任务置为 `UNKNOWN`，之后由其他请求重试。
+
+ACK 只有同时匹配以下内容才会被接受：
+
+- `changeId`；
+- 目标 `instanceId + leaseId`；
+- 目标配置版本；
+- 覆盖 `resourceName + format + content` 的资源 SHA-256 摘要。
+
+发布调用只在所有目标都返回 `SUCCESS`，或进入终态后返回：
+
+| 状态 | 含义 |
+|---|---|
+| `SUCCESS` | 所有固化目标都成功确认 |
+| `FAILED` | 准备、分发、目标校验或目标 ACK 失败 |
+| `TIMEOUT` | 截止时间前未收到全部成功 ACK |
+| `UNKNOWN` | Admin 在任务活跃期间重启 |
+
+`POST /api/v1/tianshu/publish-tasks/{changeId}/retry` 对 `FAILED`、`TIMEOUT`、
+`UNKNOWN` 任务执行幂等重试。Retry 固定复用原目标，不重新快照当前在线实例。
+任一原目标租约失效时，Retry 保持失败并记录目标租约错误。
+
+发布请求：
+
+```bash
+curl -X POST \
+  'http://localhost:18080/api/v1/tianshu/configs/{configId}/publish?operator=admin' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "changeId": "019c9f0d-7b9b-7e00-8000-000000000001",
+    "content": "order:\n  rate-limit:\n    permits-per-second: 200\n",
+    "expectedVersion": 1,
+    "timeoutMs": 30000
+  }'
+```
+
+该调用有意保持同步。调用方丢失响应时，可用同一 `changeId` 请求
+`GET /api/v1/tianshu/publish-tasks/{changeId}` 查询持久化结果。
+
+## RPC HMAC
+
+`signature-enabled` 为 true 时，HMAC 保护所有已发布 Tianshu unary 方法。
+必需 gRPC Metadata：
+
+| Header | 值 |
+|---|---|
+| `x-egon-tianshu-access-key` | 配置的 access key |
+| `x-egon-tianshu-timestamp` | Unix 毫秒时间戳 |
+| `x-egon-tianshu-nonce` | 请求唯一随机数 |
+| `x-egon-tianshu-content-sha256` | protobuf 确定性序列化字节的小写 SHA-256 |
+| `x-egon-tianshu-signature` | 规范请求的 HMAC-SHA256 |
+| `x-egon-tianshu-contract-version` | `v1` |
+
+规范请求由五个换行分隔的字段组成：
+
+```text
+v1
+完整 gRPC 方法名
+timestamp
+nonce
+content-sha256
+```
+
+Admin 会检查已知方法/操作映射、契约版本、时间偏移、Access Key、
+确定性请求体摘要、签名、Nonce 重放、客户端类型和 Scope。Runtime、Registry
+和 Management 客户端使用独立凭据。
+
+## 配置
+
+从已删除机器 HTTP 传输迁移是有意的破坏性变更：
+
+| 已删除前缀 | 已删除叶子 | 直连 RPC 替代项 |
+|---|---|---|
+| `egon.cola.component.tianshu.admin` | `endpoint` | `egon.cola.component.tianshu.rpc.target` |
+| `egon.cola.component.tianshu.admin` | `tls.*` | `egon.cola.component.tianshu.rpc.tls.*` |
+| `egon.cola.component.tianshu.admin` | `access-key` / `secret-key` | 按能力使用 `egon.cola.component.tianshu.rpc.auth.runtime.*` 或 `.registry.*` |
+| `yuheng.admin.tianshu` | `endpoint` 和 HMAC Key | `egon.cola.component.tianshu.rpc.target` 与 `.auth.management.*` |
+| `egon.cola.component.tianshu.admin.openapi` | `signature-enabled` / `credentials` | `egon.cola.component.tianshu.admin.rpc.signature-enabled` / `.credentials` |
+
+不提供兼容别名。凭据通过环境注入，Runtime、Registry 和 Management 使用
+不同的 Access Key/Secret 对。
+
+业务应用：
+
+```yaml
+spring:
+  security:
+    oauth2:
+      client:
+        registration:
+          egon-tianquan-shoubing:
+            client-id: ${EGON_TIANQUAN_SHOUBING_APP_KEY}
+            client-secret: ${EGON_TIANQUAN_SHOUBING_APP_SECRET}
+            authorization-grant-type: client_credentials
+            client-authentication-method: client_secret_basic
+        provider:
+          egon-tianquan-shoubing:
+            token-uri: ${EGON_TIANQUAN_SHOUBING_TOKEN_URI}
+  config:
+    import: tianshu:application.yml
+
+egon:
+  cola:
+    platform:
+      tianquan:
+        shoubing:
+          service-client:
+            app-id: ${EGON_TIANQUAN_SHOUBING_APP_ID}
+            registration-id: egon-tianquan-shoubing
+    component:
+      tianshu:
+        enabled: true
+        biz-code: orders
+        app-code: order-service
+        env: dev
+        namespace: default
+        rpc:
+          target: dns:///tianshu-admin.example.internal:19080
+          load-balancing-policy: round_robin
+          tls:
+            enabled: true
+            development-plaintext: false
+            certificate-chain-path: ${TIANSHU_CLIENT_CERTIFICATE}
+            private-key-path: ${TIANSHU_CLIENT_PRIVATE_KEY}
+            trust-certificate-collection-path: ${TIANSHU_TRUST_CERTIFICATE}
+          auth:
+            runtime:
+              access-key: ${TIANSHU_RUNTIME_ACCESS_KEY}
+              secret-key: ${TIANSHU_RUNTIME_SECRET_KEY}
+            registry:
+              access-key: ${TIANSHU_REGISTRY_ACCESS_KEY}
+              secret-key: ${TIANSHU_REGISTRY_SECRET_KEY}
+        redis:
+          mode: SINGLE
+          nodes: []
+          master-name:
+          enabled: true
+          host: 127.0.0.1
+          port: 6379
+          database: 0
+        instance:
+          lease-seconds: 30
+          heartbeat-interval-seconds: 10
+        registry:
+          enabled: true
+          reconcile-interval-seconds: 10
+        consistency:
+          fail-fast: true
+```
+
+上述 TLS `private-key-path` 只是传输层证书私钥，不是 OAuth 客户端凭据。OAuth 客户端
+身份是 Tianquan-Shoubing 管理的 `appId`/`client_id` 与一次性 Secret。所有 Secret 值都要
+留在本文档之外，发布顺序和恢复证据见
+[切换 Runbook](../../docs/runbooks/unified-identity-oauth-client-tenant-cutover.md)。
+
+允许远端文档不存在时可使用 `optional:tianshu:application.yml`。Tianshu 只贡献一个
+PropertySource，其优先级高于本地 ConfigData、低于 Spring Boot 的命令行参数和系统
+属性；本地与远端文档不做自定义合并。Admin 在每个 `bizCode + env + appCode` 下只接受
+一份名为 `application.yml` 或 `application.yaml` 的单文档、Map 根节点 YAML；
+`spring.config.import` 中的资源名必须与 Admin 保存的 `resourceName` 一致。远端 YAML 一旦包含
+`egon.cola.component.tianshu.*`、`spring.config.*` 或 Spring Profile 控制键，整份文档都会
+被拒绝，因此 Tianshu 连接和引导参数只能来自本地配置。
+
+控制面冷启动可结合可选导入，显式设置 `egon.cola.component.tianshu.defer-initial-load=true`，
+先安装版本为零的空动态属性源，由运行期协调器完成首次远端拉取。该选项默认 `false`，
+必选导入拒绝启用；有效租约和成功对账仍是进入 `READY` 的必要条件。需要先启动依赖服务时，
+在同一 Tianshu 前缀下使用已有的 `consistency.fail-fast=false` 和 `registry.http.fail-fast=false`，
+允许启动后恢复注册。ConfigData RPC
+在首次调用前按本地显式的 `egon.cola.component.id.machine-id` 与 `max-clock-backward`
+初始化 ID 引擎，后续 ID 自动装配复核同一绑定。
+
+配置格式以 `DdcConfigFormatStrategy` 和 `DdcConfigFormatStrategyRegistry` 作为扩展点。
+当前内置策略只有 YAML，并由 Spring Boot `YamlPropertySourceLoader` 负责解析；JSON、
+Properties、TOML 等格式没有兼容实现，也不会被注册表接受。
+
+生产 Admin：
+
+```yaml
+server:
+  port: 18080
+
+spring:
+  datasource:
+    url: jdbc:postgresql://127.0.0.1:5432/egon_tianshu
+    username: ${TIANSHU_DB_USERNAME}
+    password: ${TIANSHU_DB_PASSWORD}
+  flyway:
+    locations: classpath:db/postgresql
+
+egon:
+  cola:
+    component:
+      tianshu:
+        enabled: false
+        admin:
+          transport-security:
+            mode: DEVELOPMENT_PLAINTEXT
+          redis:
+            mode: SINGLE
+            nodes: []
+            master-name:
+            enabled: true
+            host: 127.0.0.1
+            port: 6379
+            database: 0
+          lease:
+            minimum-seconds: 5
+            maximum-seconds: 300
+          rpc:
+            signature-enabled: true
+            credentials:
+              - credential-id: runtime
+                access-key: ${TIANSHU_RUNTIME_ACCESS_KEY}
+                secret: ${TIANSHU_RUNTIME_SECRET_KEY}
+                client-type: SDK
+                app-code-patterns: [stellar-enclosure-yuheng-biz-gateway-*]
+                env-patterns: [local]
+                biz-code-patterns: [infra]
+                namespace-patterns: [default]
+                allowed-operations: [SDK_REGISTER, SDK_HEARTBEAT,
+                  SDK_OFFLINE, CONFIG_PULL, PUBLISH_ACK]
+              - credential-id: registry
+                access-key: ${TIANSHU_REGISTRY_ACCESS_KEY}
+                secret: ${TIANSHU_REGISTRY_SECRET_KEY}
+                client-type: REGISTRY
+                app-code-patterns: [yuheng-*]
+                env-patterns: [local]
+                biz-code-patterns: [infra]
+                namespace-patterns: [default]
+                allowed-operations: [REGISTRY_REGISTER,
+                  REGISTRY_HEARTBEAT, REGISTRY_DEREGISTER, REGISTRY_READ]
+              - credential-id: management
+                access-key: ${TIANSHU_MANAGEMENT_ACCESS_KEY}
+                secret: ${TIANSHU_MANAGEMENT_SECRET_KEY}
+                client-type: MANAGEMENT
+                app-code-patterns: [stellar-enclosure-yuheng-biz-gateway-*]
+                env-patterns: [local]
+                biz-code-patterns: [infra]
+                namespace-patterns: [default]
+                allowed-operations: [MANAGEMENT_CONFIG_READ,
+                  MANAGEMENT_CONFIG_WRITE, MANAGEMENT_PUBLISH,
+                  MANAGEMENT_TASK_READ, MANAGEMENT_TASK_RETRY,
+                  MANAGEMENT_INSTANCE_READ, MANAGEMENT_SCOPE_READ,
+                  MANAGEMENT_REGISTRY_READ,
+                  MANAGEMENT_CATALOG_READ]
+          publish:
+            dispatch-timeout-ms: 5000
+            default-timeout-ms: 30000
+            max-timeout-ms: 60000
+            scan-interval-ms: 1000
+            completion-poll-interval-ms: 100
+            recovery-stale-ms: 120000
+      rpc:
+        enabled: true
+        provider:
+          enabled: true
+          port: 19080
+          registration-mode: DISABLED
+        consumer:
+          enabled: false
+        tls:
+          enabled: true
+          development-plaintext: false
+          certificate-chain-path: ${TIANSHU_SERVER_CERTIFICATE}
+          private-key-path: ${TIANSHU_SERVER_PRIVATE_KEY}
+          trust-certificate-collection-path: ${TIANSHU_TRUST_CERTIFICATE}
+```
+
+Admin `test` Profile 使用 PostgreSQL 配置，并关闭 Flyway 和 Admin Redis
+连接。内存 SQLite 仅作为 V9 导入 fixture 保留在 test scope，不是 Admin 持久化拓扑。
+外部 PostgreSQL/Redis 检查必须显式启用 `tianshu-ai-persistence-it` Failsafe
+Profile 并提供隔离目标，具体要求见迁移手册。
+
+## 构建和验证
+
+```bash
+./mvnw -B -ntp \
+  -pl :stellar-enclosure-component-rpc-tianshu-adapter,:stellar-enclosure-tianshu-admin,:stellar-enclosure-tianshu-test \
+  -am clean test
+
+./mvnw -B -ntp \
+  -pl :stellar-enclosure-tianshu-admin,:stellar-enclosure-component-rpc-tianshu-adapter \
+  -am package -DskipTests
+```
+
+## 明确边界
+
+完整的 Tianshu + Yuheng + RPC 启动顺序、凭据、租约演练和运行证据见
+[开发联调 Runbook](../stellar-enclosure-yuheng/docs/developer-integration.zh-CN.md)。
+
+- 不支持 Raft、Leader 选举、共识日志或成员协议；
+- 多 Admin 运行要求共享 PostgreSQL 和 Redis；平台不负责提供数据库或 Redis HA；
+- Tianshu 使用直连逻辑 RPC 目标和客户端/外部轮询；不注册或发现自身、不要求粘性会话、不通过 gRPC 流式下发配置；
+- 不提供分布式共识或通用分布式锁服务；
+- 不内嵌 Redis，不使用数据库持久化服务注册信息；
+- 不内嵌 Admin UI 或账号系统；独立 Admin Web 接入平台统一身份与授权，且不以兼容
+  MySQL 为目标；
+- V1 不支持异步、多数派或部分成功发布模式。

@@ -1,0 +1,330 @@
+server:
+  ssl:
+    enabled: true
+    key-store: ${TIANSHU_TLS_KEY_STORE}
+    key-store-type: PKCS12
+    key-store-password: ${TIANSHU_TLS_KEY_STORE_PASSWORD}
+  port: 18080
+
+springdoc:
+  api-docs:
+    enabled: ${TIANSHU_HTTP_OPENAPI_ENABLED:false}
+    version: OPENAPI_3_1
+  group-configs:
+    - group: tianshu
+      paths-to-match:
+        - /api/v1/tianshu/**
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  info:
+    env:
+      enabled: true
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+info:
+  app:
+    name: ${spring.application.name}
+    version: ${sdk.version}
+
+spring:
+  application:
+    name: stellar-enclosure-tianshu-admin
+  datasource:
+    url: ${TIANSHU_JDBC_URL:${SPRING_DATASOURCE_URL:}}
+    username: ${TIANSHU_DB_USERNAME:${SPRING_DATASOURCE_USERNAME:}}
+    password: ${TIANSHU_DB_PASSWORD:${SPRING_DATASOURCE_PASSWORD:}}
+    driver-class-name: org.postgresql.Driver
+  profiles:
+    default: local
+  autoconfigure:
+    exclude:
+      - org.redisson.spring.starter.RedissonAutoConfigurationV2
+  flyway:
+    enabled: false
+  config:
+    import:
+      - classpath:META-INF/egon-cola-tianshu.properties
+      - classpath:egon-tianshu-persistence.yml
+      - optional:file:${UNIFIED_XINGYUAN_RUNTIME_DIR:target/local-unified-xingyuan}/env/tianshu.properties
+      - optional:tianshu:application.yml
+mybatis-plus:
+  mapper-locations: classpath*:mybatis/mapper/tianshu/**/*.xml,classpath*:mapper/outbox/**/*.xml
+
+egon:
+  cola:
+    platform:
+      tianquan:
+        shoubing:
+          usage-observation:
+            enabled: true
+            receiver: TIANSHU
+            fallback-issuer: ${TIANQUAN_SHOUBING_OAUTH_ISSUER}
+            allow-local-plaintext: false
+          trusted-issuers:
+            tenant-a:
+              issuer: ${TIANQUAN_SHOUBING_TENANT_A_ISSUER}
+              jwks-uri: ${TIANQUAN_SHOUBING_TENANT_A_JWKS_URI}
+              realm-key: ${TIANQUAN_SHOUBING_TENANT_A_REALM_KEY}
+              realm-type: TENANT
+              tenant-id: ${TIANQUAN_SHOUBING_TENANT_A_ID}
+              status: ACTIVE
+              trust-version: ${TIANQUAN_SHOUBING_TENANT_A_TRUST_VERSION}
+            tenant-b:
+              issuer: ${TIANQUAN_SHOUBING_TENANT_B_ISSUER}
+              jwks-uri: ${TIANQUAN_SHOUBING_TENANT_B_JWKS_URI}
+              realm-key: ${TIANQUAN_SHOUBING_TENANT_B_REALM_KEY}
+              realm-type: TENANT
+              tenant-id: ${TIANQUAN_SHOUBING_TENANT_B_ID}
+              status: ACTIVE
+              trust-version: ${TIANQUAN_SHOUBING_TENANT_B_TRUST_VERSION}
+            platform:
+              issuer: ${TIANQUAN_SHOUBING_PLATFORM_ISSUER}
+              jwks-uri: ${TIANQUAN_SHOUBING_PLATFORM_JWKS_URI}
+              realm-key: platform
+              realm-type: PLATFORM
+              status: ACTIVE
+              trust-version: ${TIANQUAN_SHOUBING_PLATFORM_TRUST_VERSION}
+          revocation:
+            primary-endpoint: ${TIANSHU_OAUTH_PRIMARY_REDIS_ADDRESS}
+            mode: STRICT_SHARED
+            timeout: PT0.5S
+            epoch: ${TIANSHU_OAUTH_REVOCATION_EPOCH}
+          audit:
+            stream: ${TIANSHU_OAUTH_AUDIT_STREAM}
+            spool-directory: ${TIANSHU_OAUTH_AUDIT_SPOOL_DIRECTORY}
+            spool-max-bytes: ${TIANSHU_OAUTH_AUDIT_SPOOL_MAX_BYTES:1073741824}
+            hmac-key-file: ${TIANSHU_OAUTH_AUDIT_HMAC_KEY_FILE}
+            delivery:
+              receipt-ttl: PT1H
+              confirmation-timeout: PT30S
+              batch-size: 100
+          enabled: ${UNIFIED_IDENTITY_ENABLED:true}
+          register-filter: false
+          issuer: ${TIANQUAN_SHOUBING_OAUTH_ISSUER:}
+          jwk-set-uri: ${TIANQUAN_SHOUBING_JWK_SET_URI:}
+          resource-server-id: ${TIANSHU_RESOURCE_SERVER_ID:}
+          resource-uri: ${TIANSHU_RESOURCE_URI:}
+        jianshen:
+          user-scope-policy:
+            enabled: true
+            permission-scopes:
+              "TIANSHU_READ": ["TIANSHU_READ"]
+              "TIANSHU_WRITE": ["TIANSHU_WRITE"]
+              "TIANSHU_PUBLISH": ["TIANSHU_PUBLISH"]
+              "TIANSHU_CACHE": ["TIANSHU_CACHE"]
+              "TIANSHU_AI_READ": ["TIANSHU_AI_READ"]
+              "TIANSHU_AI_WRITE": ["TIANSHU_AI_WRITE"]
+          enabled: ${UNIFIED_IDENTITY_ENABLED:true}
+          register-filter: false
+          system-code: tianshu-admin
+          runtime:
+            redis-enabled: true
+            redis-address: ${TIANSHU_AUTHORIZATION_REDIS_ADDRESS:}
+            database: ${TIANSHU_AUTHORIZATION_REDIS_DATABASE:0}
+          authorization:
+            endpoint: ${TIANQUAN_JIANSHEN_AUTHORIZATION_ENDPOINT:}
+            service-token:
+              enabled: ${TIANSHU_TIANQUAN_JIANSHEN_SERVICE_TOKEN_ENABLED:true}
+              resource-uri: ${TIANSHU_TIANQUAN_JIANSHEN_SERVICE_TOKEN_RESOURCE_URI:}
+              scopes: ${TIANSHU_TIANQUAN_JIANSHEN_SERVICE_TOKEN_SCOPES:}
+    component:
+      tianshu:
+        enabled: ${TIANSHU_SELF_REGISTRATION_ENABLED:false}
+        biz-code: ${TIANSHU_RESOURCE_BIZ_CODE:xingyuan}
+        app-code: ${TIANSHU_RESOURCE_APP_CODE:tianshu}
+        env: ${DEPLOYMENT_ENV:local}
+        namespace: ${DEPLOYMENT_NAMESPACE:default}
+        max-config-bytes: ${TIANSHU_MAX_CONFIG_BYTES:1048576}
+        instance:
+          id: ${TIANSHU_INSTANCE_ID:tianshu-admin-local-1}
+        rpc:
+          target: ${TIANSHU_RPC_TARGET:dns:///127.0.0.1:19080}
+          tls:
+            development-plaintext: ${TIANSHU_RPC_DEVELOPMENT_PLAINTEXT:false}
+          auth:
+            runtime:
+              access-key: ${TIANSHU_RPC_RUNTIME_ACCESS_KEY:}
+              secret-key: ${TIANSHU_RPC_RUNTIME_SECRET_KEY:}
+            registry:
+              access-key: ${TIANSHU_RPC_REGISTRY_ACCESS_KEY:}
+              secret-key: ${TIANSHU_RPC_REGISTRY_SECRET_KEY:}
+        redis:
+          enabled: false
+          host: ${TIANSHU_REDIS_HOST:127.0.0.1}
+          port: ${TIANSHU_REDIS_PORT:6379}
+          password: ${TIANSHU_REDIS_PASSWORD:}
+          database: ${TIANSHU_REDIS_DATABASE:0}
+        registry:
+          enabled: ${TIANSHU_SELF_REGISTRATION_ENABLED:false}
+          http:
+            enabled: ${TIANSHU_SELF_REGISTRATION_ENABLED:false}
+            instance-id: ${TIANSHU_INSTANCE_ID:tianshu-admin-local-1}
+            service-name: ${TIANSHU_YUHENG_SERVICE_NAME:tianshu}
+            group: default
+            version: ${TIANSHU_ARTIFACT_VERSION:local}
+            protocol: http
+            advertised-host: ${TIANSHU_ADVERTISED_HOST:127.0.0.1}
+            port: ${TIANSHU_ADVERTISED_PORT:18150}
+            lease-seconds: 30
+            heartbeat-interval-seconds: 10
+            fail-fast: ${TIANSHU_SELF_REGISTRATION_FAIL_FAST:false}
+        admin:
+          ai:
+            optimization:
+              enabled: ${TIANSHU_AI_OPTIMIZATION_ENABLED:false}
+              scan-interval: 60s
+              run-lease: 10m
+              max-concurrent-runs: 2
+              sample-limit: 20
+            judge:
+              scan-interval: 30s
+              batch-size: 50
+              max-attempts: 3
+              max-context-bytes: 16384
+              lease: 5m
+            model:
+              base-url: "${TIANSHU_AI_MODEL_BASE_URL:}"
+              resource-uri: "${TIANSHU_AI_MODEL_RESOURCE_URI:}"
+              registration-id: "${TIANSHU_AI_MODEL_REGISTRATION_ID:}"
+              app-id: "${TIANSHU_AI_MODEL_APP_ID:}"
+              scopes: "${TIANSHU_AI_MODEL_SCOPES:}"
+              connect-timeout: 3s
+              read-timeout: 120s
+              max-output-tokens: 8192
+              temperature: 0.2
+            feedback:
+              retention: 30d
+              retention-scan-interval: 1h
+              max-batch: 100
+              max-clock-skew: 5m
+              max-input-excerpt-bytes: 8192
+              max-output-excerpt-bytes: 32768
+          security:
+            local-dev: ${TIANSHU_ADMIN_SECURITY_LOCAL_DEV:false}
+            jwt:
+              issuer: ${TIANSHU_ADMIN_JWT_ISSUER:}
+              audience: ${TIANSHU_ADMIN_JWT_AUDIENCE:}
+              jwk-set-uri: ${TIANSHU_ADMIN_JWT_JWK_SET_URI:}
+          transport-security:
+            mode: MTLS
+          max-config-bytes: ${TIANSHU_MAX_CONFIG_BYTES:1048576}
+          registration:
+            resource-server-id: ${TIANSHU_RESOURCE_SERVER_ID:}
+            resource-uri: ${TIANSHU_RESOURCE_URI:}
+            required-scope: tianshu:registration:write
+          redis:
+            mode: SINGLE
+            nodes: []
+            master-name:
+            host: 127.0.0.1
+            port: 6379
+            database: 0
+          rpc:
+            signature-enabled: ${TIANSHU_RPC_SIGNATURE_ENABLED:true}
+            credentials:
+              - credential-id: ${TIANSHU_RPC_RUNTIME_CREDENTIAL_ID:runtime}
+                access-key: ${TIANSHU_RPC_RUNTIME_ACCESS_KEY:}
+                secret: ${TIANSHU_RPC_RUNTIME_SECRET_KEY:}
+                client-type: SDK
+                app-code-patterns: ${TIANSHU_RPC_RUNTIME_APP_CODE_PATTERNS:*}
+                env-patterns: ${TIANSHU_RPC_RUNTIME_ENV_PATTERNS:*}
+                biz-code-patterns: ${TIANSHU_RPC_RUNTIME_BIZ_CODE_PATTERNS:*}
+                namespace-patterns: ${TIANSHU_RPC_RUNTIME_NAMESPACE_PATTERNS:*}
+                allowed-operations: SDK_REGISTER,SDK_HEARTBEAT,SDK_OFFLINE,CONFIG_PULL,PUBLISH_ACK,AI_READ,AI_REPORT
+              - credential-id: ${TIANSHU_RPC_REGISTRY_CREDENTIAL_ID:registry}
+                access-key: ${TIANSHU_RPC_REGISTRY_ACCESS_KEY:}
+                secret: ${TIANSHU_RPC_REGISTRY_SECRET_KEY:}
+                client-type: REGISTRY
+                app-code-patterns: ${TIANSHU_RPC_REGISTRY_APP_CODE_PATTERNS:*}
+                env-patterns: ${TIANSHU_RPC_REGISTRY_ENV_PATTERNS:*}
+                biz-code-patterns: ${TIANSHU_RPC_REGISTRY_BIZ_CODE_PATTERNS:*}
+                namespace-patterns: ${TIANSHU_RPC_REGISTRY_NAMESPACE_PATTERNS:*}
+                allowed-operations: REGISTRY_REGISTER,REGISTRY_HEARTBEAT,REGISTRY_DEREGISTER,REGISTRY_READ
+              - credential-id: ${TIANSHU_RPC_MANAGEMENT_CREDENTIAL_ID:management}
+                access-key: ${TIANSHU_RPC_MANAGEMENT_ACCESS_KEY:}
+                secret: ${TIANSHU_RPC_MANAGEMENT_SECRET_KEY:}
+                client-type: MANAGEMENT
+                app-code-patterns: ${TIANSHU_RPC_MANAGEMENT_APP_CODE_PATTERNS:*}
+                env-patterns: ${TIANSHU_RPC_MANAGEMENT_ENV_PATTERNS:*}
+                biz-code-patterns: ${TIANSHU_RPC_MANAGEMENT_BIZ_CODE_PATTERNS:*}
+                namespace-patterns: ${TIANSHU_RPC_MANAGEMENT_NAMESPACE_PATTERNS:*}
+                allowed-operations: MANAGEMENT_CONFIG_READ,MANAGEMENT_CONFIG_WRITE,MANAGEMENT_PUBLISH,MANAGEMENT_TASK_READ,MANAGEMENT_TASK_RETRY,MANAGEMENT_INSTANCE_READ,MANAGEMENT_SCOPE_READ,MANAGEMENT_REGISTRY_READ,MANAGEMENT_CATALOG_READ
+            allowed-clock-skew-seconds: 300
+            nonce-cache-max-size: 10000
+          publish:
+            dispatch-timeout-ms: 5000
+            default-timeout-ms: 30000
+            max-timeout-ms: 60000
+            scan-interval-ms: 1000
+            completion-poll-interval-ms: 100
+            recovery-stale-ms: 120000
+      transactional-outbox:
+        enabled: true
+        polling:
+          enabled: true
+          fixed-delay: 1s
+          batch-size: 100
+          concurrency: 4
+        delivery:
+          timeout: 10s
+          lease-duration: 60s
+          queue-capacity: 1000
+        retry:
+          max-attempts: 10
+          initial-delay: 1s
+          multiplier: 2.0
+          max-delay: 5m
+          jitter: 0.2
+        payload:
+          max-bytes: 8MB
+          max-header-count: 64
+          max-header-bytes: 16KB
+      yuheng:
+        openapi:
+          enabled: ${TIANSHU_HTTP_OPENAPI_ENABLED:false}
+          publish-to-tianshu: true
+          published-groups:
+            - tianshu
+          biz-code: ${TIANSHU_RESOURCE_BIZ_CODE:xingyuan}
+          application-code: ${TIANSHU_RESOURCE_APP_CODE:tianshu}
+          resource-uri: ${TIANSHU_RESOURCE_URI:}
+          artifact-version: ${TIANSHU_ARTIFACT_VERSION:local}
+          build-id: ${TIANSHU_BUILD_ID:local}
+        reporting:
+          enabled: ${TIANSHU_YUHENG_REPORTING_ENABLED:true}
+          admin-base-url: ${YUHENG_ADMIN_BASE_URL:}
+          biz-code: ${TIANSHU_RESOURCE_BIZ_CODE:xingyuan}
+          application-code: ${TIANSHU_RESOURCE_APP_CODE:tianshu}
+          application-name: Tianshu Admin
+          env: ${DEPLOYMENT_ENV:local}
+          namespace: ${DEPLOYMENT_NAMESPACE:default}
+          artifact-version: ${TIANSHU_ARTIFACT_VERSION:local}
+          build-id: ${TIANSHU_BUILD_ID:local}
+          declared-hosts: ${TIANSHU_DECLARED_HOSTS:127.0.0.1}
+          fail-fast: true
+          access-key: ${YUHENG_REPORT_ACCESS_KEY:}
+          secret-key: ${YUHENG_REPORT_SECRET_KEY:}
+          state-file: ${YUHENG_REPORT_STATE_FILE:}
+      rpc:
+        enabled: true
+        provider:
+          enabled: true
+          port: ${TIANSHU_RPC_PORT:19080}
+          registration-mode: DISABLED
+        consumer:
+          enabled: false
+        tls:
+          enabled: ${TIANSHU_RPC_TLS_ENABLED:true}
+          development-plaintext: ${TIANSHU_RPC_DEVELOPMENT_PLAINTEXT:false}
+          certificate-chain-path: ${TIANSHU_RPC_CERTIFICATE_CHAIN_PATH:}
+          private-key-path: ${TIANSHU_RPC_PRIVATE_KEY_PATH:}
+          trust-certificate-collection-path: ${TIANSHU_RPC_TRUST_CERTIFICATE_COLLECTION_PATH:}
+
+management.endpoint.health.group.readiness.include: ["readinessState", "ddcAuditReadiness"]

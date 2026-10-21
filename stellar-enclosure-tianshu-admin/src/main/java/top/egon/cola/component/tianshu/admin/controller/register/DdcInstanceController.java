@@ -1,0 +1,61 @@
+package top.egon.cola.component.tianshu.admin.controller.register;
+
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+import top.egon.cola.component.common.core.pojo.PageQuery;
+import top.egon.cola.component.common.core.pojo.PageResultRecord;
+import top.egon.cola.component.common.core.pojo.ResultRecord;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcInstanceResult;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcPageResult;
+import top.egon.cola.component.tianshu.admin.service.lease.DdcInstanceAdminService;
+import top.egon.cola.component.yuheng.openapi.annotation.EgonApiCatalog;
+import top.egon.cola.component.yuheng.openapi.annotation.EgonGatewayPolicy;
+
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/v1/tianshu/instances")
+@Tag(name = "tianshu-admin-tianshu-instance-controller", description = "DdcInstanceController 管理接口组")
+@EgonApiCatalog(
+        businessDomainCode = "xingyuan",
+        businessDomainName = "平台治理域",
+        entityDomainCode = "tianshu-admin",
+        entityDomainName = "Dynamic Config Center 管理实体域",
+        interfaceGroupCode = "tianshu"
+)
+public class DdcInstanceController {
+
+    private final DdcInstanceAdminService instanceAdminService;
+
+    public DdcInstanceController(DdcInstanceAdminService instanceAdminService) {
+        this.instanceAdminService = instanceAdminService;
+    }
+
+    @Operation(operationId = "tianshu.ddcInstanceController.list")
+    @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @GetMapping
+    public ResultRecord<List<DdcInstanceResult>> list(
+            @RequestParam("bizCode") String bizCode,
+            @RequestParam("env") String env,
+            @RequestParam("appCode") String appCode) {
+        return ResultRecord.success(instanceAdminService.list(
+                bizCode, env, appCode));
+    }
+
+    @Operation(operationId = "tianshu.ddcInstanceController.page")
+    @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @GetMapping("/page")
+    public PageResultRecord<DdcInstanceResult> page(
+            @RequestParam("bizCode") String bizCode,
+            @RequestParam("env") String env,
+            @RequestParam("appCode") String appCode,
+            PageQuery pageQuery
+    ) {
+        DdcPageResult<DdcInstanceResult> page = instanceAdminService.page(bizCode, env, appCode, pageQuery);
+        return PageResultRecord.success(page.getRecords(), page.getTotal(), page.getPageNo(), page.getPageSize());
+    }
+}

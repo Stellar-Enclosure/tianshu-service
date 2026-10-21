@@ -1,0 +1,298 @@
+package top.egon.cola.component.tianshu.admin.service.publish;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishAckBO;
+import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishTaskBO;
+import top.egon.cola.component.tianshu.admin.model.bo.DdcConfigItemBO;
+import top.egon.cola.component.tianshu.admin.model.enums.PublishStatus;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcConfigResourceKey;
+import top.egon.cola.component.tianshu.admin.repository.DdcConfigItemRepository;
+import top.egon.cola.component.tianshu.admin.repository.DdcPublishAckRepository;
+import top.egon.cola.component.tianshu.admin.repository.DdcPublishTaskRepository;
+import top.egon.cola.component.tianshu.model.config.DdcAckStatus;
+
+import java.time.Clock;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.List;
+import java.util.Set;
+
+@Service("ddcPublishStateTransitionService")
+public class DdcPublishStateTransitionService {
+
+    private static final List<String> ACTIVE_STATUSES = List.of(
+            PublishStatus.PENDING.name(),
+            PublishStatus.PUBLISHING.name(),
+            PublishStatus.UNKNOWN.name()
+    );
+
+    private static final List<String> DISPATCHABLE_STATUSES = List.of(
+            PublishStatus.PENDING.name(),
+            PublishStatus.PUBLISHING.name(),
+            PublishStatus.UNKNOWN.name()
+    );
+
+    private static final Set<String> TERMINAL_STATUSES = Set.of(
+            PublishStatus.SUCCESS.name(),
+            PublishStatus.FAILED.name(),
+            PublishStatus.TIMEOUT.name(),
+            PublishStatus.UNKNOWN.name()
+    );
+
+    private final DdcPublishTaskRepository taskRepository;
+
+    private final DdcConfigItemRepository configItemRepository;
+
+    private final DdcPublishAckRepository ackRepository;
+
+    private final PublishResourceLockRegistry resourceRegistry;
+
+    private final PublishCompletionWaiterRegistry waiterRegistry;
+
+    private final Clock clock;
+
+    @Autowired
+    public DdcPublishStateTransitionService(
+            DdcPublishTaskRepository taskRepository,
+            @Qualifier("ddcConfigItemRepository") DdcConfigItemRepository configItemRepository,
+            DdcPublishAckRepository ackRepository,
+            PublishResourceLockRegistry resourceRegistry,
+            PublishCompletionWaiterRegistry waiterRegistry) {
+        this(
+                taskRepository,
+                configItemRepository,
+                ackRepository,
+                resourceRegistry,
+                waiterRegistry,
+                Clock.systemUTC()
+        );
+    }
+
+    DdcPublishStateTransitionService(
+            DdcPublishTaskRepository taskRepository,
+            DdcConfigItemRepository configItemRepository,
+            DdcPublishAckRepository ackRepository,
+            PublishResourceLockRegistry resourceRegistry,
+            PublishCompletionWaiterRegistry waiterRegistry,
+            Clock clock) {
+        this.taskRepository = taskRepository;
+        this.configItemRepository = configItemRepository;
+        this.ackRepository = ackRepository;
+        this.resourceRegistry = resourceRegistry;
+        this.waiterRegistry = waiterRegistry;
+        this.clock = clock;
+    }
+
+    @Transactional
+    public DdcPublishTaskBO markPublishing(String changeId) {
+        LocalDateTime now = now();
+        taskRepository.transitionToPublishing(
+                changeId,
+                DISPATCHABLE_STATUSES,
+                PublishStatus.PENDING.name(),
+                PublishStatus.PUBLISHING.name(),
+                now
+        );
+        return requiredTask(changeId);
+    }
+
+    @Transactional
+    public DdcPublishTaskBO refreshAfterAck(String changeId) {
+        DdcPublishTaskBO task = taskRepository.findForUpdateByChangeId(changeId)
+                .orElseThrow(() -> new IllegalStateException(
+                        "publish task not found: " + changeId
+                ));
+        if (isTerminal(task)) {
+            return task;
+        }
+        List<DdcPublishAckBO> targets = ackRepository.findByChangeId(changeId);
+        int success = count(targets, DdcAckStatus.SUCCESS.name());
+        int failed = count(targets, DdcAckStatus.FAILED.name());
+        int ignored = count(targets, DdcAckStatus.IGNORED.name());
+        int timeout = count(targets, DdcAckStatus.TIMEOUT.name());
+        taskRepository.updateCounters(changeId, success, failed, ignored, timeout, now());
+        if (failed > 0) {
+            transitionToTerminal(
+                    task,
+                    PublishStatus.FAILED,
+                    "ACK",
+                    "one or more publish targets failed"
+            );
+        } else if (task.getTargetCount() != null
+                && success == targets.size()
+                && success == task.getTargetCount()
+                && isPublished(task)) {
+            transitionToTerminal(task, PublishStatus.SUCCESS, null, null);
+        } else {
+            signalAfterCommit(changeId);
+        }
+        return requiredTask(changeId);
+    }
+
+    @Transactional
+    public DdcPublishTaskBO fail(String changeId,
+                                     String failureStage,
+                                     String errorMessage) {
+        DdcPublishTaskBO task = requiredTask(changeId);
+        transitionToTerminal(task, PublishStatus.FAILED, failureStage, errorMessage);
+        return requiredTask(changeId);
+    }
+
+    @Transactional
+    public DdcPublishTaskBO timeout(String changeId,
+                                        String errorMessage) {
+        DdcPublishTaskBO task = requiredTask(changeId);
+        if (transitionToTerminal(task, PublishStatus.TIMEOUT, "ACK_TIMEOUT", errorMessage)) {
+            LocalDateTime now = now();
+            ackRepository.markIncompleteTimeout(
+                    changeId,
+                    DdcAckStatus.TIMEOUT.name(),
+                    now
+            );
+            updateCounters(changeId, now);
+        }
+        return requiredTask(changeId);
+    }
+
+    @Transactional
+    public DdcPublishTaskBO unknown(String changeId,
+                                        String errorMessage) {
+        return unknown(changeId, "ADMIN_RESTART", errorMessage);
+    }
+
+    @Transactional
+    public DdcPublishTaskBO unknown(String changeId,
+                                        String failureStage,
+                                        String errorMessage) {
+        DdcPublishTaskBO task = requiredTask(changeId);
+        transitionToTerminal(task, PublishStatus.UNKNOWN, failureStage, errorMessage);
+        return requiredTask(changeId);
+    }
+
+    @Transactional
+    public DdcPublishTaskBO markTargetLeaseExpired(
+            String changeId,
+            List<String> retryableStatuses) {
+        DdcPublishTaskBO task = requiredTask(changeId);
+        int changed = taskRepository.markRetryLeaseExpired(
+                changeId,
+                PublishStatus.FAILED.name(),
+                now(),
+                "TARGET_VALIDATION",
+                "TIANSHU_TARGET_LEASE_EXPIRED",
+                retryableStatuses
+        );
+        if (changed == 1) {
+            notifyTerminalAfterCommit(task);
+        }
+        return requiredTask(changeId);
+    }
+
+    public boolean isTerminal(DdcPublishTaskBO task) {
+        return task != null && TERMINAL_STATUSES.contains(task.getStatus());
+    }
+
+    public void releaseIfTerminal(DdcPublishTaskBO task) {
+        if (isTerminal(task)) {
+            notifyTerminal(task);
+        }
+    }
+
+    private boolean transitionToTerminal(DdcPublishTaskBO task,
+                                         PublishStatus status,
+                                         String failureStage,
+                                         String errorMessage) {
+        LocalDateTime now = now();
+        int changed = taskRepository.transitionToTerminal(
+                task.getChangeId(),
+                status.name(),
+                now,
+                failureStage,
+                errorMessage,
+                ACTIVE_STATUSES
+        );
+        if (changed == 1) {
+            notifyTerminalAfterCommit(task);
+            return true;
+        }
+        return false;
+    }
+
+    private void updateCounters(String changeId, LocalDateTime now) {
+        List<DdcPublishAckBO> targets = ackRepository.findByChangeId(changeId);
+        taskRepository.updateCounters(
+                changeId,
+                count(targets, DdcAckStatus.SUCCESS.name()),
+                count(targets, DdcAckStatus.FAILED.name()),
+                count(targets, DdcAckStatus.IGNORED.name()),
+                count(targets, DdcAckStatus.TIMEOUT.name()),
+                now
+        );
+    }
+
+    private int count(List<DdcPublishAckBO> targets, String status) {
+        return (int) targets.stream()
+                .filter(target -> status.equals(target.getAckStatus()))
+                .count();
+    }
+
+    private boolean isPublished(DdcPublishTaskBO task) {
+        return configItemRepository.findByPublicId(task.getConfigId())
+                .map(config -> config.getPublishedVersion() != null
+                        && config.getPublishedVersion().equals(task.getTargetVersion()))
+                .orElse(false);
+    }
+
+    private DdcPublishTaskBO requiredTask(String changeId) {
+        return taskRepository.findByChangeId(changeId)
+                .orElseThrow(() -> new IllegalStateException(
+                        "publish task not found: " + changeId
+                ));
+    }
+
+    private LocalDateTime now() {
+        return LocalDateTime.ofInstant(clock.instant(), ZoneId.systemDefault());
+    }
+
+    private void signalAfterCommit(String changeId) {
+        afterCommit(() -> waiterRegistry.signal(changeId));
+    }
+
+    private void notifyTerminalAfterCommit(DdcPublishTaskBO task) {
+        afterCommit(() -> notifyTerminal(task));
+    }
+
+    private void notifyTerminal(DdcPublishTaskBO task) {
+        waiterRegistry.signal(task.getChangeId());
+        resourceRegistry.release(resourceKey(task), task.getChangeId());
+    }
+
+    private DdcConfigResourceKey resourceKey(DdcPublishTaskBO task) {
+        return new DdcConfigResourceKey(
+                task.getBizCode(),
+                task.getEnv(),
+                task.getAppCode(),
+                task.getResourceName()
+        );
+    }
+
+    private void afterCommit(Runnable action) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            action.run();
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(
+                new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        action.run();
+                    }
+                }
+        );
+    }
+}

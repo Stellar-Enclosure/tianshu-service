@@ -1,0 +1,58 @@
+package top.egon.cola.component.tianshu.admin.controller;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.test.web.servlet.MockMvc;
+import top.egon.cola.component.common.core.pojo.PageQuery;
+import top.egon.cola.component.tianshu.admin.controller.config.DdcCacheController;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcCacheCheckRow;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcPageResult;
+import top.egon.cola.component.tianshu.admin.service.cache.DdcCacheService;
+
+import java.util.List;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+@WebMvcTest(DdcCacheController.class)
+@AutoConfigureMockMvc(addFilters = false)
+class DdcCacheControllerTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @MockBean
+    private DdcCacheService cacheService;
+
+    @Test
+    void pagesCacheChecks() throws Exception {
+        DdcCacheCheckRow row = new DdcCacheCheckRow(
+                "application.yml", "db", "redis", 2L, 2L, true
+        );
+        when(cacheService.page(
+                eq("infra"), eq("prod"), eq("yuheng"),
+                any(PageQuery.class)
+        )).thenReturn(DdcPageResult.<DdcCacheCheckRow>builder()
+                .records(List.of(row)).total(3).pageNo(1).pageSize(10).build());
+
+        mockMvc.perform(get("/api/v1/tianshu/cache/check/page")
+                        .param("bizCode", "infra")
+                        .param("env", "prod")
+                        .param("appCode", "yuheng")
+                        .param("pageNo", "1")
+                        .param("pageSize", "10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.records[0].resourceName")
+                        .value("application.yml"))
+                .andExpect(jsonPath("$.page.total").value(3))
+                .andExpect(jsonPath("$.page.pageNo").value(1))
+                .andExpect(jsonPath("$.data").doesNotExist());
+    }
+}
