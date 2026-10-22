@@ -581,3 +581,7 @@ Profile 并提供隔离目标，具体要求见迁移手册。
 - 不内嵌 Admin UI 或账号系统；独立 Admin Web 接入平台统一身份与授权，且不以兼容
   MySQL 为目标；
 - V1 不支持异步、多数派或部分成功发布模式。
+
+## 独立仓库发布
+
+发布范围、前置配置、校验与发布命令见 [仓库 README](README.md#publish-to-maven-central)。应用和测试示例不发布到 Maven Central，前端站点保持 `private: true`。
