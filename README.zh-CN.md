@@ -8,8 +8,8 @@
 一份 YAML 业务配置文档的 SDK、类型化管理 API、可独立部署的 Admin 应用，以及面向
 RPC Provider 和内部 Yuheng 的 Redis 服务注册中心。
 
-Maven Artifact 统一使用 `stellar-enclosure-tianshu-*` 前缀，由 `stellar-enclosure-platform-parent`
-聚合。Starter Java API 已按领域重新组织，
+Maven Artifact 统一使用 `stellar-enclosure-tianshu-*` 前缀，本仓库父 POM 继承 `stellar-enclosure-platform-parent`，
+只聚合自身五个 Maven 子模块。Starter Java API 已按领域重新组织，
 不为旧技术分层包保留转发类型；外部 `egon.cola.component.tianshu` 配置命名空间保持不变。
 
 V1 支持由共享 PostgreSQL 和 Redis 支撑的一个逻辑控制面。多个 Admin 进程可以服务
@@ -18,6 +18,19 @@ V1 支持由共享 PostgreSQL 和 Redis 支撑的一个逻辑控制面。多个 
 服务。Admin 和 SDK 的 Redis 客户端通过 Redisson 支持 `SINGLE`、`SENTINEL` 和
 `CLUSTER` 拓扑。PostgreSQL 是生产数据库，SQLite 仅保留给测试使用。服务注册信息
 是 Redis 中的临时租约状态，不新增 JPA Entity 或数据库表。
+
+## 功能入口
+
+| 能力 | 当前功能 |
+|---|---|
+| 作用域元数据 | 业务域、应用、命名空间、环境及绑定的维护、启停与查询 |
+| 动态配置 | 完整 YAML 资源、版本、发布/回滚、客户端刷新与 ACK、发布任务查询/重试 |
+| 服务治理 | RPC/HTTP Provider 与内部网关租约、心跳/恢复、服务目录与实例快照 |
+| Prompt/Skill | 租户隔离草稿、版本、发布/回滚、指定版本跨 scope 推广、反馈与优化 |
+| AI 消费端 | 使用反馈队列、已发布 Skill 工作区、本地创作目录上传及可选自动发布 |
+| 运维管理 | 配置客户端实例、缓存一致性查询与重建 |
+
+管理 REST API 主要位于 `/api/v1/tianshu`；独立管理台由 [tianshu-web](https://github.com/Stellar-Enclosure/tianshu-web) 维护。机器客户端通过直连 gRPC 访问，传输装配由 Components 的 RPC Tianshu Adapter 提供。平台统一身份由 Shoubing 提供，用户细粒度授权由 Jianshen 提供；本仓库不内建账号与登录系统。
 
 ## 部署拓扑
 
@@ -45,9 +58,9 @@ Admin HTTP 仅保留给人工管理 API 和 Actuator 健康检查。各 Admin �
 | `stellar-enclosure-tianshu-starter` | 传输无关 SDK 运行时与端口：ConfigData、`@DdcValue`、选择性刷新、ACK、租约、管理和注册契约 |
 | `stellar-enclosure-tianshu-http-registration-starter` | Spring HTTP 服务注册、Tianshu 租约心跳/恢复和注册元数据贡献 SPI |
 | `stellar-enclosure-tianshu-ai-starter` | 下游 AI Starter：非阻塞使用反馈上报、已发布 Skill 工作区（原子落盘、Redis 发布订阅、周期对账）与创作目录上传（可选自动发布） |
-| `stellar-enclosure-component-rpc-tianshu-adapter` | 位于 `components/rpc` 的组装适配器：Protobuf 契约、直连 gRPC Client/Provider、HMAC Metadata 和 Spring Boot 装配 |
+| [RPC Tianshu Adapter](https://github.com/Stellar-Enclosure/Stellar-Enclosure-Components/tree/main/stellar-enclosure-component-rpc/stellar-enclosure-component-rpc-tianshu-adapter) | 位于独立 Components 仓库：Protobuf 契约、直连 gRPC Client/Provider、HMAC Metadata 和 Spring Boot 装配，不属于本 reactor |
 | `stellar-enclosure-tianshu-admin` | 人工 REST Admin 与直连 gRPC Facade、PostgreSQL 持久化、Redis 缓存/租约和同步发布状态机 |
-| `stellar-enclosure-tianshu-admin-web` | 独立管理控制台（React + antd + Vite，纯 Node 工程，不进 Maven reactor）；构建与部署说明见 `stellar-enclosure-tianshu-admin-web/README.md` |
+| [tianshu-web](https://github.com/Stellar-Enclosure/tianshu-web) | 独立管理控制台（React + antd + Vite，纯 Node 仓库，不进 Maven reactor） |
 | `stellar-enclosure-tianshu-test` | Starter 样例应用、黑盒消费端验证，以及租约/注册/资源准入生命周期验收测试；仅在 test 作用域依赖 Admin |
 
 Admin 的 webui 已从 jar 中摘出（`/tianshu-admin` 不再由 Admin 提供服务）：管理控制台以
@@ -436,7 +449,7 @@ egon:
 上述 TLS `private-key-path` 只是传输层证书私钥，不是 OAuth 客户端凭据。OAuth 客户端
 身份是 Tianquan-Shoubing 管理的 `appId`/`client_id` 与一次性 Secret。所有 Secret 值都要
 留在本文档之外，发布顺序和恢复证据见
-[切换 Runbook](../../docs/runbooks/unified-identity-oauth-client-tenant-cutover.md)。
+[归档切换 Runbook](https://github.com/Stellar-Enclosure/Stellar-Enclosure-Parent/blob/main/docs/history/runbooks/unified-identity-oauth-client-tenant-cutover.md)。
 
 允许远端文档不存在时可使用 `optional:tianshu:application.yml`。Tianshu 只贡献一个
 PropertySource，其优先级高于本地 ConfigData、低于 Spring Boot 的命令行参数和系统
@@ -558,20 +571,22 @@ Profile 并提供隔离目标，具体要求见迁移手册。
 
 ## 构建和验证
 
+先按[仓库构建说明](README.md#build)安装或发布跨仓库依赖，然后在 `tianshu-service` 根目录执行：
+
 ```bash
-./mvnw -B -ntp \
-  -pl :stellar-enclosure-component-rpc-tianshu-adapter,:stellar-enclosure-tianshu-admin,:stellar-enclosure-tianshu-test \
-  -am clean test
+./mvnw -B -ntp -DskipITs -Dinvoker.skip=true test
 
 ./mvnw -B -ntp \
-  -pl :stellar-enclosure-tianshu-admin,:stellar-enclosure-component-rpc-tianshu-adapter \
+  -pl :stellar-enclosure-tianshu-admin \
   -am package -DskipTests
 ```
+
+RPC Tianshu Adapter 的源码和测试位于 Components 仓库，不能通过本仓库 `-pl` 选择。上述命令不启动 Admin；外部 PostgreSQL/Redis 集成测试仍需单独启用显式 Profile。
 
 ## 明确边界
 
 完整的 Tianshu + Yuheng + RPC 启动顺序、凭据、租约演练和运行证据见
-[开发联调 Runbook](../stellar-enclosure-yuheng/docs/developer-integration.zh-CN.md)。
+[开发联调 Runbook](https://github.com/Stellar-Enclosure/yuheng-service/blob/main/docs/developer-integration.zh-CN.md)。
 
 - 不支持 Raft、Leader 选举、共识日志或成员协议；
 - 多 Admin 运行要求共享 PostgreSQL 和 Redis；平台不负责提供数据库或 Redis HA；
