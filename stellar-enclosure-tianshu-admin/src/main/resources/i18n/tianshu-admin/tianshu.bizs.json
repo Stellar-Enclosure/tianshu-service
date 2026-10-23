@@ -1,0 +1,33 @@
+{
+  "pageCode": "tianshu.bizs",
+  "name": "业务域",
+  "defaultLocale": "zh-CN",
+  "translations": {
+    "zh-CN": {
+      "feedback.saved": "业务域保存成功",
+      "feedback.statusUpdated": "业务域状态更新完成",
+      "feedback.deleted": "业务域删除完成",
+      "fields.bizCode": "业务域编码",
+      "title": "业务域管理",
+      "description": "维护 Tianshu 业务域及其启用状态。",
+      "actions.create": "新建业务域",
+      "actions.edit": "编辑业务域",
+      "filters.keyword": "名称模糊查询",
+      "list.title": "业务域列表",
+      "confirm.delete": "确认删除业务域 {{code}}？"
+    },
+    "en-US": {
+      "feedback.saved": "Business domain saved",
+      "feedback.statusUpdated": "Business domain status updated",
+      "feedback.deleted": "Business domain deleted",
+      "fields.bizCode": "Business domain code",
+      "title": "Business domains",
+      "description": "Manage Tianshu business domains and their enabled status.",
+      "actions.create": "Create business domain",
+      "actions.edit": "Edit business domain",
+      "filters.keyword": "Search by name",
+      "list.title": "Business domains",
+      "confirm.delete": "Delete business domain {{code}}?"
+    }
+  }
+}

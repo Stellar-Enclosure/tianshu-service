@@ -116,6 +116,7 @@ egon:
             enabled: true
             permission-scopes:
               "TIANSHU_READ": ["TIANSHU_READ"]
+              "TIANSHU_I18N_READ": ["TIANSHU_I18N_READ"]
               "TIANSHU_WRITE": ["TIANSHU_WRITE"]
               "TIANSHU_PUBLISH": ["TIANSHU_PUBLISH"]
               "TIANSHU_CACHE": ["TIANSHU_CACHE"]
@@ -215,6 +216,11 @@ egon:
           transport-security:
             mode: MTLS
           max-config-bytes: ${TIANSHU_MAX_CONFIG_BYTES:1048576}
+          ui-i18n:
+            biz-code: ${TIANSHU_RESOURCE_BIZ_CODE:xingyuan}
+            namespace-code: ${DEPLOYMENT_NAMESPACE:default}
+            env: ${DEPLOYMENT_ENV:local}
+            app-code: ${TIANSHU_RESOURCE_APP_CODE:tianshu}
           registration:
             resource-server-id: ${TIANSHU_RESOURCE_SERVER_ID:}
             resource-uri: ${TIANSHU_RESOURCE_URI:}

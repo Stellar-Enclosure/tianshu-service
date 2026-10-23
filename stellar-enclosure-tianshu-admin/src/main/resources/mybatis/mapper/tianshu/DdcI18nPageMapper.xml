@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="top.egon.cola.component.tianshu.admin.dao.DdcI18nPageMapper">
+    <resultMap id="Page" type="top.egon.cola.component.tianshu.admin.model.po.DdcI18nPagePO">
+        <result property="id" column="id"/>
+        <result property="tenantId" column="tenant_id"/>
+        <result property="createUserId" column="create_user_id"/>
+        <result property="createTime" column="create_time"/>
+        <result property="updateUserId" column="update_user_id"/>
+        <result property="updateTime" column="update_time"/>
+        <result property="deletedAt" column="deleted_at"/>
+        <result property="version" column="version"/>
+        <result property="bizCode" column="biz_code"/>
+        <result property="namespaceId" column="namespace_id"/>
+        <result property="envCode" column="env_code"/>
+        <result property="appCode" column="app_code"/>
+        <result property="pageCode" column="page_code"/>
+        <result property="name" column="name"/>
+        <result property="defaultLocale" column="default_locale"/>
+        <result property="draftTranslations" column="draft_translations"/>
+        <result property="publishedDefaultLocale" column="published_default_locale"/>
+        <result property="publishedTranslations" column="published_translations"/>
+        <result property="publishedVersion" column="published_version"/>
+        <result property="namespaceCode" column="namespace_code"/>
+    </resultMap>
+    <sql id="FromPage">
+        FROM ddc_i18n_page p
+        JOIN ddc_namespace n ON n.tenant_id = p.tenant_id AND n.id = p.namespace_id AND n.deleted_at IS NULL
+        WHERE p.tenant_id = #{tenantId} AND p.deleted_at IS NULL
+    </sql>
+    <sql id="Scope">
+        AND p.biz_code = #{scope.bizCode} AND n.namespace_code = #{scope.namespaceCode}
+        AND p.env_code = #{scope.env} AND p.app_code = #{scope.appCode}
+    </sql>
+    <select id="selectPageById" resultMap="Page">
+        SELECT p.*, n.namespace_code <include refid="FromPage"/> AND p.id = #{id}
+    </select>
+    <select id="selectByPageCode" resultMap="Page">
+        SELECT p.*, n.namespace_code <include refid="FromPage"/><include refid="Scope"/>
+        AND p.page_code = #{pageCode}
+    </select>
+    <select id="selectPage" resultMap="Page">
+        SELECT p.id, p.tenant_id, p.biz_code, p.namespace_id, n.namespace_code, p.env_code, p.app_code,
+               p.page_code, p.name, p.default_locale, p.version, p.published_version
+        <include refid="FromPage"/><include refid="Scope"/>
+        ORDER BY p.page_code, p.id LIMIT #{limit} OFFSET #{offset}
+    </select>
+    <select id="countPage" resultType="long">
+        SELECT COUNT(*) <include refid="FromPage"/><include refid="Scope"/>
+    </select>
+    <select id="lockBiz" resultType="long" timeout="2">
+        SELECT id FROM ddc_biz WHERE tenant_id = #{tenantId} AND biz_code = #{scope.bizCode}
+        AND deleted_at IS NULL FOR SHARE
+    </select>
+    <select id="lockNamespace" resultType="long" timeout="2">
+        SELECT id FROM ddc_namespace WHERE tenant_id = #{tenantId} AND biz_code = #{scope.bizCode}
+        AND namespace_code = #{scope.namespaceCode} AND deleted_at IS NULL FOR SHARE
+    </select>
+    <select id="lockEnv" resultType="long" timeout="2">
+        SELECT id FROM ddc_env WHERE tenant_id = #{tenantId} AND env_code = #{scope.env}
+        AND deleted_at IS NULL FOR SHARE
+    </select>
+    <select id="lockApp" resultType="long" timeout="2">
+        SELECT id FROM ddc_app WHERE tenant_id = #{tenantId} AND biz_code = #{scope.bizCode}
+        AND app_code = #{scope.appCode} AND deleted_at IS NULL FOR SHARE
+    </select>
+    <select id="lockBinding" resultType="long" timeout="2">
+        SELECT b.id FROM ddc_namespace_env_app b
+        JOIN ddc_namespace n ON n.tenant_id = b.tenant_id AND n.id = b.namespace_id
+        JOIN ddc_app a ON a.tenant_id = b.tenant_id AND a.id = b.app_id
+        WHERE b.tenant_id = #{tenantId} AND n.biz_code = #{scope.bizCode}
+        AND n.namespace_code = #{scope.namespaceCode} AND b.env_code = #{scope.env}
+        AND a.biz_code = #{scope.bizCode} AND a.app_code = #{scope.appCode}
+        AND b.deleted_at IS NULL AND n.deleted_at IS NULL AND a.deleted_at IS NULL FOR SHARE OF b
+    </select>
+</mapper>

@@ -24,6 +24,7 @@ V1 支持由共享 PostgreSQL 和 Redis 支撑的一个逻辑控制面。多个 
 | 能力 | 当前功能 |
 |---|---|
 | 作用域元数据 | 业务域、应用、命名空间、环境及绑定的维护、启停与查询 |
+| 企业元数据中心 | 页面与公共多语种文案、草稿与原子发布、按页面和语言读取 JSON |
 | 动态配置 | 完整 YAML 资源、版本、发布/回滚、客户端刷新与 ACK、发布任务查询/重试 |
 | 服务治理 | RPC/HTTP Provider 与内部网关租约、心跳/恢复、服务目录与实例快照 |
 | Prompt/Skill | 租户隔离草稿、版本、发布/回滚、指定版本跨 scope 推广、反馈与优化 |
@@ -46,7 +47,7 @@ HTTP Provider  ─┤                                                          �
 
 Admin 进程是唯一的机器控制面 RPC Provider。客户端通过本地配置的
 `dns:///`、VIP 或负载均衡目标直连，不通过 Tianshu 服务发现引导 Tianshu 自身。
-Admin HTTP 仅保留给人工管理 API 和 Actuator 健康检查。各 Admin 共享 PostgreSQL 和 Redis；已完成
+Admin HTTP 提供人工管理 API、经认证的页面语言包读取和 Actuator 健康检查。各 Admin 共享 PostgreSQL 和 Redis；已完成
 发布的事实不依赖某个 Admin 的本地状态。Redis 保存配置缓存、发布通知、配置客户端
 当前租约和服务注册租约。PostgreSQL 保存配置、版本、发布、ACK、操作日志和配置
 客户端管理投影数据。
@@ -97,6 +98,18 @@ GET /api/v1/tianshu/bizs/page?pageNo=1&pageSize=10
 
 页码从 1 开始。这些 REST 接口服务于 Admin Web 和其他人工管理客户端；Starter 与
 RPC 机器客户端仍消费完整目录和快照，不使用 Admin 分页契约。
+
+## 页面多语种
+
+企业元数据中心通过 `/api/v1/tianshu/i18n` 管理各租户作用域内的页面语言资源。
+`common` 保存公共文案；其他页面使用稳定的 `pageCode` 和文案 key。保存草稿不会改变消费端结果，
+发布时整组语言原子生效。前端按页面和语言取得已合并公共文案、完成默认语言回退的 JSON，
+通过 Web SDK 加载和渲染。页面布局、业务逻辑仍由前端实现。
+
+Tianshu 自身的管理页面也通过中心加载文案。服务端提供中英默认 catalog、匿名登录启动包及
+受保护的企业覆盖读取；管理员可显式初始化缺失语言包，已有页面和草稿不会被覆盖。
+
+接口、权限、发布与缓存规则、数据库升级及前端接入见 [页面多语种使用说明](docs/page-i18n.md)。
 
 ## Prompt 与 Skill 资源
 

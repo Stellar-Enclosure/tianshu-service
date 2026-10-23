@@ -58,6 +58,7 @@ class DdcTianshuDdlContractTest {
             "db/egon-mp/V20261017_001__tianshu_ai_feedback_optimization.sql";
     private static final Set<String> TIANSHU_AI_OPTIMIZATION_TABLES = Set.of(
             "ddc_ai_usage_feedback_t0", "ddc_ai_optimization_policy_t0", "ddc_ai_optimization_run_t0");
+    private static final String I18N_SQL = "db/egon-mp/V20261022_001__tianshu_page_i18n.sql";
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final Pattern CREATE_TABLE = Pattern.compile(
             "(?im)^\\s*CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(?:public\\.)?([a-z0-9_]+)");
@@ -106,7 +107,7 @@ class DdcTianshuDdlContractTest {
 
         assertThat(manifest.path("family").asText()).isEqualTo("tianshu");
         assertThat(typedManifest.family()).isEqualTo("tianshu");
-        assertThat(manifest.path("scripts").size()).isEqualTo(4);
+        assertThat(manifest.path("scripts").size()).isEqualTo(5);
         JsonNode v001 = manifest.path("scripts").get(0);
         JsonNode v002 = manifest.path("scripts").get(1);
         JsonNode v003 = manifest.path("scripts").get(2);
@@ -122,6 +123,12 @@ class DdcTianshuDdlContractTest {
         JsonNode v004 = manifest.path("scripts").get(3);
         assertThat(v004.path("version").asText()).isEqualTo("20261018_001");
         assertThat(v004.path("sha256").asText()).isEqualTo(sha256(requiredResource(v004.path("path").asText())));
+        JsonNode v005 = manifest.path("scripts").get(4);
+        assertThat(v005.path("version").asText()).isEqualTo("20261022_001");
+        assertThat(v005.path("path").asText()).isEqualTo(I18N_SQL);
+        assertThat(v005.path("sha256").asText()).isEqualTo(sha256(requiredResource(I18N_SQL)));
+        assertThat(typedManifest.scripts().subList(typedManifest.startingIndex(null), typedManifest.scripts().size()))
+                .extracting(EgonColaDdlManifestBO.ScriptBO::version).containsExactly("20261018_001", "20261022_001");
         assertThat(typedManifest.freshBaselineVersion()).isEqualTo("20261018_001");
         assertThat(typedManifest.startingIndex(null)).isEqualTo(3);
     }
@@ -274,7 +281,8 @@ class DdcTianshuDdlContractTest {
         assertThat(sharding.getTransactionDefaultType()).isEqualTo("LOCAL");
         assertThat(sharding.getDataSources()).singleElement()
                 .satisfies(source -> assertThat(source.role()).isEqualTo(EgonColaShardingProperties.DataSourceRoleEnum.PRIMARY));
-        assertThat(sharding.getTables()).hasSize(21);
+        assertThat(sharding.getTables()).hasSize(22);
+        assertThat(sharding.getTables()).containsKey("ddc_i18n_page");
         assertThat(sharding.getTables()).containsKeys(TIANSHU_TABLES.stream()
                 .filter(table -> !"ddl_history".equals(table))
                 .map(table -> table.replaceFirst("_t0$", ""))
@@ -571,7 +579,7 @@ class DdcTianshuDdlContractTest {
                 when(rows.getString(2)).thenAnswer(row -> predicates.get(index[0] - 1).predicate());
             } else if (sql.contains("pg_catalog.pg_constraint")) {
                 List<String[]> constraints = new java.util.ArrayList<>();
-                for (String table : TIANSHU_TABLES) {
+                for (String table : java.util.stream.Stream.concat(TIANSHU_TABLES.stream(), java.util.stream.Stream.of("ddc_i18n_page_t0")).toList()) {
                     for (String constraint : sqlConstraints(table)) {
                         if (!constraint.equals(missingConstraint)) {
                             constraints.add(new String[]{table, constraint});
@@ -608,7 +616,8 @@ class DdcTianshuDdlContractTest {
 
     private static Set<String> sqlColumns(String table) throws SQLException {
         try {
-            String sql = new String(requiredResource(TIANSHU_SQL), java.nio.charset.StandardCharsets.UTF_8);
+            String sql = new String(requiredResource(TIANSHU_SQL), java.nio.charset.StandardCharsets.UTF_8)
+                    + "\n" + new String(requiredResource(I18N_SQL), java.nio.charset.StandardCharsets.UTF_8);
             Matcher definition = Pattern.compile("(?is)CREATE\\s+TABLE\\s+" + Pattern.quote(table)
                     + "\\s*\\((.*?)\\n\\);").matcher(sql);
             if (!definition.find()) {
@@ -629,7 +638,7 @@ class DdcTianshuDdlContractTest {
     private static List<IndexRow> sqlLifecycleIndexes(String table) throws SQLException {
         try {
             List<IndexRow> indexes = new java.util.ArrayList<>();
-            for (String resource : List.of(TIANSHU_SQL, TIANSHU_INSTANCE_KEY_SQL)) {
+            for (String resource : List.of(TIANSHU_SQL, TIANSHU_INSTANCE_KEY_SQL, I18N_SQL)) {
                 String sql = new String(requiredResource(resource), java.nio.charset.StandardCharsets.UTF_8);
                 Matcher index = Pattern.compile("(?im)^CREATE\\s+(UNIQUE\\s+)?INDEX\\s+([a-z0-9_]+)\\s+ON\\s+"
                         + Pattern.quote(table) + "\\s*\\(([^;]+?)\\)\\s*(?:WHERE\\s+[^;]+)?;").matcher(sql);
@@ -666,7 +675,8 @@ class DdcTianshuDdlContractTest {
 
     private static Set<String> sqlConstraints(String table) throws SQLException {
         try {
-            String sql = new String(requiredResource(TIANSHU_SQL), java.nio.charset.StandardCharsets.UTF_8);
+            String sql = new String(requiredResource(TIANSHU_SQL), java.nio.charset.StandardCharsets.UTF_8)
+                    + "\n" + new String(requiredResource(I18N_SQL), java.nio.charset.StandardCharsets.UTF_8);
             Matcher definition = Pattern.compile("(?is)CREATE\\s+TABLE\\s+" + Pattern.quote(table)
                     + "\\s*\\((.*?)\\n\\);").matcher(sql);
             Set<String> constraints = new java.util.LinkedHashSet<>();
@@ -689,7 +699,8 @@ class DdcTianshuDdlContractTest {
 
     private static List<IndexPredicateBO> sqlLiveIndexPredicates() throws SQLException {
         try {
-            String sql = new String(requiredResource(TIANSHU_SQL), java.nio.charset.StandardCharsets.UTF_8);
+            String sql = new String(requiredResource(TIANSHU_SQL), java.nio.charset.StandardCharsets.UTF_8)
+                    + "\n" + new String(requiredResource(I18N_SQL), java.nio.charset.StandardCharsets.UTF_8);
             Matcher index = Pattern.compile("(?im)^CREATE\\s+UNIQUE\\s+INDEX\\s+([a-z0-9_]+)\\s+ON\\s+"
                     + "[a-z0-9_]+\\s*\\(([^;]+?)\\)\\s*WHERE\\s+([^;]+);").matcher(sql);
             List<IndexPredicateBO> predicates = new java.util.ArrayList<>();

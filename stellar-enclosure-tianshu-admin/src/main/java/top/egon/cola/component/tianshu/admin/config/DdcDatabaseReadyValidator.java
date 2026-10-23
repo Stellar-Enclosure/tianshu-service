@@ -41,8 +41,12 @@ public class DdcDatabaseReadyValidator implements SmartInitializingSingleton {
             "ddc_biz_t0", "ddc_env_t0", "ddc_app_t0", "ddc_namespace_t0", "ddc_namespace_env_app_t0",
             "ddc_config_item_t0", "ddc_config_version_t0", "ddc_publish_task_t0", "ddc_publish_ack_t0",
             "ddc_instance_t0", "ddc_operation_log_t0", "ddc_ai_resource_t0", "ddc_ai_version_t0",
-            "ddc_ai_draft_node_t0", "ddc_ai_version_node_t0", "ddc_ai_publication_t0", "ddl_history");
+            "ddc_ai_draft_node_t0", "ddc_ai_version_node_t0", "ddc_ai_publication_t0", "ddc_i18n_page_t0", "ddl_history");
     private static final Map<String, Set<String>> TABLE_COLUMNS = Map.ofEntries(
+            Map.entry("ddc_i18n_page_t0", Set.of("id", "tenant_id", "create_user_id", "create_time", "update_user_id",
+                    "update_time", "deleted_at", "version", "biz_code", "namespace_id", "env_code", "app_code",
+                    "page_code", "name", "default_locale", "draft_translations", "published_default_locale",
+                    "published_translations", "published_version")),
             Map.entry("ddc_biz_t0", Set.of("id", "tenant_id", "create_user_id", "create_time", "update_user_id",
                     "update_time", "deleted_at", "version", "public_id", "biz_code", "biz_name", "description",
                     "enabled", "created_at", "updated_at")),
@@ -104,6 +108,10 @@ public class DdcDatabaseReadyValidator implements SmartInitializingSingleton {
             Map.entry("ddl_history", Set.of("tenant_id", "script", "type", "version", "checksum", "installed_on",
                     "execution_ms", "route_fingerprint")));
     private static final Map<String, IndexSpecBO> LIFECYCLE_INDEXES = Map.ofEntries(
+            Map.entry("uk_i18n_page_lifecycle", new IndexSpecBO("ddc_i18n_page_t0",
+                    List.of("tenant_id", "biz_code", "namespace_id", "env_code", "app_code", "page_code", "deleted_at"))),
+            Map.entry("uk_i18n_page_live", new IndexSpecBO("ddc_i18n_page_t0",
+                    List.of("tenant_id", "biz_code", "namespace_id", "env_code", "app_code", "page_code"))),
             Map.entry("uk_biz_lifecycle", new IndexSpecBO("ddc_biz_t0", List.of("tenant_id", "biz_code", "deleted_at"))),
             Map.entry("uk_biz_live", new IndexSpecBO("ddc_biz_t0", List.of("tenant_id", "biz_code"))),
             Map.entry("uk_env_lifecycle", new IndexSpecBO("ddc_env_t0", List.of("tenant_id", "env_code", "deleted_at"))),
@@ -134,6 +142,8 @@ public class DdcDatabaseReadyValidator implements SmartInitializingSingleton {
             Map.entry("uk_instance_business", new IndexSpecBO("ddc_instance_t0",
                     List.of("tenant_id", "instance_id"))));
     private static final Map<String, Set<String>> TABLE_CONSTRAINTS = Map.ofEntries(
+            Map.entry("ddc_i18n_page_t0", Set.of("pk_i18n_page", "uk_i18n_page_tenant_id", "fk_i18n_page_namespace",
+                    "ck_i18n_page_code", "ck_i18n_page_draft", "ck_i18n_page_published")),
             Map.entry("ddc_biz_t0", Set.of("pk_biz", "uk_biz_tenant_id", "uk_biz_public")),
             Map.entry("ddc_env_t0", Set.of("pk_env", "uk_env_tenant_id", "uk_env_public")),
             Map.entry("ddc_app_t0", Set.of("pk_app", "uk_app_tenant_id", "uk_app_public")),

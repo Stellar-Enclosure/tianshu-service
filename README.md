@@ -7,6 +7,8 @@ Service registry, dynamic configuration center and Prompt/Skill resource control
 ## Current capabilities
 
 - Manage businesses, applications, namespaces, environments and their bindings; maintain scoped YAML configuration resources with version history, publish and rollback.
+- Manage page and shared translations in the enterprise metadata center, publish complete language snapshots, and serve authenticated JSON bundles with per-key language fallback. See [page internationalization](docs/page-i18n.md).
+- Serve the Tianshu console's own translations from server-owned Chinese/English catalogs with published tenant overrides, an isolated public login bundle, and explicit initialization that preserves existing drafts.
 - Distribute configuration through the ConfigData/`@DdcValue` client lifecycle, selective refresh, lease heartbeats and publication ACKs; expose task progress and retry APIs.
 - Register and discover RPC/HTTP providers and internal gateways through Redis leases; expose service directories, instance snapshots and paginated management queries.
 - Manage tenant-isolated Prompt text and Skill file trees, immutable published versions, rollback and cross-scope version promotion. Collect usage feedback and run configured optimization into drafts or optional publication.
@@ -22,7 +24,7 @@ Service registry, dynamic configuration center and Prompt/Skill resource control
 | [Admin](stellar-enclosure-tianshu-admin/) | Human management REST APIs, direct machine gRPC facades, PostgreSQL facts, Redis state and publication orchestration. |
 | [Test](stellar-enclosure-tianshu-test/) | Sample consumer application and lifecycle/contract verification. |
 
-Machine clients connect directly to a configured Tianshu gRPC target through the RPC Tianshu adapter owned by [Components](https://github.com/Stellar-Enclosure/Stellar-Enclosure-Components/tree/main/stellar-enclosure-component-rpc/stellar-enclosure-component-rpc-tianshu-adapter). Tianshu does not discover itself. Admin exposes human management APIs under `/api/v1/tianshu`; [tianshu-web](https://github.com/Stellar-Enclosure/tianshu-web) owns the separate console. Shoubing supplies identity/service tokens, Jianshen supplies user authorization, and Yuheng consumes registry/configuration state.
+Machine clients connect directly to a configured Tianshu gRPC target through the RPC Tianshu adapter owned by [Components](https://github.com/Stellar-Enclosure/Stellar-Enclosure-Components/tree/main/stellar-enclosure-component-rpc/stellar-enclosure-component-rpc-tianshu-adapter). Tianshu does not discover itself. Admin exposes human management APIs and authenticated page-language bundle reads under `/api/v1/tianshu`; [tianshu-web](https://github.com/Stellar-Enclosure/tianshu-web) owns the separate console. Shoubing supplies identity/service tokens, Jianshen supplies user authorization, and Yuheng consumes registry/configuration state.
 
 PostgreSQL stores durable facts; Redis holds caches, notifications and temporary leases. Multiple Admin instances share that logical control plane. This repository does not implement Raft, database/Redis HA, a generic distributed lock service or an embedded UI. Prompt/Skill features require tenant credentials and an explicitly prepared persistence target; see the [migration runbook](docs/tianshu-ai-migration-runbook.md).
 

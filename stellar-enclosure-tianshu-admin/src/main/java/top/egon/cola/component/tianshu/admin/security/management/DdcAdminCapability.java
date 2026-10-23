@@ -4,6 +4,8 @@ public enum DdcAdminCapability {
 
     READ("TIANSHU_READ"),
 
+    I18N_READ("TIANSHU_I18N_READ"),
+
     WRITE("TIANSHU_WRITE"),
 
     PUBLISH("TIANSHU_PUBLISH"),

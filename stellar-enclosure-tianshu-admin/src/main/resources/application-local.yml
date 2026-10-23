@@ -60,6 +60,7 @@ egon:
             enabled: true
             permission-scopes:
               "TIANSHU_READ": ["TIANSHU_READ"]
+              "TIANSHU_I18N_READ": ["TIANSHU_I18N_READ"]
               "TIANSHU_WRITE": ["TIANSHU_WRITE"]
               "TIANSHU_PUBLISH": ["TIANSHU_PUBLISH"]
               "TIANSHU_CACHE": ["TIANSHU_CACHE"]

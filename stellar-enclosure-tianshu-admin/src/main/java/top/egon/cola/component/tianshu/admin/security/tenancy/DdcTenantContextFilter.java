@@ -40,6 +40,9 @@ public class DdcTenantContextFilter extends OncePerRequestFilter {
         if (path == null || path.startsWith("/actuator/")) {
             return true;
         }
+        if ("GET".equals(request.getMethod()) && "/api/v1/tianshu/i18n/public/bundle".equals(path)) {
+            return true;
+        }
         return !path.startsWith("/api/v1/tianshu/")
                 && !path.equals("/api/v1/auth/bootstrap")
                 && !path.equals("/api/v1/tianshu/auth/bootstrap");
@@ -82,7 +85,7 @@ public class DdcTenantContextFilter extends OncePerRequestFilter {
     private boolean matchesExpectedTenant(HttpServletRequest request, String identityTenantId) {
         Enumeration<String> values = request.getHeaders(TENANT_HEADER);
         if (values == null || !values.hasMoreElements()) {
-            return !isAiPath(request.getRequestURI());
+            return !requiresExpectedTenant(request.getRequestURI());
         }
         String expectedHeader = values.nextElement();
         if (values.hasMoreElements() || expectedHeader == null || expectedHeader.isBlank()) {
@@ -97,8 +100,9 @@ public class DdcTenantContextFilter extends OncePerRequestFilter {
         return !hasControlCharacter(decoded) && decoded.equals(identityTenantId);
     }
 
-    private boolean isAiPath(String path) {
-        return path != null && path.startsWith("/api/v1/tianshu/ai/");
+    private boolean requiresExpectedTenant(String path) {
+        return path != null && (path.startsWith("/api/v1/tianshu/ai/")
+                || path.startsWith("/api/v1/tianshu/i18n/"));
     }
 
     private boolean hasControlCharacter(String value) {

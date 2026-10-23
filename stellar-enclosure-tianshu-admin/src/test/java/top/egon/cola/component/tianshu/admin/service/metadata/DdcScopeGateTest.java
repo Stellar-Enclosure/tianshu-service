@@ -3,6 +3,8 @@ package top.egon.cola.component.tianshu.admin.service.metadata;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.MDC;
 import top.egon.cola.component.common.core.exception.CommonException;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcAppBO;
@@ -157,6 +159,57 @@ class DdcScopeGateTest {
 
         verify(appRepository, times(2))
                 .findByBizCodeAndAppCode("pay-biz", "orders-app");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"biz", "app", "env", "namespace"})
+    void freshCheckRejectsDisabledEntityEvenWhenTheSharedCacheIsEnabled(String dimension) {
+        enabledScope();
+        gate.assertEnabled("pay-biz", "orders-app", "dev", "default");
+        switch (dimension) {
+            case "biz" -> when(bizRepository.findByBizCode("pay-biz")).thenReturn(Optional.of(biz(false)));
+            case "app" -> when(appRepository.findByBizCodeAndAppCode("pay-biz", "orders-app"))
+                    .thenReturn(Optional.of(app(false)));
+            case "env" -> when(envRepository.findByEnvCode("dev")).thenReturn(Optional.of(env(false)));
+            case "namespace" -> when(namespaceRepository.findByBizCodeAndNamespaceCode("pay-biz", "default"))
+                    .thenReturn(Optional.of(ns(false)));
+            default -> throw new IllegalArgumentException(dimension);
+        }
+
+        assertThatThrownBy(() -> gate.assertEnabledFresh("pay-biz", "orders-app", "dev", "default"))
+                .isInstanceOfSatisfying(CommonException.class, this::assertThatThrownByStatus);
+        assertThatCode(() -> gate.assertEnabled("pay-biz", "orders-app", "dev", "default"))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void freshCheckDoesNotPopulateTheSharedCache() {
+        enabledScope();
+        gate.assertEnabledFresh("pay-biz", "orders-app", "dev", "default");
+        when(appRepository.findByBizCodeAndAppCode("pay-biz", "orders-app"))
+                .thenReturn(Optional.of(app(false)));
+
+        assertThatThrownBy(() -> gate.assertEnabled("pay-biz", "orders-app", "dev", "default"))
+                .isInstanceOfSatisfying(CommonException.class, this::assertThatThrownByStatus);
+        verify(appRepository, times(2)).findByBizCodeAndAppCode("pay-biz", "orders-app");
+    }
+
+    @Test
+    void freshCheckRejectsMissingEntitiesAndTenantContext() {
+        assertThatThrownBy(() -> gate.assertEnabledFresh("pay-biz", "orders-app", "dev", "default"))
+                .isInstanceOfSatisfying(CommonException.class, this::assertThatThrownByStatus);
+        MDC.remove("tenantId");
+        assertThatThrownBy(() -> gate.assertEnabledFresh("pay-biz", "orders-app", "dev", "default"))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    private void enabledScope() {
+        when(bizRepository.findByBizCode("pay-biz")).thenReturn(Optional.of(biz(true)));
+        when(appRepository.findByBizCodeAndAppCode("pay-biz", "orders-app"))
+                .thenReturn(Optional.of(app(true)));
+        when(envRepository.findByEnvCode("dev")).thenReturn(Optional.of(env(true)));
+        when(namespaceRepository.findByBizCodeAndNamespaceCode("pay-biz", "default"))
+                .thenReturn(Optional.of(ns(true)));
     }
 
     private void assertThatThrownByStatus(CommonException e) {

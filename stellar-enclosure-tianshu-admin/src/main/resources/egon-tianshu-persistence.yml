@@ -43,6 +43,7 @@ egon:
             ddc_instance: { type: STANDARD_TENANT_ID }
             ddc_operation_log: { type: STANDARD_TENANT_ID }
             ddc_ai_resource: { type: STANDARD_TENANT_ID }
+            ddc_i18n_page: { type: STANDARD_TENANT_ID }
             ddc_ai_version: { type: STANDARD_TENANT_ID }
             ddc_ai_draft_node: { type: STANDARD_TENANT_ID }
             ddc_ai_version_node: { type: STANDARD_TENANT_ID }

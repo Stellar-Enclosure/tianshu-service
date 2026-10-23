@@ -66,13 +66,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         DdcPublishTaskController.class,
         DdcCacheController.class,
         DdcAiResourceController.class,
+        top.egon.cola.component.tianshu.admin.controller.i18n.DdcI18nPageController.class,
+        top.egon.cola.component.tianshu.admin.controller.i18n.DdcAdminUiI18nController.class,
         DdcAdminSecurityIntegrationTest.HealthInfoController.class,
         DdcAdminSecurityIntegrationTest.RegistryInfoController.class,
         DdcAdminSecurityIntegrationTest.BindingInfoController.class,
         DdcAdminSecurityIntegrationTest.PagedInfoController.class
 })
 @Import({DdcAdminSecurityConfiguration.class, DdcTenantRegistry.class,
-        DdcTenantContextExecutor.class})
+        DdcTenantContextExecutor.class, top.egon.cola.component.tianshu.admin.config.DdcI18nWebConfiguration.class})
 @TestPropertySource(properties = {
         "egon.cola.platform.tianquan.shoubing.usage-observation.enabled=false",
         "egon.cola.component.tianshu.admin.security.local-dev=true",
@@ -121,6 +123,148 @@ class DdcAdminSecurityIntegrationTest {
         when(configService.list(any())).thenReturn(List.of());
         mockMvc.perform(get("/api/v1/tianshu/configs").with(authentication(rbac3("TIANSHU_READ"))))
                 .andExpect(status().isOk());
+    }
+
+    @MockBean(name = "ddcI18nPageService")
+    private top.egon.cola.component.tianshu.admin.service.i18n.DdcI18nPageService i18nService;
+
+    @MockBean(name = "ddcAdminUiI18nService")
+    private top.egon.cola.component.tianshu.admin.service.i18n.DdcAdminUiI18nService adminUiI18nService;
+
+    @MockBean(name = "ddcAdminUiI18nCatalog")
+    private top.egon.cola.component.tianshu.admin.service.i18n.DdcAdminUiI18nCatalog adminUiI18nCatalog;
+
+    @Test
+    void publicAuthLanguageIsAnonymousAndNeverReadsEnterprisePages() throws Exception {
+        when(adminUiI18nCatalog.publicBundle("en-US")).thenReturn(
+                new top.egon.cola.component.tianshu.admin.model.vo.DdcI18nBundleResult(
+                        "tianshu.auth", "en-US", "zh-CN", "public-version", Map.of("login", "Log in")));
+        mockMvc.perform(get("/api/v1/tianshu/i18n/public/bundle").param("locale", "en-US")
+                        .param("pageCode", "tianshu.configs").param("tenantId", "999").param("bizCode", "attacker"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.pageCode").value("tianshu.auth"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Cache-Control", "no-store"));
+        mockMvc.perform(get("/api/v1/tianshu/i18n/public/bundle").param("locale", "en-US")
+                        .with(authentication(rbac3("TIANSHU_READ"))).header("X-Egon-Tianshu-Tenant", "wrong-tenant"))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/tianshu/i18n/public/bundle").param("locale", "en-US"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/v1/tianshu/i18n/admin/bundle").param("pageCode", "tianshu.bizs").param("locale", "en-US"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/v1/tianshu/i18n/bundle").param("pageCode", "common").param("locale", "en-US"))
+                .andExpect(status().isUnauthorized());
+        verifyNoInteractions(adminUiI18nService, i18nService);
+    }
+
+    @Test
+    void adminLanguageReadRequiresAdminReadAndMatchingExpectedTenant() throws Exception {
+        for (String path : List.of("bootstrap", "bundle")) {
+            mockMvc.perform(get("/api/v1/tianshu/i18n/admin/" + path).with(authentication(rbac3("TIANSHU_READ"))))
+                    .andExpect(status().isForbidden());
+            mockMvc.perform(get("/api/v1/tianshu/i18n/admin/" + path).with(authentication(rbac3("TIANSHU_READ")))
+                            .header("X-Egon-Tianshu-Tenant", "tenant-b"))
+                    .andExpect(status().isForbidden());
+            mockMvc.perform(get("/api/v1/tianshu/i18n/admin/" + path).with(authentication(rbac3("TIANSHU_I18N_READ")))
+                            .header("X-Egon-Tianshu-Tenant", "tenant-a"))
+                    .andExpect(status().isForbidden());
+        }
+        verifyNoInteractions(adminUiI18nService);
+    }
+
+    @Test
+    void adminLanguageRequestsCannotChooseTenantOrBusinessScope() throws Exception {
+        when(adminUiI18nService.bundle("tianshu.bizs", "en-US")).thenReturn(
+                new top.egon.cola.component.tianshu.admin.model.vo.DdcI18nBundleResult(
+                        "tianshu.bizs", "en-US", "zh-CN", "admin-version", Map.of("title", "Domains")));
+        mockMvc.perform(get("/api/v1/tianshu/i18n/admin/bundle").param("pageCode", "tianshu.bizs").param("locale", "en-US")
+                        .param("tenantId", "999").param("bizCode", "attacker").param("appCode", "another-app")
+                        .param("namespaceCode", "another-namespace").param("env", "another-env")
+                        .with(authentication(rbac3("TIANSHU_READ"))).header("X-Egon-Tianshu-Tenant", "tenant-a"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.messages.title").value("Domains"));
+        verify(adminUiI18nService).bundle("tianshu.bizs", "en-US");
+    }
+
+    @Test
+    void adminLanguageInitializationRequiresReadWritePublishTogether() throws Exception {
+        for (String permission : List.of("TIANSHU_READ", "TIANSHU_WRITE", "TIANSHU_PUBLISH")) {
+            mockMvc.perform(post("/api/v1/tianshu/i18n/admin/initialize").with(authentication(rbac3(permission)))
+                            .header("X-Egon-Tianshu-Tenant", "tenant-a"))
+                    .andExpect(status().isForbidden());
+        }
+        verifyNoInteractions(adminUiI18nService);
+        when(adminUiI18nService.initialize()).thenReturn(
+                new top.egon.cola.component.tianshu.admin.model.vo.DdcAdminUiI18nInitializeResult(15, 0));
+        mockMvc.perform(post("/api/v1/tianshu/i18n/admin/initialize").with(authentication(rbac3("*")))
+                        .header("X-Egon-Tianshu-Tenant", "tenant-a"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.created").value(15));
+        verify(adminUiI18nService).initialize();
+    }
+
+    @Test
+    void i18nConditionalRequestStillRequiresPermissionAndExpectedTenant() throws Exception {
+        var request = get("/api/v1/tianshu/i18n/bundle").param("bizCode", "retail").param("namespaceCode", "main")
+                .param("env", "prod").param("appCode", "shop").param("pageCode", "orders").param("locale", "en-US")
+                .header("If-None-Match", "W/\"hash\"");
+        mockMvc.perform(request.with(authentication(unscoped("TIANSHU_I18N_READ", "reader")))
+                        .header("X-Egon-Tianshu-Tenant", "tenant-a")).andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/tianshu/i18n/bundle").with(authentication(rbac3("TIANSHU_I18N_READ"))))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(request.with(authentication(rbac3("TIANSHU_I18N_READ")))
+                        .header("X-Egon-Tianshu-Tenant", "tenant-b")).andExpect(status().isForbidden());
+        verifyNoInteractions(i18nService);
+    }
+
+    @Test
+    void i18nConsumerCanReadPublishedBundleAnd304ButCannotReadDrafts() throws Exception {
+        when(i18nService.bundle(any(), any(), any())).thenReturn(
+                new top.egon.cola.component.tianshu.admin.model.vo.DdcI18nBundleResult("orders", "en-US", "zh-CN", "hash", Map.of("title", "Orders")));
+        for (String permission : List.of("TIANSHU_I18N_READ", "TIANSHU_READ")) {
+            mockMvc.perform(get("/api/v1/tianshu/i18n/bundle").param("bizCode", "retail").param("namespaceCode", "main")
+                            .param("env", "prod").param("appCode", "shop").param("pageCode", "orders").param("locale", "en-US")
+                            .header("X-Egon-Tianshu-Tenant", "tenant-a").with(authentication(rbac3(permission))))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.messages.title").value("Orders"))
+                    .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("ETag", "W/\"hash\""))
+                    .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Cache-Control", "private, no-cache"));
+        }
+        mockMvc.perform(get("/api/v1/tianshu/i18n/bundle").param("bizCode", "retail").param("namespaceCode", "main")
+                        .param("env", "prod").param("appCode", "shop").param("pageCode", "orders").param("locale", "en-US")
+                        .header("X-Egon-Tianshu-Tenant", "tenant-a").header("If-None-Match", "\"old\", W/\"hash\"")
+                        .with(authentication(rbac3("TIANSHU_I18N_READ"))))
+                .andExpect(status().isNotModified()).andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().string(""));
+        mockMvc.perform(get("/api/v1/tianshu/i18n/pages/1").header("X-Egon-Tianshu-Tenant", "tenant-a")
+                        .with(authentication(rbac3("TIANSHU_I18N_READ"))))
+                .andExpect(status().isForbidden());
+        verify(i18nService, org.mockito.Mockito.times(3)).bundle(any(), any(), any());
+    }
+
+    @Test
+    void i18nErrorsRemainStructuredAndNeverCache() throws Exception {
+        when(i18nService.get(1L)).thenThrow(new top.egon.cola.component.common.core.exception.CommonException(
+                56402, "TIANSHU_I18N_PAGE_NOT_FOUND", "Page not found"));
+        mockMvc.perform(get("/api/v1/tianshu/i18n/pages/1").header("X-Egon-Tianshu-Tenant", "tenant-a")
+                        .with(authentication(rbac3("TIANSHU_READ"))))
+                .andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value(56402))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Cache-Control", "no-store"));
+        org.mockito.Mockito.doThrow(new org.springframework.dao.TransientDataAccessResourceException("database unavailable"))
+                .when(i18nService).get(1L);
+        mockMvc.perform(get("/api/v1/tianshu/i18n/pages/1").header("X-Egon-Tianshu-Tenant", "tenant-a")
+                        .with(authentication(rbac3("TIANSHU_READ"))))
+                .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.code").value(56410));
+    }
+
+    @Test
+    void i18nPublishNeedsPublishAuthorityAndStrictJsonRejectsDuplicateOrNonTextMessages() throws Exception {
+        mockMvc.perform(post("/api/v1/tianshu/i18n/pages/1/publish").header("X-Egon-Tianshu-Tenant", "tenant-a")
+                        .with(authentication(rbac3("TIANSHU_WRITE"))).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expectedRevision\":\"0\"}"))
+                .andExpect(status().isForbidden());
+        for (String translations : List.of("{\"en-US\":{\"title\":1}}", "{\"en-US\":{\"title\":\"one\",\"title\":\"two\"}}")) {
+            mockMvc.perform(post("/api/v1/tianshu/i18n/pages").header("X-Egon-Tianshu-Tenant", "tenant-a")
+                            .with(authentication(rbac3("TIANSHU_WRITE"))).contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"bizCode\":\"retail\",\"namespaceCode\":\"main\",\"env\":\"prod\",\"appCode\":\"shop\","
+                                    + "\"pageCode\":\"orders\",\"name\":\"Orders\",\"defaultLocale\":\"en-US\",\"translations\":" + translations + "}"))
+                    .andExpect(status().isBadRequest());
+        }
+        verifyNoInteractions(i18nService);
     }
 
     @Autowired

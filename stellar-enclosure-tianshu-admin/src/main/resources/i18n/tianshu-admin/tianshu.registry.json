@@ -1,0 +1,49 @@
+{
+  "pageCode": "tianshu.registry",
+  "name": "服务注册目录",
+  "defaultLocale": "zh-CN",
+  "translations": {
+    "zh-CN": {
+      "fields.scope": "业务域 / 环境 / 应用",
+      "fields.transport": "类型 / 协议",
+      "fields.serviceName": "服务名",
+      "fields.version": "分组 / 版本",
+      "fields.serviceId": "Service ID",
+      "actions.viewInstances": "查看实例",
+      "fields.instanceId": "实例 ID",
+      "fields.address": "地址",
+      "fields.lastHeartbeatAt": "最近心跳",
+      "fields.expireAt": "过期时间",
+      "title": "服务注册目录",
+      "description": "分页查看服务键，并按需加载单个服务的实例列表。",
+      "stats.services": "服务总数",
+      "stats.onlineOnPage": "当前实例页在线",
+      "list.title": "服务目录",
+      "instances.title": "{{name}} 实例",
+      "status.ONLINE": "在线",
+      "status.OFFLINE": "离线",
+      "status.UNKNOWN": "未知"
+    },
+    "en-US": {
+      "fields.scope": "Business domain / Environment / Application",
+      "fields.transport": "Type / Protocol",
+      "fields.serviceName": "Service name",
+      "fields.version": "Group / Version",
+      "fields.serviceId": "Service ID",
+      "actions.viewInstances": "View instances",
+      "fields.instanceId": "Instance ID",
+      "fields.address": "Address",
+      "fields.lastHeartbeatAt": "Last heartbeat",
+      "fields.expireAt": "Expires at",
+      "title": "Service registry",
+      "description": "Browse service keys by page and load instances for a selected service.",
+      "stats.services": "Total services",
+      "stats.onlineOnPage": "Online on current instance page",
+      "list.title": "Service directory",
+      "instances.title": "{{name}} instances",
+      "status.ONLINE": "Online",
+      "status.OFFLINE": "Offline",
+      "status.UNKNOWN": "Unknown"
+    }
+  }
+}

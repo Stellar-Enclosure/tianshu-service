@@ -15,6 +15,7 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.AnonymousAuthenticationFilter;
 import top.egon.cola.component.tianshu.admin.config.DdcAdminProperties;
+import top.egon.cola.component.tianshu.admin.config.DdcAdminUiI18nProperties;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantAdminProperties;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextExecutor;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextFilter;
@@ -25,7 +26,7 @@ import top.egon.cola.platform.tianquan.jianshen.starter.security.Rbac3BearerAuth
 @lombok.extern.slf4j.Slf4j
 @Configuration(value = "ddcAdminSecurityConfiguration", proxyBeanMethods = false)
 @EnableMethodSecurity
-@EnableConfigurationProperties({DdcAdminProperties.class, DdcTenantAdminProperties.class})
+@EnableConfigurationProperties({DdcAdminProperties.class, DdcTenantAdminProperties.class, DdcAdminUiI18nProperties.class})
 public class DdcAdminSecurityConfiguration {
 
     @Bean(name = "ddcAdminAuthenticationEntryPoint")
@@ -68,12 +69,30 @@ public class DdcAdminSecurityConfiguration {
                                 "/actuator/health/**",
                                 "/actuator/info"
                         ).permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/tianshu/i18n/public/bundle").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/tianshu/i18n/admin/bootstrap", "/api/v1/tianshu/i18n/admin/bundle")
+                        .access(scopeAndCapability(DdcAdminCapability.READ))
+                        .requestMatchers(HttpMethod.POST, "/api/v1/tianshu/i18n/admin/initialize")
+                        .access(org.springframework.security.authorization.AuthorizationManagers.allOf(
+                                scopeAndCapability(DdcAdminCapability.READ), scopeAndCapability(DdcAdminCapability.WRITE),
+                                scopeAndCapability(DdcAdminCapability.PUBLISH)))
                         .requestMatchers(
                                 HttpMethod.GET,
                                 "/api/v1/auth/bootstrap",
                                 "/api/v1/tianshu/auth/bootstrap"
                         )
                         .access(scopeAndCapability(DdcAdminCapability.READ))
+                        .requestMatchers(HttpMethod.GET, "/api/v1/tianshu/i18n/bundle")
+                        .access(org.springframework.security.authorization.AuthorizationManagers.anyOf(
+                                scopeAndCapability(DdcAdminCapability.I18N_READ), scopeAndCapability(DdcAdminCapability.READ)))
+                        .requestMatchers(HttpMethod.GET, "/api/v1/tianshu/i18n/pages", "/api/v1/tianshu/i18n/pages/*")
+                        .access(scopeAndCapability(DdcAdminCapability.READ))
+                        .requestMatchers(HttpMethod.POST, "/api/v1/tianshu/i18n/pages/*/publish")
+                        .access(scopeAndCapability(DdcAdminCapability.PUBLISH))
+                        .requestMatchers(HttpMethod.POST, "/api/v1/tianshu/i18n/pages")
+                        .access(scopeAndCapability(DdcAdminCapability.WRITE))
+                        .requestMatchers(HttpMethod.PUT, "/api/v1/tianshu/i18n/pages/*/draft")
+                        .access(scopeAndCapability(DdcAdminCapability.WRITE))
                         .requestMatchers("/api/v1/tianshu/ai/**")
                         .authenticated()
                         .requestMatchers("/api/v1/tianshu/cache/**")

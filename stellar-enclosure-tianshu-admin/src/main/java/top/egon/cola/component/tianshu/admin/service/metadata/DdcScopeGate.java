@@ -56,6 +56,22 @@ public class DdcScopeGate {
                         .map(DdcNamespaceBO::getEnabled));
     }
 
+    /**
+     * Reads scope state directly without consulting or populating the shared cache.
+     * Write callers must hold the parent metadata locks in the same transaction.
+     */
+    public void assertEnabledFresh(String bizCode, String appCode, String env, String namespace) {
+        tenantId();
+        requireEnabled("biz", bizRepository.findByBizCode(bizCode)
+                .map(DdcBizBO::getEnabled).orElse(null));
+        requireEnabled("app", appRepository.findByBizCodeAndAppCode(bizCode, appCode)
+                .map(DdcAppBO::getEnabled).orElse(null));
+        requireEnabled("env", envRepository.findByEnvCode(env)
+                .map(DdcEnvBO::getEnabled).orElse(null));
+        requireEnabled("namespace", namespaceRepository.findByBizCodeAndNamespaceCode(bizCode, namespace)
+                .map(DdcNamespaceBO::getEnabled).orElse(null));
+    }
+
     public void assertPhysicalEnabled(String bizCode, String appCode, String env) {
         requireEnabled("biz", bizCode, () -> bizRepository.findByBizCode(bizCode)
                 .map(DdcBizBO::getEnabled));
@@ -84,7 +100,10 @@ public class DdcScopeGate {
     }
 
     private void requireEnabled(String label, String code, Supplier<java.util.Optional<Boolean>> loader) {
-        Boolean enabled = cached(label + ":" + code, loader);
+        requireEnabled(label, cached(label + ":" + code, loader));
+    }
+
+    private void requireEnabled(String label, Boolean enabled) {
         if (!Boolean.TRUE.equals(enabled)) {
             log.debug("Denied disabled Tianshu scope for tenantId={}, dimension={}",
                     tenantId(), label);
