@@ -1,5 +1,6 @@
 package top.egon.cola.component.tianshu.environment;
 
+import org.springframework.boot.env.PropertySourceInfo;
 import org.springframework.boot.origin.Origin;
 import org.springframework.boot.origin.OriginLookup;
 import org.springframework.boot.origin.OriginTrackedValue;
@@ -18,7 +19,7 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public final class DdcDynamicPropertySource
         extends EnumerablePropertySource<AtomicReference<DdcDynamicPropertySource.Snapshot>>
-        implements OriginLookup<String> {
+        implements OriginLookup<String>, PropertySourceInfo {
 
     /**
      * 使用初始快照创建动态属性源。 Creates a dynamic property source with its initial snapshot.

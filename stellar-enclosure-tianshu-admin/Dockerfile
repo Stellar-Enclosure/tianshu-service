@@ -1,4 +1,4 @@
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:25-jre
 WORKDIR /app
 COPY target/stellar-enclosure-tianshu-admin-exec.jar app.jar
 EXPOSE 18080 19080

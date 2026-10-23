@@ -204,7 +204,7 @@
 
 | 依赖 | 使用版本 | 已知高危 CVE | 风险评估 |
 |------|---------|-------------|---------|
-| Spring Boot | 3.5.16 | 无（最新补丁版本） | ✅ 安全 |
+| Spring Boot | 4.1.2 | 无（最新补丁版本） | ✅ 安全 |
 | Spring Security | （由 Spring Boot 管理） | 无已知高危 | ✅ 安全 |
 | Redisson | 3.26.0 | 无已知高危 | ✅ 安全 |
 | Flyway | 11.15.0 | 无已知高危 | ✅ 安全 |
@@ -215,11 +215,11 @@
 | gRPC | 1.75.0 | 无已知高危 | ✅ 安全 |
 | Protobuf | 4.32.0 | 无已知高危 | ✅ 安全 |
 | Lombok | 1.18.46 | 无已知高危 | ✅ 安全 |
-| SnakeYAML | （由 Spring Boot 管理） | 历史 CVE（Spring Boot 3.x 已内置 SafeConstructor 修复） | ✅ 安全（通过 Spring Boot 的安全封装使用） |
+| SnakeYAML | （由 Spring Boot 管理） | 历史 CVE（Spring Boot 4.x 已内置 SafeConstructor 修复） | ✅ 安全（通过 Spring Boot 的安全封装使用） |
 
 ### SnakeYAML 安全性特别说明
 
-本项目通过 `YamlPropertySourceLoader`（Spring Boot 内置）解析 YAML 配置内容。Spring Boot 3.x 的 `YamlPropertySourceLoader` 内部使用 SnakeYAML 的 `Constructor`（非默认 `Yaml` 实例），该构造器被配置为安全模式，**不允许通过 YAML 标签（如 `!!javax.script.ScriptEngineManager`）实例化任意 Java 类**。因此，即使攻击者能够提交恶意 YAML 内容，也无法通过 SnakeYAML 实现 RCE。此外，项目还有以下防护：
+本项目通过 `YamlPropertySourceLoader`（Spring Boot 内置）解析 YAML 配置内容。Spring Boot 4.x 的 `YamlPropertySourceLoader` 内部使用 SnakeYAML 的 `Constructor`（非默认 `Yaml` 实例），该构造器被配置为安全模式，**不允许通过 YAML 标签（如 `!!javax.script.ScriptEngineManager`）实例化任意 Java 类**。因此，即使攻击者能够提交恶意 YAML 内容，也无法通过 SnakeYAML 实现 RCE。此外，项目还有以下防护：
 
 1. `DdcYamlConfigValidator` 限制 YAML 内容最大 1MB（默认 1048576 bytes）
 2. `DdcConfigService.validateDraft()` 在保存前验证 YAML 格式合法性

@@ -34,6 +34,11 @@ info:
     version: ${sdk.version}
 
 spring:
+  http:
+    converters:
+      preferred-json-mapper: jackson2
+    codecs:
+      preferred-json-mapper: jackson2
   application:
     name: stellar-enclosure-tianshu-admin
   datasource:
@@ -45,7 +50,7 @@ spring:
     default: local
   autoconfigure:
     exclude:
-      - org.redisson.spring.starter.RedissonAutoConfigurationV2
+      - org.redisson.spring.starter.RedissonAutoConfigurationV4
   flyway:
     enabled: false
   config:

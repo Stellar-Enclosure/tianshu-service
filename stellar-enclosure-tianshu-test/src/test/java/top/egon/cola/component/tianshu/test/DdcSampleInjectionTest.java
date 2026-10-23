@@ -25,10 +25,10 @@ import static org.assertj.core.api.Assertions.assertThat;
         "egon.cola.component.tianshu.rpc.auth.runtime.secret-key=test",
         "egon.cola.component.tianshu.redis.enabled=false",
         "egon.cola.component.tianshu.consistency.fail-fast=false",
-        "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,"
-                + "org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration,"
-                + "org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration,"
-                + "org.redisson.spring.starter.RedissonAutoConfigurationV2"
+        "spring.autoconfigure.exclude=org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,"
+                + "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration,"
+                + "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration,"
+                + "org.redisson.spring.starter.RedissonAutoConfigurationV4"
 })
 class DdcSampleInjectionTest {
 

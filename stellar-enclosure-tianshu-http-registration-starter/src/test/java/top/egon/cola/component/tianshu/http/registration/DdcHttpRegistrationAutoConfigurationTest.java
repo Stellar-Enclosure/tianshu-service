@@ -1,13 +1,13 @@
 package top.egon.cola.component.tianshu.http.registration;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.actuate.health.Status;
+import org.springframework.boot.health.contributor.Status;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.FilteredClassLoader;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
-import org.springframework.boot.web.context.WebServerApplicationContext;
-import org.springframework.boot.web.context.WebServerInitializedEvent;
+import org.springframework.boot.web.server.context.WebServerApplicationContext;
+import org.springframework.boot.web.server.context.WebServerInitializedEvent;
 import org.springframework.boot.web.server.WebServer;
 import org.springframework.security.oauth2.core.OAuth2AccessToken;
 import top.egon.cola.component.tianshu.autoconfigure.properties.DdcProperties;
@@ -298,7 +298,7 @@ class DdcHttpRegistrationAutoConfigurationTest {
         FakeRegistry registry = new FakeRegistry();
 
         contextRunner.withClassLoader(new FilteredClassLoader(
-                "org.springframework.boot.actuate.health"
+                "org.springframework.boot.health.contributor"
         )).withBean(
                 DdcServiceRegistryClient.class,
                 () -> registry

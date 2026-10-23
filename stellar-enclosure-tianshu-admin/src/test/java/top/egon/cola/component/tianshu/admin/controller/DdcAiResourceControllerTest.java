@@ -3,9 +3,9 @@ package top.egon.cola.component.tianshu.admin.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -74,9 +74,9 @@ class DdcAiResourceControllerTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private RequestMappingHandlerAdapter handlerAdapter;
-    @MockBean(name = "ddcAiResourceService") private DdcAiResourceService service;
-    @MockBean(name = "ddcAiOptimizationService") private DdcAiOptimizationService optimizationService;
-    @MockBean(name = "ddcAiFeedbackService") private DdcAiFeedbackService feedbackService;
+    @MockitoBean(name = "ddcAiResourceService") private DdcAiResourceService service;
+    @MockitoBean(name = "ddcAiOptimizationService") private DdcAiOptimizationService optimizationService;
+    @MockitoBean(name = "ddcAiFeedbackService") private DdcAiFeedbackService feedbackService;
 
     @Test
     void pageAiResourcesBindsOnlyDeclaredScopeKindAndPagingParameters() throws Exception {

@@ -2,9 +2,9 @@ package top.egon.cola.component.tianshu.admin.controller;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import top.egon.cola.component.common.core.exception.CommonException;
 import top.egon.cola.component.common.core.pojo.PageQuery;
@@ -31,8 +31,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc(addFilters = false)
 class DdcEnvControllerTest {
     @Autowired private MockMvc mockMvc;
-    @MockBean(name = "ddcEnvService") private DdcEnvService envService;
-    @MockBean(name = "ddcEnvResultConverterImpl") private DdcEnvResultConverter resultConverter;
+    @MockitoBean(name = "ddcEnvService") private DdcEnvService envService;
+    @MockitoBean(name = "ddcEnvResultConverterImpl") private DdcEnvResultConverter resultConverter;
 
     @Test
     void listDelegatesToService() throws Exception {

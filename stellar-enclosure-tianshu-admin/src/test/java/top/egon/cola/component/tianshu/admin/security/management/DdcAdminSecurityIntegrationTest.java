@@ -4,8 +4,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
@@ -125,13 +125,13 @@ class DdcAdminSecurityIntegrationTest {
                 .andExpect(status().isOk());
     }
 
-    @MockBean(name = "ddcI18nPageService")
+    @MockitoBean(name = "ddcI18nPageService")
     private top.egon.cola.component.tianshu.admin.service.i18n.DdcI18nPageService i18nService;
 
-    @MockBean(name = "ddcAdminUiI18nService")
+    @MockitoBean(name = "ddcAdminUiI18nService")
     private top.egon.cola.component.tianshu.admin.service.i18n.DdcAdminUiI18nService adminUiI18nService;
 
-    @MockBean(name = "ddcAdminUiI18nCatalog")
+    @MockitoBean(name = "ddcAdminUiI18nCatalog")
     private top.egon.cola.component.tianshu.admin.service.i18n.DdcAdminUiI18nCatalog adminUiI18nCatalog;
 
     @Test
@@ -273,37 +273,37 @@ class DdcAdminSecurityIntegrationTest {
     @Autowired
     private RequestMappingHandlerMapping handlerMapping;
 
-    @MockBean
+    @MockitoBean
     private DdcConfigService configService;
 
-    @MockBean
+    @MockitoBean
     private DdcPublishService publishService;
 
-    @MockBean
+    @MockitoBean
     private DdcPublishTaskQueryService publishTaskQueryService;
 
-    @MockBean
+    @MockitoBean
     private DdcPublishTaskResultConverter publishTaskResultConverter;
 
-    @MockBean
+    @MockitoBean
     private DdcPublishTaskRepository publishTaskRepository;
 
-    @MockBean
+    @MockitoBean
     private DdcCacheService cacheService;
 
-    @MockBean(name = "ddcAiResourceService")
+    @MockitoBean(name = "ddcAiResourceService")
     private DdcAiResourceService aiResourceService;
 
-    @MockBean(name = "ddcAiOptimizationService")
+    @MockitoBean(name = "ddcAiOptimizationService")
     private DdcAiOptimizationService aiOptimizationService;
 
-    @MockBean(name = "ddcAiFeedbackService")
+    @MockitoBean(name = "ddcAiFeedbackService")
     private DdcAiFeedbackService aiFeedbackService;
 
-    @MockBean
+    @MockitoBean
     private IdpBearerAuthenticationFilter idpBearerAuthenticationFilter;
 
-    @MockBean
+    @MockitoBean
     private Rbac3BearerAuthenticationFilter rbac3BearerAuthenticationFilter;
 
     @BeforeEach

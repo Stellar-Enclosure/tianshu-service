@@ -4,10 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.core.io.ClassPathResource;
@@ -41,9 +41,9 @@ class DdcAiOpenApiContractTest {
 
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
-    @MockBean(name = "ddcAiResourceService") private DdcAiResourceService service;
-    @MockBean(name = "ddcAiOptimizationService") private DdcAiOptimizationService optimizationService;
-    @MockBean(name = "ddcAiFeedbackService") private DdcAiFeedbackService feedbackService;
+    @MockitoBean(name = "ddcAiResourceService") private DdcAiResourceService service;
+    @MockitoBean(name = "ddcAiOptimizationService") private DdcAiOptimizationService optimizationService;
+    @MockitoBean(name = "ddcAiFeedbackService") private DdcAiFeedbackService feedbackService;
 
     @Test
     void generatedTianshuOpenApiContainsEveryRestOperationAndExactSecurityContract() throws Exception {

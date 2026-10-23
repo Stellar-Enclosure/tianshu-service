@@ -30,7 +30,7 @@ PostgreSQL stores durable facts; Redis holds caches, notifications and temporary
 
 ## Build
 
-Requires Java 21 and the included Maven Wrapper. Once the 0.0.1 dependencies are published:
+Requires Java 25 and the included Maven Wrapper. The shared parent manages Spring Boot 4.1.2. Once the 0.0.1 dependencies are published:
 
 ```bash
 ./mvnw -B -ntp test-compile

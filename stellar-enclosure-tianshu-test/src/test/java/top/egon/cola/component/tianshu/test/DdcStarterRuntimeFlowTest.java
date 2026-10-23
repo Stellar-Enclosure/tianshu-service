@@ -60,9 +60,9 @@ import org.springframework.security.oauth2.core.OAuth2AccessToken;
         "egon.cola.platform.tianquan.shoubing.resource-uri=https://api.example/tianshu",
         "egon.cola.platform.tianquan.shoubing.service-client.app-id=tianshu-app",
         "egon.cola.platform.tianquan.shoubing.service-client.registration-id=tianshu-registration",
-        "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,"
-                + "org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration,"
-                + "org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration"
+        "spring.autoconfigure.exclude=org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,"
+                + "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration,"
+                + "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration"
 })
 @Import(DdcStarterRuntimeFlowTest.RuntimeTestConfiguration.class)
 @ContextConfiguration(initializers =
