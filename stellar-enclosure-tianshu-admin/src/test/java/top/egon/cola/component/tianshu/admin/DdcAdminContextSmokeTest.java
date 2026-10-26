@@ -73,6 +73,38 @@ class DdcAdminContextSmokeTest {
     static class Holder {
     }
 
+    @org.springframework.test.context.DynamicPropertySource
+    static void requiredDeploymentFixture(org.springframework.test.context.DynamicPropertyRegistry values) {
+        // Required deployment trust/scope values are explicit test input, never production fallback defaults.
+        Map.ofEntries(
+                Map.entry("TIANSHU_TLS_KEY_STORE", "classpath:test-only.p12"),
+                Map.entry("TIANSHU_TLS_KEY_STORE_PASSWORD", "test-only-password"),
+                Map.entry("TIANQUAN_SHOUBING_TENANT_A_ISSUER", "https://idp.example/tenant-a"),
+                Map.entry("TIANQUAN_SHOUBING_TENANT_A_JWKS_URI", "https://idp.example/tenant-a/oauth2/jwks"),
+                Map.entry("TIANQUAN_SHOUBING_TENANT_A_REALM_KEY", "tenant-a"),
+                Map.entry("TIANQUAN_SHOUBING_TENANT_A_ID", "10"),
+                Map.entry("TIANQUAN_SHOUBING_TENANT_A_TRUST_VERSION", "1"),
+                Map.entry("TIANQUAN_SHOUBING_TENANT_B_ISSUER", "https://idp.example/tenant-b"),
+                Map.entry("TIANQUAN_SHOUBING_TENANT_B_JWKS_URI", "https://idp.example/tenant-b/oauth2/jwks"),
+                Map.entry("TIANQUAN_SHOUBING_TENANT_B_REALM_KEY", "tenant-b"),
+                Map.entry("TIANQUAN_SHOUBING_TENANT_B_ID", "20"),
+                Map.entry("TIANQUAN_SHOUBING_TENANT_B_TRUST_VERSION", "1"),
+                Map.entry("TIANQUAN_SHOUBING_PLATFORM_ISSUER", "https://idp.example/platform"),
+                Map.entry("TIANQUAN_SHOUBING_PLATFORM_JWKS_URI", "https://idp.example/platform/oauth2/jwks"),
+                Map.entry("TIANQUAN_SHOUBING_PLATFORM_TRUST_VERSION", "1"),
+                Map.entry("TIANQUAN_SHOUBING_AUTHORITY_BASE_URI", "https://idp.example"),
+                Map.entry("TIANSHU_IDENTITY_TENANT_A_REGISTRATION_ID", "tenant-a-authority"),
+                Map.entry("TIANSHU_IDENTITY_TENANT_B_REGISTRATION_ID", "tenant-b-authority"),
+                Map.entry("TIANSHU_IDENTITY_PLATFORM_REGISTRATION_ID", "platform-authority"),
+                Map.entry("TIANSHU_RESOURCE_URI", "https://resource.example/tianshu"),
+                Map.entry("TIANQUAN_SHOUBING_IDENTITY_RESOURCE_URI", "https://resource.example/identity"),
+                Map.entry("TIANSHU_CATALOG_SCOPE_ID", "30"),
+                Map.entry("TIANSHU_CATALOG_TENANT_ID", "10"),
+                Map.entry("TIANSHU_CATALOG_NAMESPACE", "default"),
+                Map.entry("DEPLOYMENT_ENV", "test")
+        ).forEach((name, value) -> values.add(name, () -> value));
+    }
+
     @Autowired
     private ConfigurableEnvironment environment;
 

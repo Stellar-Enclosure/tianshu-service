@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="top.egon.cola.component.tianshu.admin.dao.DdcI18nSourceMessageMapper">
+    <resultMap id="Row" type="top.egon.cola.component.tianshu.admin.model.po.DdcI18nSourceMessagePO">
+        <result property="id" column="id"/>
+        <result property="tenantId" column="tenant_id"/>
+        <result property="createUserId" column="create_user_id"/>
+        <result property="createTime" column="create_time"/>
+        <result property="updateUserId" column="update_user_id"/>
+        <result property="updateTime" column="update_time"/>
+        <result property="deletedAt" column="deleted_at"/>
+        <result property="version" column="version"/>
+        <result property="catalogScopeId" column="catalog_scope_id"/>
+        <result property="sourceId" column="source_id"/>
+        <result property="producerId" column="producer_id"/>
+        <result property="sourceVersion" column="source_version"/>
+        <result property="pageCode" column="page_code"/>
+        <result property="messageKey" column="message_key"/>
+        <result property="defaultLocale" column="default_locale"/>
+        <result property="sourceHash" column="source_hash"/>
+        <result property="defaultsJson" column="defaults_json"/>
+        <result property="placeholdersJson" column="placeholders_json"/>
+    </resultMap>
+    <select id="findBySource" resultMap="Row">
+        SELECT * FROM ddc_i18n_source_message
+        WHERE tenant_id=#{tenantId} AND catalog_scope_id=#{catalogScopeId} AND source_id=#{sourceId} AND deleted_at IS NULL
+        ORDER BY id
+    </select>
+    <select id="findByActivationPage" resultMap="Row" timeout="2">
+        SELECT m.* FROM ddc_i18n_source_message m
+        JOIN ddc_catalog_activation_producer a ON a.tenant_id=m.tenant_id AND a.catalog_scope_id=m.catalog_scope_id AND a.source_id=m.source_id
+        WHERE m.tenant_id=#{tenantId} AND m.catalog_scope_id=#{catalogScopeId} AND a.activation_projection_id=#{projectionId}
+          AND m.deleted_at IS NULL AND a.deleted_at IS NULL
+          AND (m.page_code=#{pageCode}<if test="includeCommon"> OR m.page_code='common'</if>)
+        ORDER BY m.page_code, m.message_key LIMIT #{limit} OFFSET #{offset}
+    </select>
+</mapper>

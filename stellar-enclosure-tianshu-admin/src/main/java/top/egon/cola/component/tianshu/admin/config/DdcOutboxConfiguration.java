@@ -22,6 +22,24 @@ public class DdcOutboxConfiguration {
         return new TransactionTemplate(transactionManager);
     }
 
+    @Bean("ddcMetadataTransactionTemplate")
+    public TransactionTemplate ddcMetadataTransactionTemplate(
+            @Qualifier("transactionManager") PlatformTransactionManager transactionManager) {
+        TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+        transaction.setTimeout(30);
+        return transaction;
+    }
+
+    @Bean("ddcMetadataReadTransactionTemplate")
+    public TransactionTemplate ddcMetadataReadTransactionTemplate(
+            @Qualifier("transactionManager") PlatformTransactionManager transactionManager) {
+        TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+        transaction.setTimeout(30);
+        transaction.setReadOnly(true);
+        transaction.setIsolationLevel(org.springframework.transaction.TransactionDefinition.ISOLATION_REPEATABLE_READ);
+        return transaction;
+    }
+
     @Bean({"ddcPublishClock", "egonColaMybatisPlusClock"})
     public Clock ddcPublishClock() {
         return Clock.systemUTC();

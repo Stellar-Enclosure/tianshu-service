@@ -69,8 +69,8 @@ class DdcI18nUpgradeCliTest {
             var validator = new EgonColaShardingTopologyValidator(validation);
             var currentTopology = validator.validate(current, loader.load(current));
             var previousTopology = DdcPersistenceMigrationCli.priorI18nTopology(current, previous, currentTopology, loader, validator);
-            assertThat(current.getTables()).containsKey("ddc_i18n_page").hasSize(22);
-            assertThat(previous.getTables()).doesNotContainKey("ddc_i18n_page").hasSize(21);
+            assertThat(current.getTables()).containsKey("ddc_i18n_page").hasSize(31);
+            assertThat(previous.getTables()).doesNotContainKey("ddc_i18n_page").hasSize(30);
             assertThat(previousTopology.profiles()).doesNotContainKey("ddc_i18n_page");
             assertThat(currentTopology.profiles()).containsKey("ddc_i18n_page");
             assertThat(previousTopology.fingerprint()).isNotEqualTo(currentTopology.fingerprint());
@@ -113,7 +113,7 @@ class DdcI18nUpgradeCliTest {
                 script.version(), script.sha256(), EgonColaDdlResult.StatusEnum.SKIPPED, Duration.ZERO)).toList();
         assertThatCode(() -> DdcPersistenceMigrationCli.validateTianshuResults(results, manifest, "tianshu_0"))
                 .doesNotThrowAnyException();
-        assertThatCode(() -> DdcPersistenceMigrationCli.validateTianshuResults(results.subList(3, 5), manifest, "tianshu_0"))
+        assertThatCode(() -> DdcPersistenceMigrationCli.validateTianshuResults(results.subList(3, results.size()), manifest, "tianshu_0"))
                 .doesNotThrowAnyException();
         assertThatThrownBy(() -> DdcPersistenceMigrationCli.validateTianshuResults(results.subList(4, 5), manifest, "tianshu_0"))
                 .hasMessageContaining("RESULT_INCOMPLETE");

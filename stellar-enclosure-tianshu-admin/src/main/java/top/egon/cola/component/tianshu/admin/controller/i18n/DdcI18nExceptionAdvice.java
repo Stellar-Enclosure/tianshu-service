@@ -22,7 +22,7 @@ import top.egon.cola.component.common.core.pojo.ResultRecord;
 import top.egon.cola.component.tianshu.admin.config.DdcI18nWebConfiguration;
 
 @Slf4j
-@RestControllerAdvice(assignableTypes = {DdcI18nPageController.class, DdcAdminUiI18nController.class})
+@RestControllerAdvice(assignableTypes = {DdcI18nPageController.class, DdcAdminUiI18nController.class, DdcResourceMetadataController.class})
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class DdcI18nExceptionAdvice {
 
@@ -81,11 +81,11 @@ public class DdcI18nExceptionAdvice {
     private HttpStatus httpStatus(int code) {
         return switch (code) {
             case 56401 -> HttpStatus.BAD_REQUEST;
-            case 56402, 56406, 56042 -> HttpStatus.NOT_FOUND;
+            case 56402, 56406, 56042, 56432 -> HttpStatus.NOT_FOUND;
             case 56407 -> HttpStatus.FORBIDDEN;
-            case 56403, 56404 -> HttpStatus.CONFLICT;
+            case 56403, 56404, 56433 -> HttpStatus.CONFLICT;
             case 56412 -> HttpStatus.PAYLOAD_TOO_LARGE;
-            case 56410 -> HttpStatus.SERVICE_UNAVAILABLE;
+            case 56410, 56431 -> HttpStatus.SERVICE_UNAVAILABLE;
             default -> HttpStatus.INTERNAL_SERVER_ERROR;
         };
     }

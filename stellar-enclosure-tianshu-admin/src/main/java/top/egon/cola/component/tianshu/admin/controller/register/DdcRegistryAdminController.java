@@ -1,5 +1,10 @@
 package top.egon.cola.component.tianshu.admin.controller.register;
 
+import top.egon.cola.component.tianshu.admin.permission.DdcPermissionCodes;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.ResourceType;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionResource;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.RequiresPermissions;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -46,6 +51,9 @@ public class DdcRegistryAdminController {
 
     @Operation(operationId = "tianshu.ddcRegistryAdminController.services")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.registryAdmin.services", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.registryAdmin.services")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping("/services")
     public ResultRecord<DdcManagementServiceCatalog> services(
             @RequestParam(value = "bizCode", required = false) String bizCode,
@@ -76,6 +84,9 @@ public class DdcRegistryAdminController {
 
     @Operation(operationId = "tianshu.ddcRegistryAdminController.pageServices")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.registryAdmin.pageServices", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.registryAdmin.pageServices")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping("/services/page")
     public PageResultRecord<DdcManagementServiceKey> pageServices(
             @RequestParam(value = "bizCode", required = false) String bizCode,
@@ -103,6 +114,9 @@ public class DdcRegistryAdminController {
 
     @Operation(operationId = "tianshu.ddcRegistryAdminController.instances")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.registryAdmin.instances", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.registryAdmin.instances")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping("/instances")
     public ResultRecord<DdcManagementServiceSnapshot> instances(
             @RequestParam("bizCode") String bizCode,
@@ -129,6 +143,9 @@ public class DdcRegistryAdminController {
 
     @Operation(operationId = "tianshu.ddcRegistryAdminController.pageInstances")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.registryAdmin.pageInstances", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.registryAdmin.pageInstances")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping("/instances/page")
     public PageResultRecord<DdcManagementServiceInstance> pageInstances(
             @RequestParam("bizCode") String bizCode,

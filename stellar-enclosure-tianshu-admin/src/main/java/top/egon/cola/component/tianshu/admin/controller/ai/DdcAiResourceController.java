@@ -1,5 +1,10 @@
 package top.egon.cola.component.tianshu.admin.controller.ai;
 
+import top.egon.cola.component.tianshu.admin.permission.DdcPermissionCodes;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.ResourceType;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionResource;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.RequiresPermissions;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.Parameters;
@@ -126,6 +131,9 @@ public class DdcAiResourceController {
                     mediaType = JSON, schema = @Schema(implementation = ResultRecord.class)))
     })
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.aiResource.page", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.aiResource.page")
+    @RequiresPermissions(codes = DdcPermissionCodes.AI_READ)
     @GetMapping
     public ResponseEntity<PageResultRecord<DdcAiResourceSummaryDTO>> page(
             @Parameter(description = "Business code", required = true,
@@ -188,6 +196,9 @@ public class DdcAiResourceController {
                     mediaType = JSON, schema = @Schema(implementation = ResultRecord.class)))
     })
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.aiResource.create", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.aiResource.create")
+    @RequiresPermissions(codes = DdcPermissionCodes.AI_WRITE)
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<ResultRecord<DdcAiResourceResult>> create(
             @Valid @RequestBody DdcAiCreateCommand command) {
@@ -213,6 +224,9 @@ public class DdcAiResourceController {
             @ApiResponse(responseCode = "500", description = "Unexpected failure", content = @Content(mediaType = JSON, schema = @Schema(implementation = ResultRecord.class)))
     })
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.aiResource.get", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.aiResource.get")
+    @RequiresPermissions(codes = DdcPermissionCodes.AI_READ)
     @GetMapping(path = "/{id}")
     public ResponseEntity<ResultRecord<DdcAiResourceResult>> get(
             @Parameter(description = "Resource ID, positive decimal string", required = true,
@@ -239,6 +253,9 @@ public class DdcAiResourceController {
             @ApiResponse(responseCode = "500", description = "Unexpected failure", content = @Content(mediaType = JSON, schema = @Schema(implementation = ResultRecord.class)))
     })
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.aiResource.replaceDraft", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.aiResource.replaceDraft")
+    @RequiresPermissions(codes = DdcPermissionCodes.AI_WRITE)
     @PutMapping(path = "/{id}/draft", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<ResultRecord<DdcAiResourceResult>> replaceDraft(
             @Parameter(description = "Resource ID, positive decimal string", required = true,
@@ -267,6 +284,9 @@ public class DdcAiResourceController {
             @ApiResponse(responseCode = "500", description = "Unexpected failure", content = @Content(mediaType = JSON, schema = @Schema(implementation = ResultRecord.class)))
     })
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.aiResource.delete", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.aiResource.delete")
+    @RequiresPermissions(codes = DdcPermissionCodes.AI_WRITE)
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(
             @Parameter(description = "Resource ID, positive decimal string", required = true,
@@ -295,6 +315,9 @@ public class DdcAiResourceController {
             @ApiResponse(responseCode = "500", description = "Unexpected failure", content = @Content(mediaType = JSON, schema = @Schema(implementation = ResultRecord.class)))
     })
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.aiResource.pageVersions", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.aiResource.pageVersions")
+    @RequiresPermissions(codes = DdcPermissionCodes.AI_READ)
     @GetMapping("/{id}/versions")
     public ResponseEntity<PageResultRecord<DdcAiVersionSummaryDTO>> pageVersions(
             @Parameter(description = "Resource ID, positive decimal string", required = true,
@@ -325,6 +348,9 @@ public class DdcAiResourceController {
             @ApiResponse(responseCode = "500", description = "Unexpected failure", content = @Content(mediaType = JSON, schema = @Schema(implementation = ResultRecord.class)))
     })
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.aiResource.getVersion", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.aiResource.getVersion")
+    @RequiresPermissions(codes = DdcPermissionCodes.AI_READ)
     @GetMapping("/{id}/versions/{versionNo}")
     public ResponseEntity<ResultRecord<DdcAiVersionResult>> getVersion(
             @Parameter(description = "Resource ID, positive decimal string", required = true,
@@ -359,6 +385,9 @@ public class DdcAiResourceController {
             @ApiResponse(responseCode = "500", description = "Unexpected failure", content = @Content(mediaType = JSON, schema = @Schema(implementation = ResultRecord.class)))
     })
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.aiResource.publish", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.aiResource.publish")
+    @RequiresPermissions(codes = DdcPermissionCodes.AI_PUBLISH)
     @PostMapping(path = "/{id}/publications", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<ResultRecord<DdcAiPublicationResult>> publish(
             @Parameter(description = "Resource ID, positive decimal string", required = true,
@@ -391,6 +420,9 @@ public class DdcAiResourceController {
             @ApiResponse(responseCode = "500", description = "Unexpected failure", content = @Content(mediaType = JSON, schema = @Schema(implementation = ResultRecord.class)))
     })
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.aiResource.rollback", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.aiResource.rollback")
+    @RequiresPermissions(codes = DdcPermissionCodes.AI_PUBLISH)
     @PostMapping(path = "/{id}/rollbacks", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<ResultRecord<DdcAiPublicationResult>> rollback(
             @Parameter(description = "Resource ID, positive decimal string", required = true,
@@ -425,6 +457,9 @@ public class DdcAiResourceController {
             @ApiResponse(responseCode = "500", description = "Unexpected failure", content = @Content(mediaType = JSON, schema = @Schema(implementation = ResultRecord.class)))
     })
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.aiResource.promote", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.aiResource.promote")
+    @RequiresPermissions(codes = DdcPermissionCodes.AI_PUBLISH)
     @PostMapping(path = "/{id}/promotions", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<ResultRecord<DdcAiPublicationResult>> promote(
             @Parameter(description = "Source resource ID, positive decimal string", required = true,
@@ -453,6 +488,9 @@ public class DdcAiResourceController {
             @ApiResponse(responseCode = "500", description = "Unexpected failure", content = @Content(mediaType = JSON, schema = @Schema(implementation = ResultRecord.class)))
     })
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.aiResource.pagePublications", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.aiResource.pagePublications")
+    @RequiresPermissions(codes = DdcPermissionCodes.AI_READ)
     @GetMapping("/{id}/publications")
     public ResponseEntity<PageResultRecord<DdcAiPublicationResult>> pagePublications(
             @Parameter(description = "Resource ID, positive decimal string", required = true,
@@ -487,6 +525,9 @@ public class DdcAiResourceController {
             @ApiResponse(responseCode = "500", description = "Unexpected failure", content = @Content(mediaType = JSON, schema = @Schema(implementation = ResultRecord.class)))
     })
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.aiResource.getOptimizationPolicy", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.aiResource.getOptimizationPolicy")
+    @RequiresPermissions(codes = DdcPermissionCodes.AI_READ)
     @GetMapping("/{id}/optimization-policy")
     public ResponseEntity<ResultRecord<DdcAiOptimizationPolicyResult>> getOptimizationPolicy(
             @Parameter(description = "Resource ID, positive decimal string", required = true,
@@ -513,6 +554,9 @@ public class DdcAiResourceController {
             @ApiResponse(responseCode = "500", description = "Unexpected failure", content = @Content(mediaType = JSON, schema = @Schema(implementation = ResultRecord.class)))
     })
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.aiResource.replaceOptimizationPolicy", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.aiResource.replaceOptimizationPolicy")
+    @RequiresPermissions(codes = DdcPermissionCodes.AI_PUBLISH)
     @PutMapping(path = "/{id}/optimization-policy", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<ResultRecord<DdcAiOptimizationPolicyResult>> replaceOptimizationPolicy(
             @Parameter(description = "Resource ID, positive decimal string", required = true,
@@ -545,6 +589,9 @@ public class DdcAiResourceController {
             @ApiResponse(responseCode = "500", description = "Unexpected failure", content = @Content(mediaType = JSON, schema = @Schema(implementation = ResultRecord.class)))
     })
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.aiResource.triggerOptimizationRun", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.aiResource.triggerOptimizationRun")
+    @RequiresPermissions(codes = DdcPermissionCodes.AI_PUBLISH)
     @PostMapping(path = "/{id}/optimization-runs", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<ResultRecord<DdcAiOptimizationRunResult>> triggerOptimizationRun(
             @Parameter(description = "Resource ID, positive decimal string", required = true,
@@ -576,6 +623,9 @@ public class DdcAiResourceController {
             @ApiResponse(responseCode = "500", description = "Unexpected failure", content = @Content(mediaType = JSON, schema = @Schema(implementation = ResultRecord.class)))
     })
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.aiResource.pageOptimizationRuns", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.aiResource.pageOptimizationRuns")
+    @RequiresPermissions(codes = DdcPermissionCodes.AI_READ)
     @GetMapping("/{id}/optimization-runs")
     public ResponseEntity<PageResultRecord<DdcAiOptimizationRunResult>> pageOptimizationRuns(
             @Parameter(description = "Resource ID, positive decimal string", required = true,
@@ -609,6 +659,9 @@ public class DdcAiResourceController {
             @ApiResponse(responseCode = "500", description = "Unexpected failure", content = @Content(mediaType = JSON, schema = @Schema(implementation = ResultRecord.class)))
     })
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.aiResource.getOptimizationRun", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.aiResource.getOptimizationRun")
+    @RequiresPermissions(codes = DdcPermissionCodes.AI_READ)
     @GetMapping("/{id}/optimization-runs/{runId}")
     public ResponseEntity<ResultRecord<DdcAiOptimizationRunResult>> getOptimizationRun(
             @Parameter(description = "Resource ID, positive decimal string", required = true,
@@ -636,6 +689,9 @@ public class DdcAiResourceController {
             @ApiResponse(responseCode = "500", description = "Unexpected failure", content = @Content(mediaType = JSON, schema = @Schema(implementation = ResultRecord.class)))
     })
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.aiResource.pageUsageFeedback", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.aiResource.pageUsageFeedback")
+    @RequiresPermissions(codes = DdcPermissionCodes.AI_READ)
     @GetMapping("/{id}/usage-feedback")
     public ResponseEntity<PageResultRecord<DdcAiUsageFeedbackResult>> pageUsageFeedback(
             @Parameter(description = "Resource ID, positive decimal string", required = true,

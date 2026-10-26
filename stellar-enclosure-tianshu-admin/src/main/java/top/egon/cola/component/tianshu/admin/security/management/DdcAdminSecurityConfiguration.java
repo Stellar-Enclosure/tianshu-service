@@ -7,7 +7,6 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
-import java.net.URI;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -70,38 +69,40 @@ public class DdcAdminSecurityConfiguration {
                                 "/actuator/info"
                         ).permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/tianshu/i18n/public/bundle").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/authorization/effective-permissions").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/v1/tianshu/i18n/admin/bootstrap", "/api/v1/tianshu/i18n/admin/bundle")
-                        .access(scopeAndCapability(DdcAdminCapability.READ))
+                        .access(scopeAndPermission(DdcAdminCapability.READ))
                         .requestMatchers(HttpMethod.POST, "/api/v1/tianshu/i18n/admin/initialize")
                         .access(org.springframework.security.authorization.AuthorizationManagers.allOf(
-                                scopeAndCapability(DdcAdminCapability.READ), scopeAndCapability(DdcAdminCapability.WRITE),
-                                scopeAndCapability(DdcAdminCapability.PUBLISH)))
+                                scopeAndPermission(DdcAdminCapability.READ), scopeAndPermission(DdcAdminCapability.WRITE),
+                                scopeAndPermission(DdcAdminCapability.PUBLISH)))
                         .requestMatchers(
                                 HttpMethod.GET,
                                 "/api/v1/auth/bootstrap",
                                 "/api/v1/tianshu/auth/bootstrap"
                         )
-                        .access(scopeAndCapability(DdcAdminCapability.READ))
+                        .access(scopeAndPermission(DdcAdminCapability.READ))
                         .requestMatchers(HttpMethod.GET, "/api/v1/tianshu/i18n/bundle")
                         .access(org.springframework.security.authorization.AuthorizationManagers.anyOf(
-                                scopeAndCapability(DdcAdminCapability.I18N_READ), scopeAndCapability(DdcAdminCapability.READ)))
-                        .requestMatchers(HttpMethod.GET, "/api/v1/tianshu/i18n/pages", "/api/v1/tianshu/i18n/pages/*")
-                        .access(scopeAndCapability(DdcAdminCapability.READ))
+                                scopeAndPermission(DdcAdminCapability.I18N_READ), scopeAndPermission(DdcAdminCapability.READ)))
+                        .requestMatchers(HttpMethod.GET, "/api/v1/tianshu/i18n/pages", "/api/v1/tianshu/i18n/pages/*",
+                                "/api/v1/tianshu/i18n/source-pages/*", "/api/v1/tianshu/i18n/pages/*/publications/*", "/api/v1/tianshu/resource-metadata")
+                        .access(scopeAndPermission(DdcAdminCapability.READ))
                         .requestMatchers(HttpMethod.POST, "/api/v1/tianshu/i18n/pages/*/publish")
-                        .access(scopeAndCapability(DdcAdminCapability.PUBLISH))
+                        .access(scopeAndPermission(DdcAdminCapability.PUBLISH))
                         .requestMatchers(HttpMethod.POST, "/api/v1/tianshu/i18n/pages")
-                        .access(scopeAndCapability(DdcAdminCapability.WRITE))
+                        .access(scopeAndPermission(DdcAdminCapability.WRITE))
                         .requestMatchers(HttpMethod.PUT, "/api/v1/tianshu/i18n/pages/*/draft")
-                        .access(scopeAndCapability(DdcAdminCapability.WRITE))
+                        .access(scopeAndPermission(DdcAdminCapability.WRITE))
                         .requestMatchers("/api/v1/tianshu/ai/**")
                         .authenticated()
                         .requestMatchers("/api/v1/tianshu/cache/**")
-                        .access(scopeAndCapability(DdcAdminCapability.CACHE))
+                        .access(scopeAndPermission(DdcAdminCapability.CACHE))
                         .requestMatchers(
                                 HttpMethod.POST,
                                 "/api/v1/tianshu/configs/*/publish",
                                 "/api/v1/tianshu/publish-tasks/*/retry"
-                        ).access(scopeAndCapability(DdcAdminCapability.PUBLISH))
+                        ).access(scopeAndPermission(DdcAdminCapability.PUBLISH))
                         .requestMatchers(
                                 HttpMethod.GET,
                                 "/api/v1/tianshu/configs",
@@ -119,7 +120,7 @@ public class DdcAdminSecurityConfiguration {
                                 "/api/v1/tianshu/registry/**",
                                 "/api/v1/tianshu/publish-tasks",
                                 "/api/v1/tianshu/publish-tasks/*"
-                        ).access(scopeAndCapability(DdcAdminCapability.READ))
+                        ).access(scopeAndPermission(DdcAdminCapability.READ))
                         .requestMatchers(
                                 HttpMethod.GET,
                                 "/api/v1/tianshu/configs/page",
@@ -131,7 +132,7 @@ public class DdcAdminSecurityConfiguration {
                                 "/api/v1/tianshu/namespace-env-app-bindings/page",
                                 "/api/v1/tianshu/instances/page",
                                 "/api/v1/tianshu/publish-tasks/page"
-                        ).access(scopeAndCapability(DdcAdminCapability.READ))
+                        ).access(scopeAndPermission(DdcAdminCapability.READ))
                         .requestMatchers(
                                 HttpMethod.POST,
                                 "/api/v1/tianshu/configs",
@@ -141,7 +142,7 @@ public class DdcAdminSecurityConfiguration {
                                 "/api/v1/tianshu/envs",
                                 "/api/v1/tianshu/namespaces",
                                 "/api/v1/tianshu/namespace-env-app-bindings"
-                        ).access(scopeAndCapability(DdcAdminCapability.WRITE))
+                        ).access(scopeAndPermission(DdcAdminCapability.WRITE))
                         .requestMatchers(
                                 HttpMethod.PUT,
                                 "/api/v1/tianshu/configs/*",
@@ -154,7 +155,7 @@ public class DdcAdminSecurityConfiguration {
                                 "/api/v1/tianshu/namespaces/*",
                                 "/api/v1/tianshu/namespaces/*/enabled",
                                 "/api/v1/tianshu/namespace-env-app-bindings/*"
-                        ).access(scopeAndCapability(DdcAdminCapability.WRITE))
+                        ).access(scopeAndPermission(DdcAdminCapability.WRITE))
                         .requestMatchers(
                                 HttpMethod.DELETE,
                                 "/api/v1/tianshu/configs/*",
@@ -163,7 +164,7 @@ public class DdcAdminSecurityConfiguration {
                                 "/api/v1/tianshu/envs/*",
                                 "/api/v1/tianshu/namespaces/*",
                                 "/api/v1/tianshu/namespace-env-app-bindings/*"
-                        ).access(scopeAndCapability(DdcAdminCapability.WRITE))
+                        ).access(scopeAndPermission(DdcAdminCapability.WRITE))
                         .anyRequest().denyAll()
                 )
                 .exceptionHandling(exceptions -> exceptions
@@ -184,10 +185,16 @@ public class DdcAdminSecurityConfiguration {
     }
 
     private org.springframework.security.authorization.AuthorizationManager<org.springframework.security.web.access.intercept.RequestAuthorizationContext>
-            scopeAndCapability(DdcAdminCapability capability) {
+            scopeAndPermission(DdcAdminCapability capability) {
         return org.springframework.security.authorization.AuthorizationManagers.allOf(
                 org.springframework.security.authorization.AuthorityAuthorizationManager.hasAuthority("SCOPE_TIANSHU_" + capability.name()),
-                org.springframework.security.authorization.AuthorityAuthorizationManager.hasAnyAuthority(capability.authority(), DdcAdminCapability.ALL.authority()));
+                (authentication, context) -> {
+                    var current = authentication.get();
+                    boolean granted = current != null && current.isAuthenticated()
+                            && current.getPrincipal() instanceof top.egon.cola.platform.tianquan.jianshen.starter.security.Rbac3UserDetails user
+                            && user.hasPermission(capability.value());
+                    return new org.springframework.security.authorization.AuthorizationDecision(granted);
+                });
     }
 
     @Bean("ddcAuditReadinessHealthIndicator")
@@ -212,12 +219,8 @@ public class DdcAdminSecurityConfiguration {
                 || !environment.getProperty("egon.cola.platform.tianquan.jianshen.authorization.endpoint", "").startsWith("https://")) {
             throw new IllegalStateException("OAUTH_HOST_TLS_REQUIRED");
         }
-        boolean localRedis = environment.getProperty("egon.cola.platform.tianquan.shoubing.usage-observation.allow-local-plaintext", Boolean.class, false)
-                && java.util.Arrays.asList(environment.getActiveProfiles()).contains("local") && "local".equals(environment.getProperty("DEPLOYMENT_ENV"));
-        URI redis = URI.create(properties.getRevocation().getPrimaryEndpoint());
-        if (!"rediss".equalsIgnoreCase(redis.getScheme()) && !(localRedis && "redis".equalsIgnoreCase(redis.getScheme())
-                && java.util.Set.of("127.0.0.1", "localhost", "::1", "[::1]").contains(redis.getHost()))) {
-            throw new IllegalStateException("OAUTH_PRIMARY_TLS_REQUIRED");
+        if (!environment.getProperty("egon.cola.platform.tianquan.shoubing.authority.base-uri", "").startsWith("https://")) {
+            throw new IllegalStateException("OAUTH_AUTHORITY_TLS_REQUIRED");
         }
         return Boolean.TRUE;
     }

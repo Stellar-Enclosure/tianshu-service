@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.PositiveOrZero;
 import top.egon.cola.component.common.mybatis.model.EgonColaModelValidationGroups;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -61,5 +62,31 @@ public class DdcI18nPageBO {
     private String publishedDefaultLocale;
     private String publishedTranslations;
     private Long publishedVersion;
+    @NotNull(groups = {EgonColaModelValidationGroups.Insert.class, EgonColaModelValidationGroups.Persisted.class})
+    @Positive(groups = {EgonColaModelValidationGroups.Insert.class, EgonColaModelValidationGroups.Persisted.class})
+    private Long catalogScopeId;
+
+    @NotNull(groups = {EgonColaModelValidationGroups.Insert.class, EgonColaModelValidationGroups.Persisted.class})
+    @Positive(groups = {EgonColaModelValidationGroups.Insert.class, EgonColaModelValidationGroups.Persisted.class})
+    private Long draftActivationVersion;
+
+    @NotNull(groups = {EgonColaModelValidationGroups.Insert.class, EgonColaModelValidationGroups.Persisted.class})
+    @Size(max = 2097152, groups = {EgonColaModelValidationGroups.Insert.class, EgonColaModelValidationGroups.Persisted.class})
+    private String draftSourceHashes;
+
+    @Positive(groups = {EgonColaModelValidationGroups.Insert.class, EgonColaModelValidationGroups.Persisted.class})
+    private Long currentOverrideId;
+
+    @Size(max = 2097152, groups = {EgonColaModelValidationGroups.Insert.class, EgonColaModelValidationGroups.Persisted.class})
+    private String publishedSourceHashes;
+
+    @PositiveOrZero(groups = {EgonColaModelValidationGroups.Insert.class, EgonColaModelValidationGroups.Persisted.class})
+    private Long publishedDraftRevision;
+
+    @Size(max = 128, groups = {EgonColaModelValidationGroups.Insert.class, EgonColaModelValidationGroups.Persisted.class})
+    private String publishedOperationId;
+
+    private Instant publishedAt;
+
     private String namespaceCode;
 }

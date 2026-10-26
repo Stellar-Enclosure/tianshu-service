@@ -13,6 +13,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.regex.Pattern;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.CanonicalJson;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.I18nSourceRules;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.PermissionManifest;
 
 @Component("ddcI18nValidation")
 public class DdcI18nValidation {
@@ -21,6 +24,41 @@ public class DdcI18nValidation {
     private static final Pattern VARIABLE = Pattern.compile("\\{\\{\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*}}");
     private static final Set<String> UNSAFE_SEGMENTS = Set.of("__proto__", "constructor", "prototype");
     private final ObjectMapper mapper = new ObjectMapper();
+
+    public String overrides(String defaultLocale, Map<String, Map<String, String>> translations,
+            Map<String, PermissionManifest.Message> sources) {
+        locale(defaultLocale);
+        if (sources.isEmpty() || sources.values().stream().anyMatch(source -> !source.defaultLocale().equals(defaultLocale))
+                || translations == null || translations.size() > 32) throw invalid("Overrides require the selected page default locale");
+        for (var language : translations.entrySet()) {
+            locale(language.getKey());
+            if (language.getValue() == null || language.getValue().size() > 20_000) throw invalid("Invalid override key count");
+            for (var entry : language.getValue().entrySet()) {
+                var source = sources.get(entry.getKey());
+                if (source == null) throw invalid("Overrides may only use keys in the selected source page");
+                try {
+                    if (!I18nSourceRules.placeholders(entry.getValue()).equals(I18nSourceRules.placeholders(source.defaults().get(defaultLocale)))) {
+                        throw invalid("Override placeholders must match the selected source");
+                    }
+                } catch (IllegalArgumentException invalid) { throw invalid("Invalid source-compatible override"); }
+            }
+        }
+        return bounded(CanonicalJson.write(translations));
+    }
+
+    public String reviewedSources(Map<String, String> reviewed, Map<String, PermissionManifest.Message> sources) {
+        Map<String, String> expected = new java.util.TreeMap<>();
+        sources.forEach((key, source) -> expected.put(key, I18nSourceRules.sourceHash(source)));
+        if (!expected.equals(reviewed)) throw new CommonException(56404, "TIANSHU_I18N_REVISION_CONFLICT", "Source review context changed; reload before saving");
+        return bounded(CanonicalJson.write(expected));
+    }
+
+    private String bounded(String json) {
+        if (json.getBytes(StandardCharsets.UTF_8).length > MAX_CONTENT_BYTES) {
+            throw new CommonException(56412, "TIANSHU_I18N_REQUEST_TOO_LARGE", "Translation content exceeds 2 MiB");
+        }
+        return json;
+    }
 
     public void key(String key) {
         if (key == null || key.length() > 128 || !KEY.matcher(key).matches()

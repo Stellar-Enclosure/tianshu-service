@@ -265,6 +265,7 @@ class DdcAutoConfigurationTest {
     void enabledRuntimeFailsFastWithoutConfigPort() {
         contextRunner.withPropertyValues(
                         "egon.cola.component.tianshu.enabled=true",
+                        "egon.cola.component.tianshu.tenant-id=42",
                         "egon.cola.component.tianshu.redis.enabled=false"
                 )
                 .run(context -> {

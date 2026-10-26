@@ -36,8 +36,9 @@ public class DdcAiWebConfiguration {
     public static final int MAX_REQUEST_BODY_BYTES = 8 * 1024 * 1024;
 
     @Bean(name = "ddcAiWebConfigurer")
-    public WebMvcConfigurer ddcAiWebConfigurer(Jackson2ObjectMapperBuilder objectMapperBuilder) {
-        ObjectMapper strictObjectMapper = objectMapperBuilder.build();
+    public WebMvcConfigurer ddcAiWebConfigurer(Jackson2ObjectMapperBuilder objectMapperBuilder,
+            top.egon.cola.platform.tianquan.jianshen.starter.field.PermissionJsonMapperFactory permissionFields) {
+        ObjectMapper strictObjectMapper = permissionFields.forTransport(objectMapperBuilder.build());
         strictObjectMapper.enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
         strictObjectMapper.enable(DeserializationFeature.FAIL_ON_MISSING_CREATOR_PROPERTIES);
         strictObjectMapper.disable(MapperFeature.ALLOW_COERCION_OF_SCALARS);

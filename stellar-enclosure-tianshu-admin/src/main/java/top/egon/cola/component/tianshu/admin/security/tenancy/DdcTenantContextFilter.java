@@ -45,6 +45,7 @@ public class DdcTenantContextFilter extends OncePerRequestFilter {
         }
         return !path.startsWith("/api/v1/tianshu/")
                 && !path.equals("/api/v1/auth/bootstrap")
+                && !path.equals("/api/v1/authorization/effective-permissions")
                 && !path.equals("/api/v1/tianshu/auth/bootstrap");
     }
 

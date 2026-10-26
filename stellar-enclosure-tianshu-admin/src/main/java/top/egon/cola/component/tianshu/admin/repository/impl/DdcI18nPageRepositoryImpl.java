@@ -34,6 +34,10 @@ public class DdcI18nPageRepositoryImpl extends EgonColaRepository<DdcI18nPageMap
                 .map(converter::toTarget);
     }
 
+    @Override public Optional<DdcI18nPageBO> lockById(Long id) {
+        return Optional.ofNullable(mapper.lockById(EgonColaTenantIdProvider.currentTenantId(), id)).map(converter::toTarget);
+    }
+
     @Override
     public Optional<DdcI18nPageBO> findByPageCode(DdcI18nScope scope, String pageCode) {
         return Optional.ofNullable(mapper.selectByPageCode(EgonColaTenantIdProvider.currentTenantId(), scope, pageCode))

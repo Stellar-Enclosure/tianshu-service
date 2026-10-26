@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.annotation.TableName;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.PositiveOrZero;
 import top.egon.cola.component.common.mybatis.model.EgonColaModelValidationGroups;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -14,6 +15,7 @@ import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
 import lombok.experimental.SuperBuilder;
 import top.egon.cola.component.common.mybatis.model.EgonModel;
+import java.time.Instant;
 
 @Data
 @NoArgsConstructor
@@ -78,6 +80,40 @@ public class DdcI18nPagePO extends EgonModel<DdcI18nPagePO> {
 
     @TableField("published_version")
     private Long publishedVersion;
+
+    @TableField(value = "catalog_scope_id", updateStrategy = FieldStrategy.NEVER)
+    @NotNull(groups = {EgonColaModelValidationGroups.Insert.class, EgonColaModelValidationGroups.Persisted.class})
+    @Positive(groups = {EgonColaModelValidationGroups.Insert.class, EgonColaModelValidationGroups.Persisted.class})
+    private Long catalogScopeId;
+
+    @TableField("draft_activation_version")
+    @NotNull(groups = {EgonColaModelValidationGroups.Insert.class, EgonColaModelValidationGroups.Persisted.class})
+    @Positive(groups = {EgonColaModelValidationGroups.Insert.class, EgonColaModelValidationGroups.Persisted.class})
+    private Long draftActivationVersion;
+
+    @TableField("draft_source_hashes")
+    @NotNull(groups = {EgonColaModelValidationGroups.Insert.class, EgonColaModelValidationGroups.Persisted.class})
+    @Size(max = 2097152, groups = {EgonColaModelValidationGroups.Insert.class, EgonColaModelValidationGroups.Persisted.class})
+    private String draftSourceHashes;
+
+    @TableField("current_override_id")
+    @Positive(groups = {EgonColaModelValidationGroups.Insert.class, EgonColaModelValidationGroups.Persisted.class})
+    private Long currentOverrideId;
+
+    @TableField("published_source_hashes")
+    @Size(max = 2097152, groups = {EgonColaModelValidationGroups.Insert.class, EgonColaModelValidationGroups.Persisted.class})
+    private String publishedSourceHashes;
+
+    @TableField("published_draft_revision")
+    @PositiveOrZero(groups = {EgonColaModelValidationGroups.Insert.class, EgonColaModelValidationGroups.Persisted.class})
+    private Long publishedDraftRevision;
+
+    @TableField("published_operation_id")
+    @Size(max = 128, groups = {EgonColaModelValidationGroups.Insert.class, EgonColaModelValidationGroups.Persisted.class})
+    private String publishedOperationId;
+
+    @TableField("published_at")
+    private Instant publishedAt;
 
     @TableField(exist = false)
     private String namespaceCode;

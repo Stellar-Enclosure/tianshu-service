@@ -46,7 +46,7 @@ public class DdcRegistryAutoConfiguration {
         return beanFactory -> {
             throw new IllegalStateException(
                     "Required DdcServiceRegistryClient Port is missing; add "
-                            + "top.egon:egon-cola-component-rpc-tianshu-adapter"
+                            + "top.egon:stellar-enclosure-component-rpc-tianshu-adapter"
             );
         };
     }

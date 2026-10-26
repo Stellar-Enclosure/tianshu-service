@@ -58,7 +58,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @WebMvcTest(controllers = DdcAiResourceController.class)
 @AutoConfigureMockMvc(addFilters = false)
-@Import(DdcAiWebConfiguration.class)
+@Import({DdcAiWebConfiguration.class, top.egon.cola.component.tianshu.admin.config.DdcTransportSliceTestConfiguration.class})
 class DdcEndToEndContractTest {
 
     private static final long TENANT_ID = 101L;

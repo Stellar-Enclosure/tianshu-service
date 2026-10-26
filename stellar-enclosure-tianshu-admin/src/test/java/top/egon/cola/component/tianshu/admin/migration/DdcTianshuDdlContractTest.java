@@ -15,6 +15,7 @@ import top.egon.cola.component.outbox.autoconfigure.TransactionalOutboxPropertie
 import top.egon.cola.component.outbox.autoconfigure.OutboxMpStorageProperties;
 import top.egon.cola.component.common.mybatis.ddl.EgonColaDdlManifestBO;
 import top.egon.cola.component.tianshu.admin.config.DdcDatabaseReadyValidator;
+import top.egon.cola.component.tianshu.admin.config.DdcPermissionMetadataSchemaFixture;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -107,7 +108,7 @@ class DdcTianshuDdlContractTest {
 
         assertThat(manifest.path("family").asText()).isEqualTo("tianshu");
         assertThat(typedManifest.family()).isEqualTo("tianshu");
-        assertThat(manifest.path("scripts").size()).isEqualTo(5);
+        assertThat(manifest.path("scripts").size()).isEqualTo(6);
         JsonNode v001 = manifest.path("scripts").get(0);
         JsonNode v002 = manifest.path("scripts").get(1);
         JsonNode v003 = manifest.path("scripts").get(2);
@@ -127,8 +128,12 @@ class DdcTianshuDdlContractTest {
         assertThat(v005.path("version").asText()).isEqualTo("20261022_001");
         assertThat(v005.path("path").asText()).isEqualTo(I18N_SQL);
         assertThat(v005.path("sha256").asText()).isEqualTo(sha256(requiredResource(I18N_SQL)));
+        JsonNode v006 = manifest.path("scripts").get(5);
+        assertThat(v006.path("version").asText()).isEqualTo("20261023_001");
+        assertThat(v006.path("path").asText()).isEqualTo(DdcPermissionMetadataSchemaFixture.RESOURCE);
+        assertThat(v006.path("sha256").asText()).isEqualTo(sha256(requiredResource(DdcPermissionMetadataSchemaFixture.RESOURCE)));
         assertThat(typedManifest.scripts().subList(typedManifest.startingIndex(null), typedManifest.scripts().size()))
-                .extracting(EgonColaDdlManifestBO.ScriptBO::version).containsExactly("20261018_001", "20261022_001");
+                .extracting(EgonColaDdlManifestBO.ScriptBO::version).containsExactly("20261018_001", "20261022_001", "20261023_001");
         assertThat(typedManifest.freshBaselineVersion()).isEqualTo("20261018_001");
         assertThat(typedManifest.startingIndex(null)).isEqualTo(3);
     }
@@ -281,7 +286,7 @@ class DdcTianshuDdlContractTest {
         assertThat(sharding.getTransactionDefaultType()).isEqualTo("LOCAL");
         assertThat(sharding.getDataSources()).singleElement()
                 .satisfies(source -> assertThat(source.role()).isEqualTo(EgonColaShardingProperties.DataSourceRoleEnum.PRIMARY));
-        assertThat(sharding.getTables()).hasSize(22);
+        assertThat(sharding.getTables()).hasSize(31);
         assertThat(sharding.getTables()).containsKey("ddc_i18n_page");
         assertThat(sharding.getTables()).containsKeys(TIANSHU_TABLES.stream()
                 .filter(table -> !"ddl_history".equals(table))
@@ -564,6 +569,11 @@ class DdcTianshuDdlContractTest {
             PreparedStatement statement = mock(PreparedStatement.class);
             ResultSet rows = mock(ResultSet.class);
             when(statement.executeQuery()).thenReturn(rows);
+            if (DdcPermissionMetadataSchemaFixture.handles(sql)) {
+                ResultSet metadataRows = DdcPermissionMetadataSchemaFixture.rows(sql, null);
+                when(statement.executeQuery()).thenReturn(metadataRows);
+                return statement;
+            }
             if (sql.contains("pg_is_in_recovery")) {
                 when(rows.next()).thenReturn(true);
                 when(rows.getString(1)).thenReturn("public");
@@ -617,7 +627,8 @@ class DdcTianshuDdlContractTest {
     private static Set<String> sqlColumns(String table) throws SQLException {
         try {
             String sql = new String(requiredResource(TIANSHU_SQL), java.nio.charset.StandardCharsets.UTF_8)
-                    + "\n" + new String(requiredResource(I18N_SQL), java.nio.charset.StandardCharsets.UTF_8);
+                    + "\n" + new String(requiredResource(I18N_SQL), java.nio.charset.StandardCharsets.UTF_8)
+                    + "\n" + DdcPermissionMetadataSchemaFixture.sql();
             Matcher definition = Pattern.compile("(?is)CREATE\\s+TABLE\\s+" + Pattern.quote(table)
                     + "\\s*\\((.*?)\\n\\);").matcher(sql);
             if (!definition.find()) {
@@ -628,6 +639,10 @@ class DdcTianshuDdlContractTest {
                     + "boolean|timestamptz|timestamp|char)\\b").matcher(definition.group(1));
             while (column.find()) {
                 columns.add(column.group(1));
+            }
+            if ("ddc_i18n_page_t0".equals(table)) {
+                var added = Pattern.compile("(?m)^    ADD COLUMN ([a-z_]+) ").matcher(DdcPermissionMetadataSchemaFixture.sql());
+                while (added.find()) columns.add(added.group(1));
             }
             return columns;
         } catch (IOException failure) {
@@ -676,7 +691,8 @@ class DdcTianshuDdlContractTest {
     private static Set<String> sqlConstraints(String table) throws SQLException {
         try {
             String sql = new String(requiredResource(TIANSHU_SQL), java.nio.charset.StandardCharsets.UTF_8)
-                    + "\n" + new String(requiredResource(I18N_SQL), java.nio.charset.StandardCharsets.UTF_8);
+                    + "\n" + new String(requiredResource(I18N_SQL), java.nio.charset.StandardCharsets.UTF_8)
+                    + "\n" + DdcPermissionMetadataSchemaFixture.sql();
             Matcher definition = Pattern.compile("(?is)CREATE\\s+TABLE\\s+" + Pattern.quote(table)
                     + "\\s*\\((.*?)\\n\\);").matcher(sql);
             Set<String> constraints = new java.util.LinkedHashSet<>();
@@ -700,7 +716,8 @@ class DdcTianshuDdlContractTest {
     private static List<IndexPredicateBO> sqlLiveIndexPredicates() throws SQLException {
         try {
             String sql = new String(requiredResource(TIANSHU_SQL), java.nio.charset.StandardCharsets.UTF_8)
-                    + "\n" + new String(requiredResource(I18N_SQL), java.nio.charset.StandardCharsets.UTF_8);
+                    + "\n" + new String(requiredResource(I18N_SQL), java.nio.charset.StandardCharsets.UTF_8)
+                    + "\n" + DdcPermissionMetadataSchemaFixture.sql();
             Matcher index = Pattern.compile("(?im)^CREATE\\s+UNIQUE\\s+INDEX\\s+([a-z0-9_]+)\\s+ON\\s+"
                     + "[a-z0-9_]+\\s*\\(([^;]+?)\\)\\s*WHERE\\s+([^;]+);").matcher(sql);
             List<IndexPredicateBO> predicates = new java.util.ArrayList<>();

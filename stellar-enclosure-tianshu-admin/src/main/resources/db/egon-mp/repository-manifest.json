@@ -25,6 +25,11 @@
       "version": "20261022_001",
       "path": "db/egon-mp/V20261022_001__tianshu_page_i18n.sql",
       "sha256": "7fa986be12478e6c5df90ad17328409b969616f5f9ff5d7897a858d4ba3421c9"
+    },
+    {
+      "version": "20261023_001",
+      "path": "db/egon-mp/V20261023_001__tianshu_permission_metadata.sql",
+      "sha256": "5772a82da5f28e3e2a188737fce57aa4d8ade2c9c8a53f205fad6dde6690280a"
     }
   ],
   "freshBaselineVersion": "20261018_001"

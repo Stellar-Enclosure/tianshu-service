@@ -1,5 +1,11 @@
 package top.egon.cola.component.tianshu.model.management;
 
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.PermissionManifest;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.ResourceType;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.FieldPermissions;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionGroup;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionResource;
+
 import org.springframework.lang.Nullable;
 
 import java.time.Instant;
@@ -13,8 +19,21 @@ import java.util.List;
  * @param services   目录中的服务键 / service keys in the catalog
  */
 public record DdcManagementServiceCatalog(
+        @PermissionResource(key = "tianshu.field.DdcManagementServiceCatalog.generation", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.generation")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.NUMBER,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
         long generation,
+        @PermissionResource(key = "tianshu.field.DdcManagementServiceCatalog.observedAt", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.observedAt")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        @com.fasterxml.jackson.annotation.JsonFormat(shape = com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING)
         Instant observedAt,
+        @PermissionResource(key = "tianshu.field.DdcManagementServiceCatalog.services", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.services")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.ARRAY,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
         @Nullable List<DdcManagementServiceKey> services
 ) {
 

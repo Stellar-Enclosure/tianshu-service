@@ -35,6 +35,8 @@ class DdcRegistryAutoConfigurationTest {
                     ))
                     .withPropertyValues(
                             "egon.cola.component.tianshu.enabled=false",
+                            "egon.cola.component.tianshu.tenant-id=42",
+                            "egon.cola.component.tianshu.redis.username=tenant-42",
                             "egon.cola.component.tianshu.registry.enabled=true"
                     )
                     .withBean(

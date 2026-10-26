@@ -1,5 +1,11 @@
 package top.egon.cola.component.tianshu.model.management;
 
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.PermissionManifest;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.ResourceType;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.FieldPermissions;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionGroup;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionResource;
+
 import org.springframework.lang.Nullable;
 
 import java.time.Instant;
@@ -20,15 +26,58 @@ import java.util.Map;
  * @param expireAt        租约过期时间 / lease expiration time
  */
 public record DdcManagementServiceInstance(
+        @PermissionResource(key = "tianshu.field.DdcManagementServiceInstance.instanceId", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.instanceId")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
         String instanceId,
+        @PermissionResource(key = "tianshu.field.DdcManagementServiceInstance.leaseId", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.leaseId")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
         String leaseId,
+        @PermissionResource(key = "tianshu.field.DdcManagementServiceInstance.host", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.host")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
         String host,
+        @PermissionResource(key = "tianshu.field.DdcManagementServiceInstance.port", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.port")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.NUMBER,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
         int port,
+        @PermissionResource(key = "tianshu.field.DdcManagementServiceInstance.secure", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.secure")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.BOOLEAN,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
         boolean secure,
+        @PermissionResource(key = "tianshu.field.DdcManagementServiceInstance.metadata", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.metadata")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.OBJECT,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
         @Nullable Map<String, String> metadata,
+        @PermissionResource(key = "tianshu.field.DdcManagementServiceInstance.status", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.status")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
         String status,
+        @PermissionResource(key = "tianshu.field.DdcManagementServiceInstance.registeredAt", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.registeredAt")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        @com.fasterxml.jackson.annotation.JsonFormat(shape = com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING)
         Instant registeredAt,
+        @PermissionResource(key = "tianshu.field.DdcManagementServiceInstance.lastHeartbeatAt", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.lastHeartbeatAt")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        @com.fasterxml.jackson.annotation.JsonFormat(shape = com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING)
         Instant lastHeartbeatAt,
+        @PermissionResource(key = "tianshu.field.DdcManagementServiceInstance.expireAt", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.expireAt")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        @com.fasterxml.jackson.annotation.JsonFormat(shape = com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING)
         Instant expireAt
 ) {
 

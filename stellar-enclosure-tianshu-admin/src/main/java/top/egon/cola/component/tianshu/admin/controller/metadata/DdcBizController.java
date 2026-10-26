@@ -1,5 +1,10 @@
 package top.egon.cola.component.tianshu.admin.controller.metadata;
 
+import top.egon.cola.component.tianshu.admin.permission.DdcPermissionCodes;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.ResourceType;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionResource;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.RequiresPermissions;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -41,12 +46,18 @@ public class DdcBizController {
 
     @Operation(operationId = "tianshu.ddcBizController.list")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.biz.list", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.biz.list")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping
     public ResultRecord<List<DdcBizResult>> list(@RequestParam(value = "keyword", required = false) String keyword) {
         return ResultRecord.success(resultConverter.toTargetList(bizService.list(keyword)));
     }
     @Operation(operationId = "tianshu.ddcBizController.page")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.biz.page", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.biz.page")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping("/page")
     public PageResultRecord<DdcBizResult> page(@RequestParam(value = "keyword", required = false) String keyword,
             PageQuery pageQuery) {
@@ -56,18 +67,27 @@ public class DdcBizController {
     }
     @Operation(operationId = "tianshu.ddcBizController.detail")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.biz.detail", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.biz.detail")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping("/{code}")
     public ResultRecord<DdcBizResult> detail(@PathVariable("code") String code) {
         return ResultRecord.success(resultConverter.toTarget(bizService.findByBizCode(code)));
     }
     @Operation(operationId = "tianshu.ddcBizController.save")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.biz.save", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.biz.save")
+    @RequiresPermissions(codes = DdcPermissionCodes.WRITE)
     @PostMapping
     public ResultRecord<DdcBizResult> save(@Validated(EgonColaModelValidationGroups.Insert.class) @RequestBody DdcBizBO request) {
         return ResultRecord.success(resultConverter.toTarget(bizService.save(request)));
     }
     @Operation(operationId = "tianshu.ddcBizController.update")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.biz.update", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.biz.update")
+    @RequiresPermissions(codes = DdcPermissionCodes.WRITE)
     @PutMapping("/{code}")
     public ResultRecord<DdcBizResult> update(@PathVariable("code") String code,
             @Validated(EgonColaModelValidationGroups.Update.class) @RequestBody DdcBizBO request) {
@@ -75,6 +95,9 @@ public class DdcBizController {
     }
     @Operation(operationId = "tianshu.ddcBizController.delete")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.biz.delete", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.biz.delete")
+    @RequiresPermissions(codes = DdcPermissionCodes.WRITE)
     @DeleteMapping("/{code}")
     public ResultRecord<Void> delete(@PathVariable("code") String code) {
         bizService.delete(code);
@@ -82,6 +105,9 @@ public class DdcBizController {
     }
     @Operation(operationId = "tianshu.ddcBizController.setEnabled")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.biz.setEnabled", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.biz.setEnabled")
+    @RequiresPermissions(codes = DdcPermissionCodes.WRITE)
     @PutMapping("/{code}/enabled")
     public ResultRecord<DdcBizResult> setEnabled(@PathVariable("code") String code,
             @RequestParam("enabled") boolean enabled) {

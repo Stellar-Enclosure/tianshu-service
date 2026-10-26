@@ -46,7 +46,9 @@ public class DdcDatabaseReadyValidator implements SmartInitializingSingleton {
             Map.entry("ddc_i18n_page_t0", Set.of("id", "tenant_id", "create_user_id", "create_time", "update_user_id",
                     "update_time", "deleted_at", "version", "biz_code", "namespace_id", "env_code", "app_code",
                     "page_code", "name", "default_locale", "draft_translations", "published_default_locale",
-                    "published_translations", "published_version")),
+                    "published_translations", "published_version", "catalog_scope_id", "draft_activation_version",
+                    "draft_source_hashes", "current_override_id", "published_source_hashes", "published_draft_revision",
+                    "published_operation_id", "published_at")),
             Map.entry("ddc_biz_t0", Set.of("id", "tenant_id", "create_user_id", "create_time", "update_user_id",
                     "update_time", "deleted_at", "version", "public_id", "biz_code", "biz_name", "description",
                     "enabled", "created_at", "updated_at")),
@@ -200,7 +202,7 @@ public class DdcDatabaseReadyValidator implements SmartInitializingSingleton {
         validateTianshuSchema(primary, routeFingerprint, manifest);
         outboxSchemaMetadataValidator.validate();
         log.info("Tianshu database readiness validated: tables={} routeFingerprint={}",
-                TIANSHU_TABLES.size() - 1, routeFingerprint);
+                TIANSHU_TABLES.size() - 1 + DdcPermissionMetadataReadyValidator.tableCount(), routeFingerprint);
     }
 
     /** Validates the Tianshu history and relations through the same read-only physical PRIMARY. */
@@ -229,6 +231,7 @@ public class DdcDatabaseReadyValidator implements SmartInitializingSingleton {
             validateLifecycleIndexes(metadata);
             validateLifecycleIndexPredicates(connection);
             validateNamedConstraints(connection);
+            DdcPermissionMetadataReadyValidator.validate(connection);
             validateHistory(connection, manifest, routeFingerprint);
         } catch (SQLException failure) {
             throw new IllegalStateException("TIANSHU_DATABASE_SCHEMA_NOT_READY", failure);

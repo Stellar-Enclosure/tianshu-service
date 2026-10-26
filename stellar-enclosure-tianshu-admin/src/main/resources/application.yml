@@ -96,20 +96,39 @@ egon:
               realm-type: PLATFORM
               status: ACTIVE
               trust-version: ${TIANQUAN_SHOUBING_PLATFORM_TRUST_VERSION}
-          revocation:
-            primary-endpoint: ${TIANSHU_OAUTH_PRIMARY_REDIS_ADDRESS}
-            mode: STRICT_SHARED
-            timeout: PT0.5S
-            epoch: ${TIANSHU_OAUTH_REVOCATION_EPOCH}
-          audit:
-            stream: ${TIANSHU_OAUTH_AUDIT_STREAM}
-            spool-directory: ${TIANSHU_OAUTH_AUDIT_SPOOL_DIRECTORY}
-            spool-max-bytes: ${TIANSHU_OAUTH_AUDIT_SPOOL_MAX_BYTES:1073741824}
-            hmac-key-file: ${TIANSHU_OAUTH_AUDIT_HMAC_KEY_FILE}
-            delivery:
-              receipt-ttl: PT1H
-              confirmation-timeout: PT30S
-              batch-size: 100
+          authority:
+            base-uri: ${TIANQUAN_SHOUBING_AUTHORITY_BASE_URI}
+            timeout: PT2S
+            bindings:
+              tenant-a:
+                issuer: ${TIANQUAN_SHOUBING_TENANT_A_ISSUER}
+                registration-id: ${TIANSHU_IDENTITY_TENANT_A_REGISTRATION_ID}
+                source-resource: ${TIANSHU_RESOURCE_URI}
+                audience: ${TIANQUAN_SHOUBING_IDENTITY_RESOURCE_URI}
+                context: TENANT
+                tenant-id: ${TIANQUAN_SHOUBING_TENANT_A_ID}
+                scopes:
+                  - tianquan-shoubing:security-state:resolve
+                  - tianquan-shoubing:audit:append
+              tenant-b:
+                issuer: ${TIANQUAN_SHOUBING_TENANT_B_ISSUER}
+                registration-id: ${TIANSHU_IDENTITY_TENANT_B_REGISTRATION_ID}
+                source-resource: ${TIANSHU_RESOURCE_URI}
+                audience: ${TIANQUAN_SHOUBING_IDENTITY_RESOURCE_URI}
+                context: TENANT
+                tenant-id: ${TIANQUAN_SHOUBING_TENANT_B_ID}
+                scopes:
+                  - tianquan-shoubing:security-state:resolve
+                  - tianquan-shoubing:audit:append
+              platform:
+                issuer: ${TIANQUAN_SHOUBING_PLATFORM_ISSUER}
+                registration-id: ${TIANSHU_IDENTITY_PLATFORM_REGISTRATION_ID}
+                source-resource: ${TIANSHU_RESOURCE_URI}
+                audience: ${TIANQUAN_SHOUBING_IDENTITY_RESOURCE_URI}
+                context: PLATFORM
+                scopes:
+                  - tianquan-shoubing:security-state:resolve
+                  - tianquan-shoubing:audit:append
           enabled: ${UNIFIED_IDENTITY_ENABLED:true}
           register-filter: false
           issuer: ${TIANQUAN_SHOUBING_OAUTH_ISSUER:}
@@ -127,13 +146,24 @@ egon:
               "TIANSHU_CACHE": ["TIANSHU_CACHE"]
               "TIANSHU_AI_READ": ["TIANSHU_AI_READ"]
               "TIANSHU_AI_WRITE": ["TIANSHU_AI_WRITE"]
+              "TIANSHU_AI_PUBLISH": ["TIANSHU_AI_WRITE"]
           enabled: ${UNIFIED_IDENTITY_ENABLED:true}
           register-filter: false
-          system-code: tianshu-admin
+          system-code: tianshu
           runtime:
-            redis-enabled: true
-            redis-address: ${TIANSHU_AUTHORIZATION_REDIS_ADDRESS:}
-            database: ${TIANSHU_AUTHORIZATION_REDIS_DATABASE:0}
+            artifact-digest: ${TIANSHU_ARTIFACT_DIGEST:}
+            catalog-scopes:
+              - catalog-scope-id: ${TIANSHU_CATALOG_SCOPE_ID}
+                tenant-id: ${TIANSHU_CATALOG_TENANT_ID}
+                business-code: xingyuan
+                application-code: tianshu
+                namespace-code: ${TIANSHU_CATALOG_NAMESPACE}
+                environment: ${DEPLOYMENT_ENV}
+            anonymous-resource-keys:
+              - tianshu.api.adminUiI18n.publicBundle
+            bootstrap-service-resource-keys:
+              - tianshu.api.i18nSourceImport.importSource
+              - tianshu.api.i18nSourceImport.receipt
           authorization:
             endpoint: ${TIANQUAN_JIANSHEN_AUTHORIZATION_ENDPOINT:}
             service-token:

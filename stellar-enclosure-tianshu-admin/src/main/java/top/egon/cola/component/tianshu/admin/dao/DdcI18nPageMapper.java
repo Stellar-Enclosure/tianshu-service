@@ -9,6 +9,7 @@ import java.util.List;
 
 @Mapper
 public interface DdcI18nPageMapper extends EgonColaMapper<DdcI18nPagePO> {
+    DdcI18nPagePO lockById(@Param("tenantId") Long tenantId, @Param("id") Long id);
     DdcI18nPagePO selectPageById(@Param("tenantId") Long tenantId, @Param("id") Long id);
     DdcI18nPagePO selectByPageCode(@Param("tenantId") Long tenantId, @Param("scope") DdcI18nScope scope,
             @Param("pageCode") String pageCode);

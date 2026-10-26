@@ -41,7 +41,7 @@ class DdcI18nTopologyUpgradeTest {
     private final Runnable newTopologyReady = mock(Runnable.class);
 
     @BeforeEach void setup() throws Exception {
-        tianshu = manifest("db/egon-mp/repository-manifest.json");
+        tianshu = manifest("migration/tianshu-i18n-20261022-manifest.json");
         outbox = manifest("db/egon-outbox-mp/manifest.json");
         store = new Store();
         store.rows.put("public", history(tianshu, 0, false, OLD));
@@ -58,6 +58,12 @@ class DdcI18nTopologyUpgradeTest {
             }
             return results(start, applied);
         });
+    }
+
+    @Test void rejectsPermissionMetadataManifestInsteadOfReusingSingleTableUpgrade() throws Exception {
+        tianshu = manifest("db/egon-mp/repository-manifest.json");
+        assertThatThrownBy(() -> upgrade().upgrade()).hasMessage("TIANSHU_I18N_UPGRADE_PLAN_INVALID");
+        verifyNoInteractions(runner, oldOutboxReady, oldTopologyReady, newTopologyReady);
     }
 
     @Test void upgradesFullLegacyHistoryAndUpdatesOnlyBothFingerprintsAtomically() throws Exception {

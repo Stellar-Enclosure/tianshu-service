@@ -18,6 +18,11 @@
 
     <dependencies>
         <dependency>
+            <groupId>top.egon</groupId>
+            <artifactId>stellar-enclosure-tianquan-jianshen-contract</artifactId>
+        </dependency>
+
+        <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-validation</artifactId>
         </dependency>
@@ -99,4 +104,53 @@
             </resource>
         </resources>
     </build>
+    <profiles>
+        <profile>
+            <id>permission-producer</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>default-compile</id>
+                                <configuration>
+                                    <annotationProcessorPaths combine.children="append">
+                                        <path>
+                                            <groupId>top.egon</groupId>
+                                            <artifactId>stellar-enclosure-tianquan-jianshen-processor</artifactId>
+                                            <version>${project.version}</version>
+                                        </path>
+                                    </annotationProcessorPaths>
+                                    <compilerArgs>
+                                        <arg>-Apac.business=xingyuan</arg>
+                                        <arg>-Apac.application=tianshu</arg>
+                                        <arg>-Apac.producer=tianshu-java</arg>
+                                        <arg>-Apac.module=${project.artifactId}</arg>
+                                        <arg>-Apac.expectedModules=stellar-enclosure-tianshu-starter,stellar-enclosure-tianshu-admin</arg>
+                                        <arg>-Apac.ownedKeyPrefixes=tianshu.api.,tianshu.field.</arg>
+                                        <arg>-Apac.managedPackages=top.egon.cola.component.tianshu.admin.controller</arg>
+                                        <arg>-Apac.repository=tianshu-service</arg>
+                                        <arg>-Apac.commit=${permission.commit}</arg>
+                                        <arg>-Apac.buildId=${permission.buildId}</arg>
+                                        <arg>-Apac.version=${project.version}</arg>
+                                    </compilerArgs>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <systemPropertyVariables>
+                                <permission.producer.enabled>true</permission.producer.enabled>
+                            </systemPropertyVariables>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

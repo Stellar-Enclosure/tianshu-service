@@ -33,7 +33,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @WebMvcTest(controllers = DdcAiResourceController.class)
 @AutoConfigureMockMvc(addFilters = false)
-@Import({DdcAiOpenApiConfiguration.class, DdcAiWebConfiguration.class})
+@Import({DdcAiOpenApiConfiguration.class, DdcAiWebConfiguration.class, top.egon.cola.component.tianshu.admin.config.DdcTransportSliceTestConfiguration.class})
 @ImportAutoConfiguration({SpringDocConfiguration.class, SpringDocConfigProperties.class, SpringDocWebMvcConfiguration.class,
         MultipleOpenApiSupportConfiguration.class})
 @TestPropertySource(properties = "springdoc.api-docs.enabled=true")

@@ -1,17 +1,9 @@
 package top.egon.cola.component.tianshu.admin.service.i18n;
 
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.cfg.CoercionAction;
-import com.fasterxml.jackson.databind.cfg.CoercionInputShape;
-import com.fasterxml.jackson.databind.type.LogicalType;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
-import top.egon.cola.component.tianshu.admin.model.vo.DdcI18nBundleResult;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcPublicI18nBundleResult;
 
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -21,8 +13,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import top.egon.cola.component.tianshu.admin.permission.DdcAdminMessageSources;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.CanonicalJson;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.PermissionManifest;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionMessage;
 
-/** Server-owned defaults keep the metadata console usable before its first language publication. */
+/** Source declarations supply public login text; tenant bundles use imported, activated manifest versions. */
 @Component("ddcAdminUiI18nCatalog")
 public class DdcAdminUiI18nCatalog {
     public static final String DEFAULT_LOCALE = "zh-CN";
@@ -38,39 +34,41 @@ public class DdcAdminUiI18nCatalog {
         this.validation = validation;
         Map<String, Page> loaded = new LinkedHashMap<>();
         Map<String, String> hashes = new LinkedHashMap<>();
-        for (String code : PAGE_CODES) {
-            try (var input = new ClassPathResource("i18n/tianshu-admin/" + code + ".json").getInputStream()) {
-                byte[] bytes = input.readNBytes(DdcI18nValidation.MAX_CONTENT_BYTES + 1);
-                if (bytes.length > DdcI18nValidation.MAX_CONTENT_BYTES) throw new IOException("Catalog page exceeds size limit");
-                Page page = parse(code, bytes, validation);
-                loaded.put(code, page);
-                hashes.put(code, digest(new String(bytes, StandardCharsets.UTF_8)));
-            } catch (IOException | RuntimeException failure) {
-                throw new IllegalStateException("Invalid Tianshu admin language catalog: " + code, failure);
-            }
+        for (var source : DdcAdminMessageSources.PAGES) {
+            Page page = fromDeclarations(source.pageCode(), source.name(), source.declaration(), validation);
+            loaded.put(page.pageCode(), page);
+            hashes.put(page.pageCode(), digest(CanonicalJson.write(page.translations())));
         }
         pages = Collections.unmodifiableMap(loaded);
         versions = Map.copyOf(hashes);
     }
 
-    static Page parse(String expectedCode, byte[] bytes, DdcI18nValidation validation) throws IOException {
-        ObjectMapper mapper = new ObjectMapper();
-        mapper.enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, DeserializationFeature.FAIL_ON_MISSING_CREATOR_PROPERTIES,
-                DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
-        mapper.getFactory().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
-        mapper.coercionConfigFor(LogicalType.Textual).setCoercion(CoercionInputShape.Integer, CoercionAction.Fail)
-                .setCoercion(CoercionInputShape.Float, CoercionAction.Fail).setCoercion(CoercionInputShape.Boolean, CoercionAction.Fail);
-        Page page = mapper.readValue(bytes, Page.class);
-        if (!expectedCode.equals(page.pageCode()) || !DEFAULT_LOCALE.equals(page.defaultLocale())
-                || page.translations() == null || !page.translations().containsKey("en-US")) {
-            throw DdcI18nValidation.invalid("Catalog must match its page code and provide zh-CN and en-US");
-        }
-        validation.key(page.pageCode());
-        validation.name(page.name());
-        validation.translations(page.defaultLocale(), page.translations(), true);
+    static Page fromDeclarations(String pageCode, String name, Class<?> declaration, DdcI18nValidation validation) {
         Map<String, Map<String, String>> translations = new TreeMap<>();
-        page.translations().forEach((locale, messages) -> translations.put(locale, Collections.unmodifiableMap(new TreeMap<>(messages))));
-        return new Page(page.pageCode(), page.name(), page.defaultLocale(), Collections.unmodifiableMap(translations));
+        for (PermissionMessage annotation : declaration.getAnnotationsByType(PermissionMessage.class)) {
+            if (!pageCode.equals(annotation.pageCode()) || !DEFAULT_LOCALE.equals(annotation.defaultLocale())) {
+                throw DdcI18nValidation.invalid("Source declaration must match its page and default locale");
+            }
+            Map<String, String> defaults = new TreeMap<>();
+            for (var localized : annotation.defaults()) {
+                if (defaults.putIfAbsent(localized.locale(), localized.text()) != null) {
+                    throw DdcI18nValidation.invalid("Duplicate source locale");
+                }
+            }
+            var message = new PermissionManifest.Message(pageCode, annotation.key(), annotation.defaultLocale(), defaults);
+            message.defaults().forEach((locale, text) -> {
+                if (translations.computeIfAbsent(locale, ignored -> new TreeMap<>()).putIfAbsent(message.key(), text) != null) {
+                    throw DdcI18nValidation.invalid("Duplicate source key");
+                }
+            });
+        }
+        if (!translations.containsKey("en-US")) throw DdcI18nValidation.invalid("Source pages require both default languages");
+        validation.key(pageCode);
+        validation.name(name);
+        validation.translations(DEFAULT_LOCALE, translations, true);
+        Map<String, Map<String, String>> immutable = new TreeMap<>();
+        translations.forEach((locale, messages) -> immutable.put(locale, Collections.unmodifiableMap(messages)));
+        return new Page(pageCode, name, DEFAULT_LOCALE, Collections.unmodifiableMap(immutable));
     }
 
     public List<Page> pages() { return List.copyOf(pages.values()); }
@@ -92,9 +90,9 @@ public class DdcAdminUiI18nCatalog {
 
     public String version(String pageCode) { return versions.get(page(pageCode).pageCode()); }
 
-    public DdcI18nBundleResult publicBundle(String locale) {
+    public DdcPublicI18nBundleResult publicBundle(String locale) {
         Map<String, String> messages = messages("tianshu.auth", locale, false);
-        return new DdcI18nBundleResult("tianshu.auth", locale, DEFAULT_LOCALE,
+        return new DdcPublicI18nBundleResult("tianshu.auth", locale, DEFAULT_LOCALE,
                 digest(version("tianshu.auth") + ":" + locale), Collections.unmodifiableMap(messages));
     }
 

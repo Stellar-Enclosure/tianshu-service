@@ -1,5 +1,10 @@
 package top.egon.cola.component.tianshu.admin.controller.metadata;
 
+import top.egon.cola.component.tianshu.admin.permission.DdcPermissionCodes;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.ResourceType;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionResource;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.RequiresPermissions;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -44,6 +49,9 @@ public class DdcNamespaceEnvAppBindingController {
 
     @Operation(operationId = "tianshu.ddcNamespaceEnvAppBindingController.list")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.namespaceEnvAppBinding.list", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.namespaceEnvAppBinding.list")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping
     public ResultRecord<List<DdcNamespaceEnvAppBindingVO>> list(
             @RequestParam(value = "bizCode", required = false) String bizCode,
@@ -56,6 +64,9 @@ public class DdcNamespaceEnvAppBindingController {
 
     @Operation(operationId = "tianshu.ddcNamespaceEnvAppBindingController.page")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.namespaceEnvAppBinding.page", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.namespaceEnvAppBinding.page")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping("/page")
     public PageResultRecord<DdcNamespaceEnvAppBindingVO> page(
             @RequestParam(value = "bizCode", required = false) String bizCode,
@@ -69,6 +80,9 @@ public class DdcNamespaceEnvAppBindingController {
 
     @Operation(operationId = "tianshu.ddcNamespaceEnvAppBindingController.create")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.namespaceEnvAppBinding.create", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.namespaceEnvAppBinding.create")
+    @RequiresPermissions(codes = DdcPermissionCodes.WRITE)
     @PostMapping
     public ResultRecord<DdcNamespaceEnvAppBindingVO> create(
             @RequestBody DdcNamespaceEnvAppBindingRequest request) {
@@ -77,6 +91,9 @@ public class DdcNamespaceEnvAppBindingController {
 
     @Operation(operationId = "tianshu.ddcNamespaceEnvAppBindingController.update")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.namespaceEnvAppBinding.update", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.namespaceEnvAppBinding.update")
+    @RequiresPermissions(codes = DdcPermissionCodes.WRITE)
     @PutMapping("/{id}")
     public ResultRecord<DdcNamespaceEnvAppBindingVO> update(
             @PathVariable("id") String id,
@@ -86,6 +103,9 @@ public class DdcNamespaceEnvAppBindingController {
 
     @Operation(operationId = "tianshu.ddcNamespaceEnvAppBindingController.delete")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.namespaceEnvAppBinding.delete", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.namespaceEnvAppBinding.delete")
+    @RequiresPermissions(codes = DdcPermissionCodes.WRITE)
     @DeleteMapping("/{id}")
     public ResultRecord<Void> delete(@PathVariable("id") String id) {
         bindingService.delete(id);

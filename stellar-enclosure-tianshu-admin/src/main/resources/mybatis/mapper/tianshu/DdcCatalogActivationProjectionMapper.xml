@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="top.egon.cola.component.tianshu.admin.dao.DdcCatalogActivationProjectionMapper">
+    <resultMap id="Row" type="top.egon.cola.component.tianshu.admin.model.po.DdcCatalogActivationProjectionPO">
+        <result property="id" column="id"/>
+        <result property="tenantId" column="tenant_id"/>
+        <result property="createUserId" column="create_user_id"/>
+        <result property="createTime" column="create_time"/>
+        <result property="updateUserId" column="update_user_id"/>
+        <result property="updateTime" column="update_time"/>
+        <result property="deletedAt" column="deleted_at"/>
+        <result property="version" column="version"/>
+        <result property="catalogScopeId" column="catalog_scope_id"/>
+        <result property="activationVersion" column="activation_version"/>
+        <result property="descriptorDigest" column="descriptor_digest"/>
+        <result property="descriptorJson" column="descriptor_json"/>
+        <result property="producerCount" column="producer_count"/>
+        <result property="authorityResourceUri" column="authority_resource_uri"/>
+    </resultMap>
+    <select id="findByVersion" resultMap="Row" timeout="2">
+        SELECT * FROM ddc_catalog_activation_projection
+        WHERE tenant_id=#{tenantId} AND catalog_scope_id=#{catalogScopeId} AND activation_version=#{activationVersion} AND deleted_at IS NULL
+
+    </select>
+</mapper>

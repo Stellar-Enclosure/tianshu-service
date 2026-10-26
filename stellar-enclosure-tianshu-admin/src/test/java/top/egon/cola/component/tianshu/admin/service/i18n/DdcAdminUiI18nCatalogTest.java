@@ -1,8 +1,6 @@
 package top.egon.cola.component.tianshu.admin.service.i18n;
 
 import org.junit.jupiter.api.Test;
-import java.nio.charset.StandardCharsets;
-import java.util.List;
 import static org.assertj.core.api.Assertions.*;
 
 class DdcAdminUiI18nCatalogTest {
@@ -30,24 +28,20 @@ class DdcAdminUiI18nCatalogTest {
         assertThatThrownBy(() -> catalog.page("../../private")).isInstanceOf(RuntimeException.class);
     }
 
-    @Test void catalogRejectsDuplicateUnsafeOrNonTextKeysAndMismatchedVariables() {
-        for (String messages : List.of("{\"title\":\"One\",\"title\":\"Two\"}", "{\"__proto__.x\":\"Unsafe\"}",
-                "{\"constructor\":\"Unsafe\"}", "{\"title\":1}", "{\"title\":true}", "{\"title\":\"Hi {{name}}\"}")) {
-            assertThatThrownBy(() -> parse("{\"zh-CN\":" + messages + ",\"en-US\":{\"title\":\"Title\"}}"))
-                    .isInstanceOf(Exception.class);
-        }
-    }
-
-    @Test void catalogChecksPageIdentityAndRequiresBothDefaultLanguages() {
-        assertThatThrownBy(() -> parse("{\"zh-CN\":{\"title\":\"Title\"}}")) .isInstanceOf(RuntimeException.class);
-        String json = "{\"pageCode\":\"common\",\"name\":\"Common\",\"defaultLocale\":\"zh-CN\","
-                + "\"translations\":{\"zh-CN\":{\"title\":\"Title\"},\"en-US\":{\"title\":\"Title\"}}}";
-        assertThatThrownBy(() -> DdcAdminUiI18nCatalog.parse("tianshu.auth", json.getBytes(StandardCharsets.UTF_8), validation))
+    @Test void catalogRequiresMatchingPageAndStandardSourceDeclarations() {
+        assertThatThrownBy(() -> DdcAdminUiI18nCatalog.fromDeclarations("common", "Common", MissingMessages.class, validation))
+                .isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> DdcAdminUiI18nCatalog.fromDeclarations("wrong", "Wrong", BadPlaceholders.class, validation))
+                .isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> DdcAdminUiI18nCatalog.fromDeclarations("common", "Common", BadPlaceholders.class, validation))
                 .isInstanceOf(RuntimeException.class);
     }
 
-    private void parse(String translations) throws Exception {
-        String json = "{\"pageCode\":\"common\",\"name\":\"Common\",\"defaultLocale\":\"zh-CN\",\"translations\":" + translations + "}";
-        DdcAdminUiI18nCatalog.parse("common", json.getBytes(StandardCharsets.UTF_8), validation);
-    }
+    private static final class MissingMessages { }
+
+    @top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionMessage(
+            pageCode = "common", key = "hello", defaultLocale = "zh-CN", defaults = {
+            @top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.LocalizedText(locale = "zh-CN", text = "Hi {{name}}"),
+            @top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.LocalizedText(locale = "en-US", text = "Hello")})
+    private static final class BadPlaceholders { }
 }

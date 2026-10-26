@@ -301,30 +301,35 @@ class DdcAiDraftServiceTest {
         Rbac3UserDetails principal = mock(Rbac3UserDetails.class);
         when(principal.permissions()).thenReturn(Set.of("TIANSHU_AI_READ:namespace-public-71"));
         SecurityContext securityContext = SecurityContextHolder.createEmptyContext();
-        securityContext.setAuthentication(new TestingAuthenticationToken(principal, "", List.of()));
+        securityContext.setAuthentication(new TestingAuthenticationToken(principal, "", List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("SCOPE_TIANSHU_AI_READ"), new org.springframework.security.core.authority.SimpleGrantedAuthority("SCOPE_TIANSHU_AI_WRITE"))));
         SecurityContextHolder.setContext(securityContext);
 
+        var execution = org.mockito.Mockito.mock(top.egon.cola.platform.tianquan.jianshen.starter.permission.PermissionExecutionGuard.class);
+        org.mockito.Mockito.when(execution.require(org.mockito.ArgumentMatchers.nullable(String.class))).thenReturn(principal);
         DdcAiScopeValidator validator = new DdcAiScopeValidator(
-                scopeGate, resourceRepository, namespaceRepository, bindingRepository);
+                scopeGate, resourceRepository, namespaceRepository, bindingRepository, execution);
 
-        assertThat(validator.resolveNamespaceIdForRead(SCOPE)).isEqualTo(NAMESPACE_ID);
-        verifyNoInteractions(resourceRepository);
-        org.mockito.Mockito.clearInvocations(scopeGate);
-        assertThatThrownBy(() -> validator.resolveNamespaceIdForWrite(SCOPE))
-                .isInstanceOfSatisfying(CommonException.class,
-                        failure -> assertThat(failure.getCode()).isEqualTo(56307));
-        InOrder order = inOrder(resourceRepository, scopeGate);
-        order.verify(resourceRepository).lockScopeParentsForShare(SCOPE);
-        order.verify(scopeGate).invalidate("biz:" + SCOPE.bizCode());
-        order.verify(scopeGate).assertEnabled(SCOPE.bizCode(), SCOPE.appCode(), SCOPE.env(), SCOPE.namespaceCode());
+        org.mockito.Mockito.when(execution.open("tianshu.api.aiResource.get")).thenCallRealMethod();
+        try (var boundary = execution.open("tianshu.api.aiResource.get")) {
+            assertThat(validator.resolveNamespaceIdForRead(SCOPE)).isEqualTo(NAMESPACE_ID);
+            verifyNoInteractions(resourceRepository);
+            org.mockito.Mockito.clearInvocations(scopeGate);
+            assertThatThrownBy(() -> validator.resolveNamespaceIdForWrite(SCOPE))
+                    .isInstanceOfSatisfying(CommonException.class,
+                            failure -> assertThat(failure.getCode()).isEqualTo(56307));
+            InOrder order = inOrder(resourceRepository, scopeGate);
+            order.verify(resourceRepository).lockScopeParentsForShare(SCOPE);
+            order.verify(scopeGate).invalidate("biz:" + SCOPE.bizCode());
+            order.verify(scopeGate).assertEnabled(SCOPE.bizCode(), SCOPE.appCode(), SCOPE.env(), SCOPE.namespaceCode());
 
-        org.mockito.Mockito.doReturn(Set.of("TIANSHU_AI_PUBLISH:namespace-public-71"))
-                .when(principal).permissions();
-        DdcAiResourceBO publishResource = DdcAiResourceBO.builder().bizCode(SCOPE.bizCode())
-                .namespaceId(NAMESPACE_ID).namespaceCode(SCOPE.namespaceCode()).envCode(SCOPE.env())
-                .appCode(SCOPE.appCode()).build();
-        validator.assertCanPublish(publishResource);
-        verify(resourceRepository, times(2)).lockScopeParentsForShare(SCOPE);
+            org.mockito.Mockito.doReturn(Set.of("TIANSHU_AI_PUBLISH:namespace-public-71"))
+                    .when(principal).permissions();
+            DdcAiResourceBO publishResource = DdcAiResourceBO.builder().bizCode(SCOPE.bizCode())
+                    .namespaceId(NAMESPACE_ID).namespaceCode(SCOPE.namespaceCode()).envCode(SCOPE.env())
+                    .appCode(SCOPE.appCode()).build();
+            validator.assertCanPublish(publishResource);
+            verify(resourceRepository, times(2)).lockScopeParentsForShare(SCOPE);
+        }
     }
 
     @Test

@@ -1,5 +1,11 @@
 package top.egon.cola.component.tianshu.admin.model.command;
 
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.PermissionManifest;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.ResourceType;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.FieldPermissions;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionGroup;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionResource;
+
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.Valid;
@@ -24,19 +30,35 @@ import top.egon.cola.component.tianshu.model.ai.DdcAiValidationGroups;
 @Builder
 public class DdcAiDraftCommand {
 
+    @PermissionResource(key = "tianshu.field.DdcAiDraftCommand.expectedRevision", type = ResourceType.FIELD,
+            labelPage = "tianshu.permissions", labelKey = "field.expectedRevision")
+    @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+            write = @PermissionGroup(codes = {"TIANSHU_AI_WRITE"}))
     @NotBlank
     @Size(max = 19)
     @Pattern(regexp = "^(0|[1-9][0-9]*)$")
     private String expectedRevision;
 
+    @PermissionResource(key = "tianshu.field.DdcAiDraftCommand.displayName", type = ResourceType.FIELD,
+            labelPage = "tianshu.permissions", labelKey = "field.displayName")
+    @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+            write = @PermissionGroup(codes = {"TIANSHU_AI_WRITE"}))
     @NotBlank
     @Size(max = 128)
     private String displayName;
 
+    @PermissionResource(key = "tianshu.field.DdcAiDraftCommand.description", type = ResourceType.FIELD,
+            labelPage = "tianshu.permissions", labelKey = "field.description")
+    @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+            write = @PermissionGroup(codes = {"TIANSHU_AI_WRITE"}))
     @NotNull
     @Size(max = 2048)
     private String description;
 
+    @PermissionResource(key = "tianshu.field.DdcAiDraftCommand.draft", type = ResourceType.FIELD,
+            labelPage = "tianshu.permissions", labelKey = "field.draft")
+    @FieldPermissions(valueType = PermissionManifest.JsonFieldType.OBJECT,
+            write = @PermissionGroup(codes = {"TIANSHU_AI_WRITE"}))
     @NotNull
     @Valid
     @ConvertGroup(from = Default.class, to = DdcAiValidationGroups.Save.class)

@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "producers": [
+    {
+      "producerId": "tianshu-java",
+      "module": "stellar-enclosure-tianshu-admin",
+      "artifactFile": "stellar-enclosure-tianshu-admin-exec.jar"
+    }
+  ]
+}

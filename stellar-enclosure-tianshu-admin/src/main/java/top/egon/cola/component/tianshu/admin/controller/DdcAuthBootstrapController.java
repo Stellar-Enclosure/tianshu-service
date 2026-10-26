@@ -1,5 +1,10 @@
 package top.egon.cola.component.tianshu.admin.controller;
 
+import top.egon.cola.component.tianshu.admin.permission.DdcPermissionCodes;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.ResourceType;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionResource;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.RequiresPermissions;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -41,6 +46,9 @@ public class DdcAuthBootstrapController {
 
     @Operation(operationId = "tianshu.ddcAuthBootstrapController.bootstrap")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.authBootstrap.bootstrap", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.authBootstrap.bootstrap")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping("/bootstrap")
     @RequiresPermission("TIANSHU_READ")
     public AuthorizationBootstrapView bootstrap() {

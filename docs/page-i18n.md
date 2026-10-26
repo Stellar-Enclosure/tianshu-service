@@ -1,4 +1,6 @@
-# 企业元数据中心：页面多语种
+# 页面多语种：旧版迁移参考
+
+本文保留 2026-10-22 页面语言模型及其专用升级流程的历史说明。当前代码已切换为标准 producer 来源、显式 catalog 激活版本、人工覆盖历史与发布回执；当前 API、边界及数据库验证要求以 [权限元数据持久化](permission-metadata-persistence.md) 和 [Java producer](permission-producer.md) 为准。下文旧 `initialize`、不带激活版本的 bundle 和专用 `upgrade-i18n` 不能作为当前版本操作步骤。旧升级器仅接受其原有五脚本 manifest；当前含新元数据迁移的六脚本 manifest 会被明确拒绝。
 
 页面语言资源按可信 tenant 和 `bizCode + namespaceCode + env + appCode + pageCode` 隔离。
 作用域中的实体和绑定必须存在且启用。tenant 来自认证身份；`X-Egon-Tianshu-Tenant` 只是前端的
@@ -95,7 +97,7 @@ Tianshu 管理前端的 14 条业务路由及公共组件已统一读取中心�
 `tianshu.namespaces`、`tianshu.bindings`、`tianshu.registry`、`tianshu.instances`、`tianshu.publishTasks`、
 `tianshu.cache`、`tianshu.configs`、`tianshu.ai.resources`、`tianshu.ai.editor`、`tianshu.i18n`。
 配置编辑弹窗共享 configs 包，AI 编辑子面板共享 editor 包，公共包包含导航与组件内置词条。
-源文件位于 Admin 的 `src/main/resources/i18n/tianshu-admin`；不是前端静态业务词典。
+源词条位于 Admin 的 `permission/Ddc*Messages.java`，使用共享 `@PermissionMessage` 声明并由标准 Manifest 编译器导出；登录前安全词条读取相同声明，租户业务词条只读取显式激活版本。
 
 | 接口 | 用途与权限 |
 |---|---|

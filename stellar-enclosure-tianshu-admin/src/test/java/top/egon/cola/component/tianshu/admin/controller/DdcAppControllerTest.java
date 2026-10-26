@@ -39,6 +39,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+@org.springframework.context.annotation.Import(top.egon.cola.component.tianshu.admin.config.DdcTransportSliceTestConfiguration.class)
 @WebMvcTest(DdcAppController.class)
 @AutoConfigureMockMvc(addFilters = false)
 class DdcAppControllerTest {

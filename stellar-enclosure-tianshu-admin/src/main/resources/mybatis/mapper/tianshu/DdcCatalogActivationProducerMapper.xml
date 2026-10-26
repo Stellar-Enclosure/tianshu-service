@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="top.egon.cola.component.tianshu.admin.dao.DdcCatalogActivationProducerMapper">
+    <resultMap id="Row" type="top.egon.cola.component.tianshu.admin.model.po.DdcCatalogActivationProducerPO">
+        <result property="id" column="id"/>
+        <result property="tenantId" column="tenant_id"/>
+        <result property="createUserId" column="create_user_id"/>
+        <result property="createTime" column="create_time"/>
+        <result property="updateUserId" column="update_user_id"/>
+        <result property="updateTime" column="update_time"/>
+        <result property="deletedAt" column="deleted_at"/>
+        <result property="version" column="version"/>
+        <result property="catalogScopeId" column="catalog_scope_id"/>
+        <result property="activationProjectionId" column="activation_projection_id"/>
+        <result property="producerId" column="producer_id"/>
+        <result property="producerVersion" column="producer_version"/>
+        <result property="sourceId" column="source_id"/>
+        <result property="sourceVersion" column="source_version"/>
+        <result property="policyDigest" column="policy_digest"/>
+        <result property="metadataDigest" column="metadata_digest"/>
+    </resultMap>
+    <select id="findByProjection" resultMap="Row" timeout="2">
+        SELECT * FROM ddc_catalog_activation_producer
+        WHERE tenant_id=#{tenantId} AND catalog_scope_id=#{catalogScopeId} AND activation_projection_id=#{projectionId} AND deleted_at IS NULL
+        ORDER BY producer_id
+    </select>
+    <select id="countSelectionConflicts" resultType="long" timeout="2">
+        WITH selected AS (
+            SELECT source_id FROM ddc_catalog_activation_producer
+            WHERE tenant_id=#{tenantId} AND catalog_scope_id=#{catalogScopeId} AND activation_projection_id=#{projectionId} AND deleted_at IS NULL
+        ), selected_messages AS (
+            SELECT m.page_code, m.message_key, m.default_locale FROM ddc_i18n_source_message m
+            JOIN selected s ON s.source_id=m.source_id
+            WHERE m.tenant_id=#{tenantId} AND m.catalog_scope_id=#{catalogScopeId} AND m.deleted_at IS NULL
+        )
+        SELECT COUNT(*) FROM (
+            SELECT 1 FROM ddc_resource_metadata_projection r JOIN selected s ON s.source_id=r.source_id
+            WHERE r.tenant_id=#{tenantId} AND r.catalog_scope_id=#{catalogScopeId} AND r.deleted_at IS NULL
+            GROUP BY r.metadata_kind, LOWER(r.definition_key) HAVING COUNT(*) &gt; 1
+            UNION ALL
+            SELECT 1 FROM selected_messages GROUP BY LOWER(page_code), LOWER(message_key) HAVING COUNT(*) &gt; 1
+            UNION ALL
+            SELECT 1 FROM selected_messages GROUP BY LOWER(page_code)
+            HAVING COUNT(DISTINCT page_code) &gt; 1 OR COUNT(DISTINCT default_locale) &gt; 1
+        ) conflicts
+    </select>
+</mapper>

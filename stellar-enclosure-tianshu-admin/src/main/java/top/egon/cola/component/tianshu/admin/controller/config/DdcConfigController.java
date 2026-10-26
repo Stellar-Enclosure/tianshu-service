@@ -1,5 +1,10 @@
 package top.egon.cola.component.tianshu.admin.controller.config;
 
+import top.egon.cola.component.tianshu.admin.permission.DdcPermissionCodes;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.ResourceType;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionResource;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.RequiresPermissions;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.security.core.Authentication;
@@ -54,6 +59,9 @@ public class DdcConfigController {
 
     @Operation(operationId = "tianshu.ddcConfigController.list")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.config.list", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.config.list")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping
     public ResultRecord<List<DdcConfigVO>> list(DdcConfigQueryRequest request) {
         return ResultRecord.success(configService.list(request));
@@ -61,6 +69,9 @@ public class DdcConfigController {
 
     @Operation(operationId = "tianshu.ddcConfigController.page")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.config.page", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.config.page")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping("/page")
     public PageResultRecord<DdcConfigVO> page(
             DdcConfigQueryRequest request,
@@ -70,6 +81,9 @@ public class DdcConfigController {
 
     @Operation(operationId = "tianshu.ddcConfigController.create")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.config.create", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.config.create")
+    @RequiresPermissions(codes = DdcPermissionCodes.WRITE)
     @PostMapping
     public ResultRecord<DdcConfigVO> create(@RequestBody DdcConfigCreateRequest request,
                                       @RequestParam(name = "operator", defaultValue = "system") String operator,
@@ -82,6 +96,9 @@ public class DdcConfigController {
 
     @Operation(operationId = "tianshu.ddcConfigController.update")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.config.update", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.config.update")
+    @RequiresPermissions(codes = DdcPermissionCodes.WRITE)
     @PutMapping("/{id}")
     public ResultRecord<DdcConfigVO> update(@PathVariable("id") String id,
                                       @RequestBody DdcConfigUpdateRequest request,
@@ -96,6 +113,9 @@ public class DdcConfigController {
 
     @Operation(operationId = "tianshu.ddcConfigController.delete")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.config.delete", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.config.delete")
+    @RequiresPermissions(codes = DdcPermissionCodes.WRITE)
     @DeleteMapping("/{id}")
     public ResultRecord<DdcConfigVO> delete(@PathVariable("id") String id,
                                       @RequestParam(name = "operator", defaultValue = "system") String operator,
@@ -110,6 +130,9 @@ public class DdcConfigController {
 
     @Operation(operationId = "tianshu.ddcConfigController.publish")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.config.publish", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.config.publish")
+    @RequiresPermissions(codes = DdcPermissionCodes.PUBLISH)
     @PostMapping("/{id}/publish")
     public ResultRecord<DdcPublishResultVO> publish(@PathVariable("id") String id,
                                               @RequestBody DdcPublishRequest request,
@@ -129,6 +152,9 @@ public class DdcConfigController {
 
     @Operation(operationId = "tianshu.ddcConfigController.versions")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.config.versions", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.config.versions")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping("/{id}/versions")
     public ResultRecord<List<DdcConfigVersionVO>> versions(@PathVariable("id") String id) {
         return ResultRecord.success(configService.versions(id));
@@ -136,6 +162,9 @@ public class DdcConfigController {
 
     @Operation(operationId = "tianshu.ddcConfigController.pageVersions")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.config.pageVersions", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.config.pageVersions")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping("/{id}/versions/page")
     public PageResultRecord<DdcConfigVersionVO> pageVersions(
             @PathVariable("id") String id,
@@ -146,6 +175,9 @@ public class DdcConfigController {
 
     @Operation(operationId = "tianshu.ddcConfigController.rollback")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.config.rollback", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.config.rollback")
+    @RequiresPermissions(codes = DdcPermissionCodes.WRITE)
     @PostMapping("/{id}/rollback")
     public ResultRecord<DdcConfigVO> rollback(@PathVariable("id") String id,
                                         @RequestBody DdcConfigRollbackRequest request,

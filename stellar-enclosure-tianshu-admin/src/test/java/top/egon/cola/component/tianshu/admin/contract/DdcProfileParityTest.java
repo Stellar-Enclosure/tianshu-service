@@ -22,37 +22,37 @@ class DdcProfileParityTest {
             "application.yml", "application-local.yml", "application-test.yml");
     private static final String TIANSHU_PREFIX = "egon.cola.component.tianshu.";
     private static final String RPC_CREDENTIALS_PROFILE =
-            "stellar-enclosure-platform/stellar-enclosure-yuheng/deployment/tianshu-rpc-credentials.yml";
+            "yuheng-service/deployment/tianshu-rpc-credentials.yml";
     private static final List<String> DIRECT_CALLER_PROFILES = List.of(
-            "stellar-enclosure-platform/stellar-enclosure-tianshu/stellar-enclosure-tianshu-test/src/main/resources/application.yml",
-            "stellar-enclosure-platform/stellar-enclosure-yuheng/stellar-enclosure-yuheng-test/stellar-enclosure-yuheng-test-mcp-provider/src/main/resources/application.yml",
-            "stellar-enclosure-platform/stellar-enclosure-yuheng/stellar-enclosure-yuheng-test/stellar-enclosure-yuheng-test-rpc-consumer/src/main/resources/application.yml",
-            "stellar-enclosure-platform/stellar-enclosure-yuheng/stellar-enclosure-yuheng-test/stellar-enclosure-yuheng-test-tianquan-shoubing-backend/src/main/resources/application.yml",
-            "stellar-enclosure-platform/stellar-enclosure-yuheng/stellar-enclosure-yuheng-test/stellar-enclosure-yuheng-test-webflux-http-provider/src/main/resources/application.yml",
-            "stellar-enclosure-platform/stellar-enclosure-yuheng/stellar-enclosure-yuheng-test/stellar-enclosure-yuheng-test-rpc-provider/src/main/resources/application.yml",
-            "stellar-enclosure-platform/stellar-enclosure-yuheng/stellar-enclosure-yuheng-test/stellar-enclosure-yuheng-test-http-provider/src/main/resources/application.yml",
-            "stellar-enclosure-platform/stellar-enclosure-yuheng/stellar-enclosure-yuheng-biz-gateway/src/main/resources/application-operations.yml",
-            "stellar-enclosure-platform/stellar-enclosure-yuheng/stellar-enclosure-yuheng-biz-gateway/src/main/resources/application.yml",
-            "stellar-enclosure-platform/stellar-enclosure-yuheng/stellar-enclosure-yuheng-admin/src/main/resources/application.yml",
-            "stellar-enclosure-platform/stellar-enclosure-yuheng/stellar-enclosure-yuheng-admin/src/main/resources/application-local.yml",
-            "stellar-enclosure-platform/stellar-enclosure-yuheng/stellar-enclosure-yuheng-mcp-gateway/src/main/resources/application-operations.yml",
-            "stellar-enclosure-platform/stellar-enclosure-yuheng/stellar-enclosure-yuheng-mcp-gateway/src/main/resources/application.yml",
-            "stellar-enclosure-platform/stellar-enclosure-tianquan-shoubing/stellar-enclosure-tianquan-shoubing-admin/src/main/resources/application.yml",
-            "stellar-enclosure-platform/stellar-enclosure-tianquan-shoubing/stellar-enclosure-tianquan-shoubing-admin/src/main/resources/application-local.yml",
-            "stellar-enclosure-platform/stellar-enclosure-tianquan-jianshen/stellar-enclosure-tianquan-jianshen-admin/src/main/resources/application.yml",
-            "stellar-enclosure-platform/stellar-enclosure-tianquan-jianshen/stellar-enclosure-tianquan-jianshen-admin/src/main/resources/application-local.yml",
-            "stellar-enclosure-archetypes/source-projects/stellar-enclosure-source-web/stellar-enclosure-source-web-starter/src/main/resources/application-prod.yml",
-            "stellar-enclosure-archetypes/source-projects/stellar-enclosure-source-web/stellar-enclosure-source-web-starter/src/main/resources/application-test.yml",
-            "stellar-enclosure-archetypes/source-projects/stellar-enclosure-source-web/stellar-enclosure-source-web-starter/src/main/resources/application-dev.yml",
-            "stellar-enclosure-archetypes/source-projects/stellar-enclosure-source-web/stellar-enclosure-source-web-starter/src/main/resources/application.yml",
-            "stellar-enclosure-archetypes/source-projects/stellar-enclosure-source-service/stellar-enclosure-source-service-starter/src/main/resources/application-prod.yml",
-            "stellar-enclosure-archetypes/source-projects/stellar-enclosure-source-service/stellar-enclosure-source-service-starter/src/main/resources/application-test.yml",
-            "stellar-enclosure-archetypes/source-projects/stellar-enclosure-source-service/stellar-enclosure-source-service-starter/src/main/resources/application-dev.yml",
-            "stellar-enclosure-archetypes/source-projects/stellar-enclosure-source-service/stellar-enclosure-source-service-starter/src/main/resources/application.yml",
-            "stellar-enclosure-archetypes/source-projects/stellar-enclosure-source-light/src/main/resources/application-prod.yml",
-            "stellar-enclosure-archetypes/source-projects/stellar-enclosure-source-light/src/main/resources/application-test.yml",
-            "stellar-enclosure-archetypes/source-projects/stellar-enclosure-source-light/src/main/resources/application-dev.yml",
-            "stellar-enclosure-archetypes/source-projects/stellar-enclosure-source-light/src/main/resources/application.yml");
+            "tianshu-service/stellar-enclosure-tianshu-test/src/main/resources/application.yml",
+            "yuheng-service/stellar-enclosure-yuheng-test/stellar-enclosure-yuheng-test-mcp-provider/src/main/resources/application.yml",
+            "yuheng-service/stellar-enclosure-yuheng-test/stellar-enclosure-yuheng-test-rpc-consumer/src/main/resources/application.yml",
+            "yuheng-service/stellar-enclosure-yuheng-test/stellar-enclosure-yuheng-test-tianquan-shoubing-backend/src/main/resources/application.yml",
+            "yuheng-service/stellar-enclosure-yuheng-test/stellar-enclosure-yuheng-test-webflux-http-provider/src/main/resources/application.yml",
+            "yuheng-service/stellar-enclosure-yuheng-test/stellar-enclosure-yuheng-test-rpc-provider/src/main/resources/application.yml",
+            "yuheng-service/stellar-enclosure-yuheng-test/stellar-enclosure-yuheng-test-http-provider/src/main/resources/application.yml",
+            "yuheng-service/stellar-enclosure-yuheng-biz-gateway/src/main/resources/application-operations.yml",
+            "yuheng-service/stellar-enclosure-yuheng-biz-gateway/src/main/resources/application.yml",
+            "yuheng-service/stellar-enclosure-yuheng-admin/src/main/resources/application.yml",
+            "yuheng-service/stellar-enclosure-yuheng-admin/src/main/resources/application-local.yml",
+            "yuheng-service/stellar-enclosure-yuheng-mcp-gateway/src/main/resources/application-operations.yml",
+            "yuheng-service/stellar-enclosure-yuheng-mcp-gateway/src/main/resources/application.yml",
+            "tianquan-shoubing-service/stellar-enclosure-tianquan-shoubing-admin/src/main/resources/application.yml",
+            "tianquan-shoubing-service/stellar-enclosure-tianquan-shoubing-admin/src/main/resources/application-local.yml",
+            "tianquan-jianshen-service/stellar-enclosure-tianquan-jianshen-admin/src/main/resources/application.yml",
+            "tianquan-jianshen-service/stellar-enclosure-tianquan-jianshen-admin/src/main/resources/application-local.yml",
+            "Stellar-Enclosure-COLA/source-projects/stellar-enclosure-source-web/stellar-enclosure-source-web-starter/src/main/resources/application-prod.yml",
+            "Stellar-Enclosure-COLA/source-projects/stellar-enclosure-source-web/stellar-enclosure-source-web-starter/src/main/resources/application-test.yml",
+            "Stellar-Enclosure-COLA/source-projects/stellar-enclosure-source-web/stellar-enclosure-source-web-starter/src/main/resources/application-dev.yml",
+            "Stellar-Enclosure-COLA/source-projects/stellar-enclosure-source-web/stellar-enclosure-source-web-starter/src/main/resources/application.yml",
+            "Stellar-Enclosure-COLA/source-projects/stellar-enclosure-source-service/stellar-enclosure-source-service-starter/src/main/resources/application-prod.yml",
+            "Stellar-Enclosure-COLA/source-projects/stellar-enclosure-source-service/stellar-enclosure-source-service-starter/src/main/resources/application-test.yml",
+            "Stellar-Enclosure-COLA/source-projects/stellar-enclosure-source-service/stellar-enclosure-source-service-starter/src/main/resources/application-dev.yml",
+            "Stellar-Enclosure-COLA/source-projects/stellar-enclosure-source-service/stellar-enclosure-source-service-starter/src/main/resources/application.yml",
+            "Stellar-Enclosure-COLA/source-projects/stellar-enclosure-source-light/src/main/resources/application-prod.yml",
+            "Stellar-Enclosure-COLA/source-projects/stellar-enclosure-source-light/src/main/resources/application-test.yml",
+            "Stellar-Enclosure-COLA/source-projects/stellar-enclosure-source-light/src/main/resources/application-dev.yml",
+            "Stellar-Enclosure-COLA/source-projects/stellar-enclosure-source-light/src/main/resources/application.yml");
 
     @Test
     void transactionalOutboxKeySetMatchesAcrossProfilesAndTestPollingIsDisabled() {
@@ -131,10 +131,10 @@ class DdcProfileParityTest {
 
     private Path repositoryRoot() {
         Path current = Path.of("").toAbsolutePath().normalize();
-        while (current != null && !Files.isDirectory(current.resolve("stellar-enclosure-archetypes/source-projects"))) {
+        while (current != null && !Files.isDirectory(current.resolve("Stellar-Enclosure-COLA/source-projects"))) {
             current = current.getParent();
         }
-        if (current == null) throw new IllegalStateException("Cannot locate Egon-COLA repository root");
+        if (current == null) throw new IllegalStateException("Cannot locate Stellar-Enclosure sibling workspace");
         return current;
     }
 

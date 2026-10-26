@@ -1,5 +1,10 @@
 package top.egon.cola.component.tianshu.admin.controller.config;
 
+import top.egon.cola.component.tianshu.admin.permission.DdcPermissionCodes;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.ResourceType;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionResource;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.RequiresPermissions;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -38,6 +43,9 @@ public class DdcCacheController {
 
     @Operation(operationId = "tianshu.ddcCacheController.rebuild")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.cache.rebuild", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.cache.rebuild")
+    @RequiresPermissions(codes = DdcPermissionCodes.CACHE)
     @PostMapping("/rebuild")
     public ResultRecord<Integer> rebuild(
             @RequestParam("bizCode") String bizCode,
@@ -49,6 +57,9 @@ public class DdcCacheController {
 
     @Operation(operationId = "tianshu.ddcCacheController.check")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.cache.check", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.cache.check")
+    @RequiresPermissions(codes = DdcPermissionCodes.CACHE)
     @GetMapping("/check")
     public ResultRecord<List<DdcCacheCheckRow>> check(
             @RequestParam("bizCode") String bizCode,
@@ -60,6 +71,9 @@ public class DdcCacheController {
 
     @Operation(operationId = "tianshu.ddcCacheController.page")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.cache.page", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.cache.page")
+    @RequiresPermissions(codes = DdcPermissionCodes.CACHE)
     @GetMapping("/check/page")
     public PageResultRecord<DdcCacheCheckRow> page(
             @RequestParam("bizCode") String bizCode,

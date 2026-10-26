@@ -21,6 +21,14 @@
         <result property="publishedDefaultLocale" column="published_default_locale"/>
         <result property="publishedTranslations" column="published_translations"/>
         <result property="publishedVersion" column="published_version"/>
+        <result property="catalogScopeId" column="catalog_scope_id"/>
+        <result property="draftActivationVersion" column="draft_activation_version"/>
+        <result property="draftSourceHashes" column="draft_source_hashes"/>
+        <result property="currentOverrideId" column="current_override_id"/>
+        <result property="publishedSourceHashes" column="published_source_hashes"/>
+        <result property="publishedDraftRevision" column="published_draft_revision"/>
+        <result property="publishedOperationId" column="published_operation_id"/>
+        <result property="publishedAt" column="published_at"/>
         <result property="namespaceCode" column="namespace_code"/>
     </resultMap>
     <sql id="FromPage">
@@ -34,6 +42,9 @@
     </sql>
     <select id="selectPageById" resultMap="Page">
         SELECT p.*, n.namespace_code <include refid="FromPage"/> AND p.id = #{id}
+    </select>
+    <select id="lockById" resultMap="Page" timeout="2">
+        SELECT p.*, n.namespace_code <include refid="FromPage"/> AND p.id=#{id} FOR UPDATE OF p
     </select>
     <select id="selectByPageCode" resultMap="Page">
         SELECT p.*, n.namespace_code <include refid="FromPage"/><include refid="Scope"/>

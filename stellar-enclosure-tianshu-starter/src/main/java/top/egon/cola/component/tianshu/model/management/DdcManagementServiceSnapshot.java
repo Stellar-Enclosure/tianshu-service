@@ -1,5 +1,11 @@
 package top.egon.cola.component.tianshu.model.management;
 
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.PermissionManifest;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.ResourceType;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.FieldPermissions;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionGroup;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionResource;
+
 import org.springframework.lang.Nullable;
 
 import java.time.Instant;
@@ -14,9 +20,26 @@ import java.util.List;
  * @param instances  快照中的服务实例 / service instances in the snapshot
  */
 public record DdcManagementServiceSnapshot(
+        @PermissionResource(key = "tianshu.field.DdcManagementServiceSnapshot.serviceKey", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.serviceKey")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.OBJECT,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
         DdcManagementServiceKey serviceKey,
+        @PermissionResource(key = "tianshu.field.DdcManagementServiceSnapshot.generation", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.generation")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.NUMBER,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
         long generation,
+        @PermissionResource(key = "tianshu.field.DdcManagementServiceSnapshot.observedAt", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.observedAt")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        @com.fasterxml.jackson.annotation.JsonFormat(shape = com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING)
         Instant observedAt,
+        @PermissionResource(key = "tianshu.field.DdcManagementServiceSnapshot.instances", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.instances")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.ARRAY,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
         @Nullable List<DdcManagementServiceInstance> instances
 ) {
 

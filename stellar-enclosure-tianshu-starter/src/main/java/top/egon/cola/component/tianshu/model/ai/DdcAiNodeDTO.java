@@ -1,5 +1,11 @@
 package top.egon.cola.component.tianshu.model.ai;
 
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.PermissionManifest;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.ResourceType;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.FieldPermissions;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionGroup;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionResource;
+
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.constraints.NotNull;
@@ -20,13 +26,28 @@ import top.egon.cola.component.tianshu.model.ai.validation.ValidAiNode;
 @ValidAiNode
 public class DdcAiNodeDTO {
 
+    @PermissionResource(key = "tianshu.field.DdcAiNodeDTO.path", type = ResourceType.FIELD,
+            labelPage = "tianshu.permissions", labelKey = "field.path")
+    @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+            plainRead = @PermissionGroup(codes = "TIANSHU_AI_READ"),
+            write = @PermissionGroup(codes = {"TIANSHU_AI_WRITE"}))
     @NotNull
     @Size(max = 1024)
     private String path;
 
+    @PermissionResource(key = "tianshu.field.DdcAiNodeDTO.nodeType", type = ResourceType.FIELD,
+            labelPage = "tianshu.permissions", labelKey = "field.nodeType")
+    @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+            plainRead = @PermissionGroup(codes = "TIANSHU_AI_READ"),
+            write = @PermissionGroup(codes = {"TIANSHU_AI_WRITE"}))
     @NotNull
     private DdcAiNodeTypeEnum nodeType;
 
+    @PermissionResource(key = "tianshu.field.DdcAiNodeDTO.content", type = ResourceType.FIELD,
+            labelPage = "tianshu.permissions", labelKey = "field.content")
+    @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+            plainRead = @PermissionGroup(codes = "TIANSHU_AI_READ"),
+            write = @PermissionGroup(codes = {"TIANSHU_AI_WRITE"}))
     private String content;
 
     @JsonCreator(mode = JsonCreator.Mode.PROPERTIES)

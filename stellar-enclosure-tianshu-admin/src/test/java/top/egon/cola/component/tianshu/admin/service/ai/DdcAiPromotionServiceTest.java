@@ -448,15 +448,20 @@ class DdcAiPromotionServiceTest {
         Rbac3UserDetails publisher = Mockito.mock(Rbac3UserDetails.class);
         when(publisher.permissions()).thenReturn(Set.of("TIANSHU_AI_PUBLISH:namespace-public-72"));
         SecurityContext context = SecurityContextHolder.createEmptyContext();
-        context.setAuthentication(new TestingAuthenticationToken(publisher, "", List.of()));
+        context.setAuthentication(new TestingAuthenticationToken(publisher, "", List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("SCOPE_TIANSHU_AI_WRITE"))));
         SecurityContextHolder.setContext(context);
+        var execution = org.mockito.Mockito.mock(top.egon.cola.platform.tianquan.jianshen.starter.permission.PermissionExecutionGuard.class);
+        org.mockito.Mockito.when(execution.require(org.mockito.ArgumentMatchers.nullable(String.class))).thenReturn(publisher);
         DdcAiScopeValidator validator = new DdcAiScopeValidator(
-                scopeGate, resourceRepository, namespaceRepository, bindingRepository);
+                scopeGate, resourceRepository, namespaceRepository, bindingRepository, execution);
 
-        assertThat(validator.resolveNamespaceIdForPublish(TARGET_SCOPE)).isEqualTo(TARGET_NAMESPACE_ID);
-        assertThatThrownBy(() -> validator.resolveNamespaceIdForWrite(TARGET_SCOPE))
-                .isInstanceOf(CommonException.class)
-                .satisfies(failure -> assertThat(((CommonException) failure).getCode()).isEqualTo(56307));
+        org.mockito.Mockito.when(execution.open("tianshu.api.aiResource.get")).thenCallRealMethod();
+        try (var boundary = execution.open("tianshu.api.aiResource.get")) {
+            assertThat(validator.resolveNamespaceIdForPublish(TARGET_SCOPE)).isEqualTo(TARGET_NAMESPACE_ID);
+            assertThatThrownBy(() -> validator.resolveNamespaceIdForWrite(TARGET_SCOPE))
+                    .isInstanceOf(CommonException.class)
+                    .satisfies(failure -> assertThat(((CommonException) failure).getCode()).isEqualTo(56307));
+        }
     }
 
     private void prepareCommandContext() {

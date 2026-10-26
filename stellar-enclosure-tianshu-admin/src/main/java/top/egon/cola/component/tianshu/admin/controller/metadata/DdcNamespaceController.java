@@ -1,5 +1,10 @@
 package top.egon.cola.component.tianshu.admin.controller.metadata;
 
+import top.egon.cola.component.tianshu.admin.permission.DdcPermissionCodes;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.ResourceType;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionResource;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.RequiresPermissions;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -47,6 +52,9 @@ public class DdcNamespaceController {
 
     @Operation(operationId = "tianshu.ddcNamespaceController.list")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.namespace.list", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.namespace.list")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping
     public ResultRecord<List<DdcNamespaceResult>> list(
             @RequestParam(value = "bizCode", required = false) String bizCode,
@@ -56,6 +64,9 @@ public class DdcNamespaceController {
 
     @Operation(operationId = "tianshu.ddcNamespaceController.page")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.namespace.page", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.namespace.page")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping("/page")
     public PageResultRecord<DdcNamespaceResult> page(
             @RequestParam(value = "bizCode", required = false) String bizCode,
@@ -68,6 +79,9 @@ public class DdcNamespaceController {
 
     @Operation(operationId = "tianshu.ddcNamespaceController.save")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.namespace.save", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.namespace.save")
+    @RequiresPermissions(codes = DdcPermissionCodes.WRITE)
     @PostMapping
     public ResultRecord<DdcNamespaceResult> save(
             @Validated(EgonColaModelValidationGroups.Insert.class) @RequestBody DdcNamespaceBO request) {
@@ -76,6 +90,9 @@ public class DdcNamespaceController {
 
     @Operation(operationId = "tianshu.ddcNamespaceController.update")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.namespace.update", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.namespace.update")
+    @RequiresPermissions(codes = DdcPermissionCodes.WRITE)
     @PutMapping("/{id}")
     public ResultRecord<DdcNamespaceResult> update(
             @PathVariable("id") String id,
@@ -85,6 +102,9 @@ public class DdcNamespaceController {
 
     @Operation(operationId = "tianshu.ddcNamespaceController.delete")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.namespace.delete", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.namespace.delete")
+    @RequiresPermissions(codes = DdcPermissionCodes.WRITE)
     @DeleteMapping("/{id}")
     public ResultRecord<Void> delete(@PathVariable("id") String id) {
         namespaceService.delete(id);
@@ -93,6 +113,9 @@ public class DdcNamespaceController {
 
     @Operation(operationId = "tianshu.ddcNamespaceController.setEnabled")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.namespace.setEnabled", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.namespace.setEnabled")
+    @RequiresPermissions(codes = DdcPermissionCodes.WRITE)
     @PutMapping("/{id}/enabled")
     public ResultRecord<DdcNamespaceResult> setEnabled(
             @PathVariable("id") String id,

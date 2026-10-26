@@ -8,6 +8,7 @@ import java.util.Optional;
 
 public interface DdcI18nPageRepository {
     Optional<DdcI18nPageBO> findById(Long id);
+    Optional<DdcI18nPageBO> lockById(Long id);
     Optional<DdcI18nPageBO> findByPageCode(DdcI18nScope scope, String pageCode);
     DdcPageResult<DdcI18nPageBO> search(DdcI18nScope scope, PageQuery query);
     void lockScope(DdcI18nScope scope);

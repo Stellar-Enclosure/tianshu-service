@@ -1,5 +1,11 @@
 package top.egon.cola.component.tianshu.admin.model.command;
 
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.PermissionManifest;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.ResourceType;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.FieldPermissions;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionGroup;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionResource;
+
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
@@ -16,6 +22,10 @@ import lombok.experimental.Accessors;
 @Builder
 public class DdcAiOptimizationTriggerCommand {
 
+    @PermissionResource(key = "tianshu.field.DdcAiOptimizationTriggerCommand.note", type = ResourceType.FIELD,
+            labelPage = "tianshu.permissions", labelKey = "field.note")
+    @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+            write = @PermissionGroup(codes = {"TIANSHU_AI_PUBLISH"}))
     @NotNull
     @Size(max = 512)
     private String note;

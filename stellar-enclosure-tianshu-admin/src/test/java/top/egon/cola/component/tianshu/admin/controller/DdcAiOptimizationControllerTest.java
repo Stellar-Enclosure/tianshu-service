@@ -47,7 +47,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @WebMvcTest(controllers = DdcAiResourceController.class)
 @AutoConfigureMockMvc(addFilters = false)
-@Import(DdcAiWebConfiguration.class)
+@Import({DdcAiWebConfiguration.class, top.egon.cola.component.tianshu.admin.config.DdcTransportSliceTestConfiguration.class})
 class DdcAiOptimizationControllerTest {
 
     private static final String BASE = "/api/v1/tianshu/ai/resources";

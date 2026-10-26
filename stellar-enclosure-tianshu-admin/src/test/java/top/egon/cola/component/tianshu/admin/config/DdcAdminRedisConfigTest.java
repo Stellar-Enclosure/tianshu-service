@@ -16,7 +16,7 @@ import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextEx
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantRegistry;
 import top.egon.cola.component.tianshu.admin.service.metadata.DdcScopeGate;
 import top.egon.cola.platform.tianquan.shoubing.starter.autoconfigure.IdpStarterAutoConfiguration;
-import top.egon.cola.platform.tianquan.shoubing.starter.state.IdentityResourceServerStateReader;
+import top.egon.cola.platform.tianquan.shoubing.starter.security.impl.DatabaseOAuthRevocationReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -33,11 +33,30 @@ class DdcAdminRedisConfigTest {
                         TestInfrastructure.class,
                         DdcAdminRedisConfig.class
                 )
+                .withBean("defaultValidator", jakarta.validation.Validator.class,
+                        org.springframework.validation.beanvalidation.LocalValidatorFactoryBean::new)
+                .withBean("identityAuthorityClientResolver",
+                        top.egon.cola.platform.tianquan.shoubing.starter.state.IdentityAuthorityClientResolver.class,
+                        () -> mock(top.egon.cola.platform.tianquan.shoubing.starter.state.IdentityAuthorityClientResolver.class))
+                .withBean("idpObservedVerificationComponent",
+                        top.egon.cola.platform.tianquan.shoubing.starter.security.IdpObservedVerificationComponent.class,
+                        () -> {
+                            var observations = mock(top.egon.cola.platform.tianquan.shoubing.starter.security.IdpObservedVerificationComponent.class);
+                            org.mockito.Mockito.when(observations.enabled()).thenReturn(true);
+                            return observations;
+                        })
                 .withBean("additionalIdpProperties",
                         top.egon.cola.platform.tianquan.shoubing.starter.autoconfigure.IdpStarterProperties.class,
                         top.egon.cola.platform.tianquan.shoubing.starter.autoconfigure.IdpStarterProperties::new)
                 .withPropertyValues(
                         "egon.cola.platform.tianquan.shoubing.enabled=true",
+                        "egon.cola.platform.tianquan.shoubing.trusted-issuers.tenant.issuer=https://tianquan-shoubing.example",
+                        "egon.cola.platform.tianquan.shoubing.trusted-issuers.tenant.jwks-uri=https://tianquan-shoubing.example/oauth2/jwks",
+                        "egon.cola.platform.tianquan.shoubing.trusted-issuers.tenant.realm-key=tenant",
+                        "egon.cola.platform.tianquan.shoubing.trusted-issuers.tenant.realm-type=TENANT",
+                        "egon.cola.platform.tianquan.shoubing.trusted-issuers.tenant.tenant-id=1001",
+                        "egon.cola.platform.tianquan.shoubing.trusted-issuers.tenant.status=ACTIVE",
+                        "egon.cola.platform.tianquan.shoubing.trusted-issuers.tenant.trust-version=1",
                         "egon.cola.platform.tianquan.shoubing.issuer=https://tianquan-shoubing.example",
                         "egon.cola.platform.tianquan.shoubing.jwk-set-uri=https://tianquan-shoubing.example/oauth2/jwks",
                         "egon.cola.platform.tianquan.shoubing.resource-server-id=tianshu-local",
@@ -46,7 +65,7 @@ class DdcAdminRedisConfigTest {
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     assertThat(context).hasSingleBean(
-                            IdentityResourceServerStateReader.class
+                            DatabaseOAuthRevocationReader.class
                     );
                     assertThat(context).hasSingleBean(
                             DdcRegistrationCredentialVerifier.class
@@ -59,11 +78,6 @@ class DdcAdminRedisConfigTest {
 
         @Bean("ddcAdminRedissonClient")
         RedissonClient ddcAdminRedissonClient() {
-            return mock(RedissonClient.class);
-        }
-
-        @Bean("rbac3RuntimeRedissonClient")
-        RedissonClient identityRuntimeRedissonClient() {
             return mock(RedissonClient.class);
         }
 

@@ -1,5 +1,10 @@
 package top.egon.cola.component.tianshu.admin.controller.config;
 
+import top.egon.cola.component.tianshu.admin.permission.DdcPermissionCodes;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.ResourceType;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionResource;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.RequiresPermissions;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -56,6 +61,9 @@ public class DdcPublishTaskController {
 
     @Operation(operationId = "tianshu.ddcPublishTaskController.list")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.publishTask.list", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.publishTask.list")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping
     public ResultRecord<List<DdcPublishTaskResult>> list() {
         return ResultRecord.success(resultConverter.toTargetList(publishTaskRepository.findAll()));
@@ -63,6 +71,9 @@ public class DdcPublishTaskController {
 
     @Operation(operationId = "tianshu.ddcPublishTaskController.page")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.publishTask.page", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.publishTask.page")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping("/page")
     public PageResultRecord<DdcPublishTaskResult> page(
             DdcPublishTaskQueryRequest request,
@@ -75,6 +86,9 @@ public class DdcPublishTaskController {
 
     @Operation(operationId = "tianshu.ddcPublishTaskController.detail")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.publishTask.detail", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.publishTask.detail")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping("/{changeId}")
     public ResultRecord<DdcPublishTaskResult> detail(@PathVariable("changeId") String changeId) {
         return ResultRecord.success(publishTaskRepository.findByChangeId(changeId)
@@ -83,6 +97,9 @@ public class DdcPublishTaskController {
 
     @Operation(operationId = "tianshu.ddcPublishTaskController.retry")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.publishTask.retry", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.publishTask.retry")
+    @RequiresPermissions(codes = DdcPermissionCodes.PUBLISH)
     @PostMapping("/{changeId}/retry")
     public ResultRecord<DdcPublishResultVO> retry(
             @PathVariable("changeId") String changeId) {

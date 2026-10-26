@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="top.egon.cola.component.tianshu.admin.dao.DdcI18nSourceVersionMapper">
+    <resultMap id="Row" type="top.egon.cola.component.tianshu.admin.model.po.DdcI18nSourceVersionPO">
+        <result property="id" column="id"/>
+        <result property="tenantId" column="tenant_id"/>
+        <result property="createUserId" column="create_user_id"/>
+        <result property="createTime" column="create_time"/>
+        <result property="updateUserId" column="update_user_id"/>
+        <result property="updateTime" column="update_time"/>
+        <result property="deletedAt" column="deleted_at"/>
+        <result property="version" column="version"/>
+        <result property="catalogScopeId" column="catalog_scope_id"/>
+        <result property="producerId" column="producer_id"/>
+        <result property="schemaVersion" column="schema_version"/>
+        <result property="sourceVersion" column="source_version"/>
+        <result property="policyDigest" column="policy_digest"/>
+        <result property="metadataDigest" column="metadata_digest"/>
+        <result property="manifestDigest" column="manifest_digest"/>
+        <result property="projectionDigest" column="projection_digest"/>
+        <result property="canonicalManifestJson" column="canonical_manifest_json"/>
+        <result property="resourceIdMapJson" column="resource_id_map_json"/>
+        <result property="permissionIdMapJson" column="permission_id_map_json"/>
+        <result property="resourceCount" column="resource_count"/>
+        <result property="permissionCount" column="permission_count"/>
+        <result property="messageCount" column="message_count"/>
+    </resultMap>
+    <select id="findByVersion" resultMap="Row">
+        SELECT * FROM ddc_i18n_source_version
+        WHERE tenant_id=#{tenantId} AND catalog_scope_id=#{catalogScopeId} AND producer_id=#{producerId}
+            AND source_version=#{sourceVersion} AND deleted_at IS NULL
+    </select>
+</mapper>

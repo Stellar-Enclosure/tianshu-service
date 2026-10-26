@@ -1,5 +1,10 @@
 package top.egon.cola.component.tianshu.admin.controller.register;
 
+import top.egon.cola.component.tianshu.admin.permission.DdcPermissionCodes;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.ResourceType;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionResource;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.RequiresPermissions;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -37,6 +42,9 @@ public class DdcInstanceController {
 
     @Operation(operationId = "tianshu.ddcInstanceController.list")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.instance.list", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.instance.list")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping
     public ResultRecord<List<DdcInstanceResult>> list(
             @RequestParam("bizCode") String bizCode,
@@ -48,6 +56,9 @@ public class DdcInstanceController {
 
     @Operation(operationId = "tianshu.ddcInstanceController.page")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.instance.page", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.instance.page")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping("/page")
     public PageResultRecord<DdcInstanceResult> page(
             @RequestParam("bizCode") String bizCode,

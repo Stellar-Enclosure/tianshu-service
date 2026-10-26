@@ -45,7 +45,7 @@ class DdcAiScopeValidatorAuthorityTest {
     private final DdcNamespaceRepository namespaceRepository = mock(DdcNamespaceRepository.class);
     private final DdcNamespaceEnvAppBindingRepository bindingRepository = mock(DdcNamespaceEnvAppBindingRepository.class);
     private final DdcAiScopeValidator validator = new DdcAiScopeValidator(
-            scopeGate, resourceRepository, namespaceRepository, bindingRepository);
+            scopeGate, resourceRepository, namespaceRepository, bindingRepository, org.mockito.Mockito.mock(top.egon.cola.platform.tianquan.jianshen.starter.permission.PermissionExecutionGuard.class));
 
     @BeforeEach
     void enabledScope() {

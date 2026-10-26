@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="top.egon.cola.component.tianshu.admin.dao.DdcI18nPublishedOverrideMapper">
+    <resultMap id="Row" type="top.egon.cola.component.tianshu.admin.model.po.DdcI18nPublishedOverridePO">
+        <result property="id" column="id"/>
+        <result property="tenantId" column="tenant_id"/>
+        <result property="createUserId" column="create_user_id"/>
+        <result property="createTime" column="create_time"/>
+        <result property="updateUserId" column="update_user_id"/>
+        <result property="updateTime" column="update_time"/>
+        <result property="deletedAt" column="deleted_at"/>
+        <result property="version" column="version"/>
+        <result property="catalogScopeId" column="catalog_scope_id"/>
+        <result property="pageId" column="page_id"/>
+        <result property="pageCode" column="page_code"/>
+        <result property="publicationRevision" column="publication_revision"/>
+        <result property="draftRevision" column="draft_revision"/>
+        <result property="basedOnActivationVersion" column="based_on_activation_version"/>
+        <result property="publishOperationId" column="publish_operation_id"/>
+        <result property="requestDigest" column="request_digest"/>
+        <result property="defaultLocale" column="default_locale"/>
+        <result property="translationsJson" column="translations_json"/>
+        <result property="reviewedSourceHashesJson" column="reviewed_source_hashes_json"/>
+        <result property="publishedAt" column="published_at"/>
+    </resultMap>
+    <select id="findByOperation" resultMap="Row" timeout="2">
+        SELECT * FROM ddc_i18n_published_override
+        WHERE tenant_id=#{tenantId} AND catalog_scope_id=#{catalogScopeId} AND page_id=#{pageId} AND publish_operation_id=#{operationId} AND deleted_at IS NULL
+
+    </select>
+    <resultMap id="Entry" type="top.egon.cola.component.tianshu.admin.model.bo.DdcI18nOverrideEntryBO">
+        <result property="pageCode" column="page_code"/>
+        <result property="messageKey" column="message_key"/>
+        <result property="sourceHash" column="source_hash"/>
+        <result property="publicationRevision" column="publication_revision"/>
+        <result property="translationsJson" column="translations_json"/>
+        <result property="selectionKind" column="selection_kind"/>
+    </resultMap>
+    <select id="findApplicableEntries" resultMap="Entry" timeout="2">
+        WITH selected AS (
+            SELECT m.page_code, m.message_key, m.source_hash FROM ddc_i18n_source_message m
+            JOIN ddc_catalog_activation_producer a ON a.tenant_id=m.tenant_id AND a.catalog_scope_id=m.catalog_scope_id AND a.source_id=m.source_id
+            WHERE m.tenant_id=#{tenantId} AND m.catalog_scope_id=#{catalogScopeId} AND a.activation_projection_id=#{projectionId}
+              AND m.deleted_at IS NULL AND a.deleted_at IS NULL
+              AND (m.page_code=#{pageCode} OR m.page_code='common')
+            ORDER BY m.page_code, m.message_key LIMIT #{limit} OFFSET #{offset}
+        ), winners AS (
+            SELECT m.page_code, m.message_key, h.reviewed_source_hashes_json::jsonb -&gt;&gt; m.message_key AS source_hash,
+                   h.publication_revision, h.translations_json, 'CURRENT' AS selection_kind
+            FROM selected m
+            JOIN ddc_i18n_published_override h ON h.tenant_id=#{tenantId} AND h.catalog_scope_id=#{catalogScopeId}
+                AND h.page_code=m.page_code AND h.deleted_at IS NULL
+            JOIN ddc_i18n_page head ON head.tenant_id=h.tenant_id AND head.catalog_scope_id=h.catalog_scope_id
+                AND head.id=h.page_id AND head.deleted_at IS NULL
+            WHERE h.publication_revision=(
+                SELECT MAX(previous.publication_revision) FROM ddc_i18n_published_override previous
+                WHERE previous.tenant_id=#{tenantId} AND previous.catalog_scope_id=#{catalogScopeId}
+                  AND previous.page_id=head.id AND previous.deleted_at IS NULL
+                  AND previous.publication_revision &lt;= head.published_version
+                  AND jsonb_exists(previous.reviewed_source_hashes_json::jsonb, m.message_key)
+            )
+            UNION ALL
+            SELECT m.page_code, m.message_key, h.reviewed_source_hashes_json::jsonb -&gt;&gt; m.message_key AS source_hash,
+                   h.publication_revision, h.translations_json, 'MATCHING' AS selection_kind
+            FROM selected m
+            JOIN ddc_i18n_published_override h ON h.tenant_id=#{tenantId} AND h.catalog_scope_id=#{catalogScopeId}
+                AND h.page_code=m.page_code AND h.deleted_at IS NULL
+            JOIN ddc_i18n_page head ON head.tenant_id=h.tenant_id AND head.catalog_scope_id=h.catalog_scope_id
+                AND head.id=h.page_id AND head.deleted_at IS NULL
+            WHERE h.publication_revision=(
+                SELECT MAX(previous.publication_revision) FROM ddc_i18n_published_override previous
+                WHERE previous.tenant_id=#{tenantId} AND previous.catalog_scope_id=#{catalogScopeId}
+                  AND previous.page_id=head.id AND previous.deleted_at IS NULL
+                  AND previous.publication_revision &lt;= head.published_version
+                  AND previous.reviewed_source_hashes_json::jsonb -&gt;&gt; m.message_key=m.source_hash
+            )
+        )
+        SELECT p.page_code, p.message_key, p.source_hash, p.publication_revision, p.selection_kind,
+               COALESCE((SELECT jsonb_object_agg(language.locale, language.translation) FROM (
+                   SELECT jsonb_path_query(p.translations_json::jsonb,
+                              '$.keyvalue() ? (exists(@.value.keyvalue() ? (@.key == $messageKey))).key',
+                              jsonb_build_object('messageKey', p.message_key)) #&gt;&gt; '{}' AS locale,
+                          jsonb_path_query(p.translations_json::jsonb,
+                              '$.keyvalue().value.keyvalue() ? (@.key == $messageKey).value',
+                              jsonb_build_object('messageKey', p.message_key)) AS translation
+                   FROM selected one_key WHERE one_key.page_code=p.page_code AND one_key.message_key=p.message_key
+               ) language), '{}'::jsonb)::text AS translations_json
+        FROM winners p
+        ORDER BY p.page_code, p.message_key, p.selection_kind
+    </select>
+</mapper>

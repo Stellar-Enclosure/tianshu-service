@@ -1,5 +1,10 @@
 package top.egon.cola.component.tianshu.admin.controller.i18n;
 
+import top.egon.cola.component.tianshu.admin.permission.DdcPermissionCodes;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.ResourceType;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionResource;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.RequiresPermissions;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -31,6 +36,7 @@ import top.egon.cola.component.tianshu.admin.model.dto.DdcI18nScope;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcI18nPageResult;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcI18nPageSummary;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcI18nBundleResult;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcI18nPublishResult;
 import top.egon.cola.component.tianshu.admin.service.i18n.DdcI18nPageService;
 import top.egon.cola.component.tianshu.admin.support.DdcAdminPageSupport;
 import top.egon.cola.component.yuheng.openapi.annotation.EgonApiCatalog;
@@ -49,6 +55,9 @@ import java.util.Arrays;
 public class DdcI18nPageController {
     @Qualifier("ddcI18nPageService") private final DdcI18nPageService service;
 
+    @PermissionResource(key = "tianshu.api.i18nPage.page", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.i18nPage.page")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping("/pages")
     @Operation(operationId = "pageI18nPages", summary = "浏览页面多语种资源")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
@@ -61,6 +70,9 @@ public class DdcI18nPageController {
                 new PageQuery(pageNo, pageSize))));
     }
 
+    @PermissionResource(key = "tianshu.api.i18nPage.create", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.i18nPage.create")
+    @RequiresPermissions(codes = DdcPermissionCodes.WRITE)
     @PostMapping(path = "/pages", consumes = MediaType.APPLICATION_JSON_VALUE)
     @Operation(operationId = "createI18nPage", summary = "创建页面多语种草稿")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
@@ -70,13 +82,31 @@ public class DdcI18nPageController {
                 .header(HttpHeaders.CACHE_CONTROL, "no-store").body(ResultRecord.success(page));
     }
 
+    @PermissionResource(key = "tianshu.api.i18nPage.get", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.i18nPage.get")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping("/pages/{id}")
     @Operation(operationId = "getI18nPage", summary = "读取页面多语种草稿")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
-    public ResponseEntity<ResultRecord<DdcI18nPageResult>> get(@PathVariable Long id) {
-        return noStore(ResultRecord.success(service.get(id)));
+    public ResponseEntity<ResultRecord<DdcI18nPageResult>> get(@PathVariable Long id, @RequestParam String catalogActivationVersion) {
+        return noStore(ResultRecord.success(service.get(id, catalogActivationVersion)));
     }
 
+    @PermissionResource(key = "tianshu.api.i18nPage.sourcePage", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.i18nPage.sourcePage")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
+    @GetMapping("/source-pages/{pageCode}")
+    @Operation(operationId = "getI18nSourcePage", summary = "读取指定来源页面与人工草稿对照")
+    @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    public ResponseEntity<ResultRecord<DdcI18nPageResult>> sourcePage(@PathVariable String pageCode,
+            @RequestParam String bizCode, @RequestParam String namespaceCode, @RequestParam String env, @RequestParam String appCode,
+            @RequestParam String catalogScopeId, @RequestParam String catalogActivationVersion) {
+        return noStore(ResultRecord.success(service.sourcePage(new DdcI18nScope(bizCode, namespaceCode, env, appCode), catalogScopeId, catalogActivationVersion, pageCode)));
+    }
+
+    @PermissionResource(key = "tianshu.api.i18nPage.draft", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.i18nPage.draft")
+    @RequiresPermissions(codes = DdcPermissionCodes.WRITE)
     @PutMapping(path = "/pages/{id}/draft", consumes = MediaType.APPLICATION_JSON_VALUE)
     @Operation(operationId = "replaceI18nDraft", summary = "完整保存页面多语种草稿")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
@@ -85,24 +115,42 @@ public class DdcI18nPageController {
         return noStore(ResultRecord.success(service.replaceDraft(id, command)));
     }
 
+    @PermissionResource(key = "tianshu.api.i18nPage.publish", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.i18nPage.publish")
+    @RequiresPermissions(codes = DdcPermissionCodes.PUBLISH)
     @PostMapping(path = "/pages/{id}/publish", consumes = MediaType.APPLICATION_JSON_VALUE)
     @Operation(operationId = "publishI18nPage", summary = "发布页面多语种快照")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
-    public ResponseEntity<ResultRecord<DdcI18nPageResult>> publish(@PathVariable Long id,
+    public ResponseEntity<ResultRecord<DdcI18nPublishResult>> publish(@PathVariable Long id,
             @RequestBody @Valid DdcI18nPublishCommand command) {
         return noStore(ResultRecord.success(service.publish(id, command)));
     }
 
+    @PermissionResource(key = "tianshu.api.i18nPage.publication", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.i18nPage.publication")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
+    @GetMapping("/pages/{id}/publications/{operationId}")
+    @Operation(operationId = "getI18nPublication", summary = "按操作读取不可变人工发布回执")
+    @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    public ResponseEntity<ResultRecord<DdcI18nPublishResult>> publication(@PathVariable Long id, @PathVariable String operationId) {
+        return noStore(ResultRecord.success(service.publication(id, operationId)));
+    }
+
+    @PermissionResource(key = "tianshu.api.i18nPage.bundle", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.i18nPage.bundle")
+    @RequiresPermissions(codes = {DdcPermissionCodes.READ, DdcPermissionCodes.I18N_READ},
+            mode = top.egon.cola.platform.tianquan.jianshen.contract.permission.PermissionMode.ANY)
     @GetMapping("/bundle")
     @Operation(operationId = "getI18nBundle", summary = "读取已发布的页面语言包")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
     public ResponseEntity<ResultRecord<DdcI18nBundleResult>> bundle(
             @RequestParam String bizCode, @RequestParam String namespaceCode,
             @RequestParam String env, @RequestParam String appCode,
+            @RequestParam String catalogScopeId, @RequestParam String catalogActivationVersion,
             @RequestParam String pageCode, @RequestParam String locale,
             @RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
         // Authorization and enabled-scope checks always precede conditional-cache handling.
-        var bundle = service.bundle(new DdcI18nScope(bizCode, namespaceCode, env, appCode), pageCode, locale);
+        var bundle = service.bundle(new DdcI18nScope(bizCode, namespaceCode, env, appCode), catalogScopeId, catalogActivationVersion, pageCode, locale);
         String etag = "W/\"" + bundle.version() + "\"";
         var response = ResponseEntity.status(matches(ifNoneMatch, etag) ? HttpStatus.NOT_MODIFIED : HttpStatus.OK)
                 .header(HttpHeaders.CACHE_CONTROL, "private, no-cache")

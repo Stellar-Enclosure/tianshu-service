@@ -4,10 +4,26 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import top.egon.cola.component.common.core.exception.CommonException;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.PermissionManifest;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.I18nSourceRules;
 import java.util.Map;
 import static org.assertj.core.api.Assertions.*;
 
 class DdcI18nValidationTest {
+    @Test
+    void completeHumanReviewHashesHaveTheirOwnTwoMiBLimitWithoutReducingTheSourceMessageDomain() {
+        var sources = new java.util.TreeMap<String, PermissionManifest.Message>();
+        var hashes = new java.util.TreeMap<String, String>();
+        for (int index = 0; index < 12_000; index++) {
+            String key = "key".repeat(40) + index;
+            var message = new PermissionManifest.Message("orders", key, "en-US", Map.of("en-US", "Source"));
+            sources.put(key, message);
+            hashes.put(key, I18nSourceRules.sourceHash(message));
+        }
+        assertThat(sources).hasSize(12_000);
+        assertThatThrownBy(() -> new DdcI18nValidation().reviewedSources(hashes, sources))
+                .isInstanceOfSatisfying(CommonException.class, error -> assertThat(error.getCode()).isEqualTo(56412));
+    }
     private final DdcI18nValidation validation = new DdcI18nValidation();
 
     @Test void emptyDraftCanBeSavedButCannotBePublished() {

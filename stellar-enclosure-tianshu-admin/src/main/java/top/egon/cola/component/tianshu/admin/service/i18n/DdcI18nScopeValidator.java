@@ -23,10 +23,13 @@ public class DdcI18nScopeValidator {
     @Qualifier("ddcNamespaceRepository") private final DdcNamespaceRepository namespaces;
     @Qualifier("ddcNamespaceEnvAppBindingRepository") private final DdcNamespaceEnvAppBindingRepository bindings;
 
+    private final top.egon.cola.platform.tianquan.jianshen.starter.permission.PermissionExecutionGuard permissionExecution;
+
     public Long require(DdcI18nScope scope, DdcAdminCapability capability) {
         requirePermission(capability);
         validateScope(scope);
-        if (capability == DdcAdminCapability.WRITE || capability == DdcAdminCapability.PUBLISH) {
+        if ((capability == DdcAdminCapability.WRITE || capability == DdcAdminCapability.PUBLISH)
+                && org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
             repository.lockScope(scope);
         }
         scopeGate.assertEnabledFresh(scope.bizCode(), scope.appCode(), scope.env(), scope.namespaceCode());
@@ -38,6 +41,7 @@ public class DdcI18nScopeValidator {
     }
 
     public void requirePermission(DdcAdminCapability capability) {
+        permissionExecution.require(top.egon.cola.platform.tianquan.jianshen.starter.permission.PermissionExecutionContext.currentApiKey());
         if (!hasPermission(capability)) {
             throw new CommonException(56407, "TIANSHU_I18N_SCOPE_FORBIDDEN", "Page language permission is required");
         }
@@ -54,8 +58,8 @@ public class DdcI18nScopeValidator {
 
     private boolean authorized(Authentication authentication, DdcAdminCapability capability) {
         return authentication.getAuthorities().stream().anyMatch(a -> ("SCOPE_TIANSHU_" + capability.name()).equals(a.getAuthority()))
-                && authentication.getAuthorities().stream().anyMatch(a -> capability.authority().equals(a.getAuthority())
-                || DdcAdminCapability.ALL.authority().equals(a.getAuthority()));
+                && authentication.getPrincipal() instanceof Rbac3UserDetails user
+                && user.hasPermission(capability.value());
     }
 
     private void validateScope(DdcI18nScope scope) {

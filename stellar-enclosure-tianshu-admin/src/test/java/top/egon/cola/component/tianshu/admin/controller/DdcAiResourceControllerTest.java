@@ -61,7 +61,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @WebMvcTest(controllers = DdcAiResourceController.class)
 @AutoConfigureMockMvc(addFilters = false)
-@Import(DdcAiWebConfiguration.class)
+@Import({DdcAiWebConfiguration.class, top.egon.cola.component.tianshu.admin.config.DdcTransportSliceTestConfiguration.class})
 class DdcAiResourceControllerTest {
 
     private static final long RESOURCE_ID = 810001L;

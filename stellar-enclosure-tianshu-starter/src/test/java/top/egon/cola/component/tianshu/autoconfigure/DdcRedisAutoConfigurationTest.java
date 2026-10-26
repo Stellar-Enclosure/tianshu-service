@@ -28,6 +28,8 @@ class DdcRedisAutoConfigurationTest {
                     .withPropertyValues(
                             "egon.cola.component.tianshu.enabled=true",
                             "egon.cola.component.tianshu.redis.enabled=true",
+                            "egon.cola.component.tianshu.tenant-id=42",
+                            "egon.cola.component.tianshu.redis.username=tenant-42",
                             "egon.cola.component.tianshu.registry.enabled=true"
                     )
                     .run(context -> {

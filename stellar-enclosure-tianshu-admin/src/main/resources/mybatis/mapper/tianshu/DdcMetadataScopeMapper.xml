@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="top.egon.cola.component.tianshu.admin.dao.DdcMetadataScopeMapper">
+    <resultMap id="Row" type="top.egon.cola.component.tianshu.admin.model.po.DdcMetadataScopePO">
+        <result property="id" column="id"/>
+        <result property="tenantId" column="tenant_id"/>
+        <result property="createUserId" column="create_user_id"/>
+        <result property="createTime" column="create_time"/>
+        <result property="updateUserId" column="update_user_id"/>
+        <result property="updateTime" column="update_time"/>
+        <result property="deletedAt" column="deleted_at"/>
+        <result property="version" column="version"/>
+        <result property="catalogScopeId" column="catalog_scope_id"/>
+        <result property="bizCode" column="biz_code"/>
+        <result property="namespaceId" column="namespace_id"/>
+        <result property="namespaceCode" column="namespace_code"/>
+        <result property="envCode" column="env_code"/>
+        <result property="appId" column="app_id"/>
+        <result property="appCode" column="app_code"/>
+        <result property="bindingId" column="binding_id"/>
+    </resultMap>
+    <select id="selectByCatalogScopeId" resultMap="Row" timeout="2">
+        SELECT s.* FROM ddc_metadata_scope s
+        WHERE s.tenant_id=#{tenantId} AND s.catalog_scope_id=#{catalogScopeId} AND s.deleted_at IS NULL
+    </select>
+    <select id="lockByCatalogScopeId" resultMap="Row" timeout="2">
+        SELECT * FROM ddc_metadata_scope
+        WHERE tenant_id=#{tenantId} AND catalog_scope_id=#{catalogScopeId} AND deleted_at IS NULL
+        FOR UPDATE
+    </select>
+    <select id="lockEnabledTarget" resultMap="Row" timeout="2">
+        SELECT s.* FROM ddc_metadata_scope s
+        JOIN ddc_biz b ON b.tenant_id=s.tenant_id AND b.biz_code=s.biz_code AND b.deleted_at IS NULL
+        JOIN ddc_env e ON e.tenant_id=s.tenant_id AND e.env_code=s.env_code AND e.deleted_at IS NULL
+        JOIN ddc_app a ON a.tenant_id=s.tenant_id AND a.id=s.app_id AND a.app_code=s.app_code
+            AND a.biz_code=s.biz_code AND a.deleted_at IS NULL
+        JOIN ddc_namespace n ON n.tenant_id=s.tenant_id AND n.id=s.namespace_id
+            AND n.namespace_code=s.namespace_code AND n.biz_code=s.biz_code AND n.deleted_at IS NULL
+        JOIN ddc_namespace_env_app nb ON nb.tenant_id=s.tenant_id AND nb.id=s.binding_id
+            AND nb.namespace_id=s.namespace_id AND nb.app_id=s.app_id AND nb.env_code=s.env_code AND nb.deleted_at IS NULL
+        WHERE s.tenant_id=#{tenantId} AND s.catalog_scope_id=#{catalogScopeId} AND s.deleted_at IS NULL
+        AND b.enabled=true AND e.enabled=true AND a.enabled=true AND n.enabled=true AND nb.enabled=true
+        FOR SHARE
+    </select>
+</mapper>

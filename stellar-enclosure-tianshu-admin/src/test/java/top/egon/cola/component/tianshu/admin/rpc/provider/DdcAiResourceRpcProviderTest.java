@@ -212,7 +212,7 @@ class DdcAiResourceRpcProviderTest {
         when(bindingRepository.findAll(SCOPE.bizCode(), SCOPE.namespaceCode(), SCOPE.env(), SCOPE.appCode()))
                 .thenReturn(List.of(DdcNamespaceEnvAppBindingBO.builder().enabled(true).build()));
         DdcAiScopeValidator validator = new DdcAiScopeValidator(
-                scopeGate, resourceRepository, namespaceRepository, bindingRepository);
+                scopeGate, resourceRepository, namespaceRepository, bindingRepository, org.mockito.Mockito.mock(top.egon.cola.platform.tianquan.jianshen.starter.permission.PermissionExecutionGuard.class));
         DdcAiResourceBO resource = DdcAiResourceBO.builder().id(RESOURCE_ID).tenantId(TENANT_ID)
                 .bizCode(SCOPE.bizCode()).namespaceId(71L).namespaceCode(SCOPE.namespaceCode())
                 .envCode(SCOPE.env()).appCode(SCOPE.appCode()).build();

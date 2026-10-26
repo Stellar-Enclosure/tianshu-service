@@ -32,12 +32,16 @@ public class DdcI18nWebConfiguration {
     public static final int MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
 
     @Bean(name = "ddcI18nWebConfigurer")
-    public WebMvcConfigurer ddcI18nWebConfigurer(Jackson2ObjectMapperBuilder objectMapperBuilder) {
-        ObjectMapper strictObjectMapper = objectMapperBuilder.build();
+    public WebMvcConfigurer ddcI18nWebConfigurer(Jackson2ObjectMapperBuilder objectMapperBuilder,
+            top.egon.cola.platform.tianquan.jianshen.starter.field.PermissionJsonMapperFactory permissionFields) {
+        ObjectMapper strictObjectMapper = permissionFields.forTransport(objectMapperBuilder.build());
         strictObjectMapper.enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
         strictObjectMapper.enable(DeserializationFeature.FAIL_ON_MISSING_CREATOR_PROPERTIES);
+        strictObjectMapper.enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
         strictObjectMapper.disable(MapperFeature.ALLOW_COERCION_OF_SCALARS);
         strictObjectMapper.getFactory().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
+        strictObjectMapper.getFactory().setStreamReadConstraints(com.fasterxml.jackson.core.StreamReadConstraints.builder()
+                .maxNestingDepth(8).maxStringLength(8192).maxNumberLength(32).build());
         strictObjectMapper.coercionConfigFor(LogicalType.Textual)
                 .setCoercion(CoercionInputShape.Integer, CoercionAction.Fail)
                 .setCoercion(CoercionInputShape.Float, CoercionAction.Fail)

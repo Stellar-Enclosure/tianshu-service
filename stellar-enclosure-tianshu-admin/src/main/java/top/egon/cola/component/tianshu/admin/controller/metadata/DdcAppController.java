@@ -1,5 +1,10 @@
 package top.egon.cola.component.tianshu.admin.controller.metadata;
 
+import top.egon.cola.component.tianshu.admin.permission.DdcPermissionCodes;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.ResourceType;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionResource;
+import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.RequiresPermissions;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -47,6 +52,9 @@ public class DdcAppController {
 
     @Operation(operationId = "tianshu.ddcAppController.list")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.app.list", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.app.list")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping
     public ResultRecord<List<DdcAppResult>> list(
             @RequestParam(value = "bizCode", required = false) String bizCode,
@@ -59,6 +67,9 @@ public class DdcAppController {
 
     @Operation(operationId = "tianshu.ddcAppController.page")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.app.page", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.app.page")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping("/page")
     public PageResultRecord<DdcAppResult> page(
             @RequestParam(value = "bizCode", required = false) String bizCode,
@@ -73,6 +84,9 @@ public class DdcAppController {
 
     @Operation(operationId = "tianshu.ddcAppController.detail")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.app.detail", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.app.detail")
+    @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping("/{id}")
     public ResultRecord<DdcAppResult> detail(@PathVariable("id") String id) {
         return ResultRecord.success(appService.findById(id).map(resultConverter::toTarget).orElse(null));
@@ -80,6 +94,9 @@ public class DdcAppController {
 
     @Operation(operationId = "tianshu.ddcAppController.save")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.app.save", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.app.save")
+    @RequiresPermissions(codes = DdcPermissionCodes.WRITE)
     @PostMapping
     public ResultRecord<DdcAppResult> save(
             @Validated(EgonColaModelValidationGroups.Insert.class) @RequestBody DdcAppBO request) {
@@ -88,6 +105,9 @@ public class DdcAppController {
 
     @Operation(operationId = "tianshu.ddcAppController.update")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.app.update", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.app.update")
+    @RequiresPermissions(codes = DdcPermissionCodes.WRITE)
     @PutMapping("/{id}")
     public ResultRecord<DdcAppResult> update(
             @PathVariable("id") String id,
@@ -97,6 +117,9 @@ public class DdcAppController {
 
     @Operation(operationId = "tianshu.ddcAppController.delete")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.app.delete", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.app.delete")
+    @RequiresPermissions(codes = DdcPermissionCodes.WRITE)
     @DeleteMapping("/{id}")
     public ResultRecord<Void> delete(@PathVariable("id") String id) {
         appService.delete(id);
@@ -105,6 +128,9 @@ public class DdcAppController {
 
     @Operation(operationId = "tianshu.ddcAppController.setEnabled")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.app.setEnabled", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.app.setEnabled")
+    @RequiresPermissions(codes = DdcPermissionCodes.WRITE)
     @PutMapping("/{id}/enabled")
     public ResultRecord<DdcAppResult> setEnabled(
             @PathVariable("id") String id,

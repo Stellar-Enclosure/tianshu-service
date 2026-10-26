@@ -43,6 +43,8 @@ public class DdcAiScopeValidator {
     @Qualifier("ddcNamespaceEnvAppBindingRepository")
     private final DdcNamespaceEnvAppBindingRepository bindingRepository;
 
+    private final top.egon.cola.platform.tianquan.jianshen.starter.permission.PermissionExecutionGuard permissionExecution;
+
     public Long resolveNamespaceIdForRead(@NotNull @Valid DdcAiScopeDTO scope) {
         return resolveNamespaceId(scope, Permission.READ);
     }
@@ -132,6 +134,7 @@ public class DdcAiScopeValidator {
             if (authentication.getAuthorities().stream().noneMatch(authority -> ("SCOPE_" + oauthScope).equals(authority.getAuthority()))) {
                 throw scopeForbidden();
             }
+            user = permissionExecution.require(top.egon.cola.platform.tianquan.jianshen.starter.permission.PermissionExecutionContext.currentApiKey());
             if (!user.permissions().contains(basePermission)
                     && !user.permissions().contains(basePermission + ":*")
                     && !user.permissions().contains(basePermission + ":" + namespacePublicId)) {
