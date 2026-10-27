@@ -188,38 +188,17 @@ public class DdcAiFeedbackServiceImpl implements DdcAiFeedbackService {
     @Override
     public void completeJudge(Long id, Long version, DdcAiJudgeVerdictDTO verdict) {
         commandTransactionTemplate.executeWithoutResult(status -> {
-            Optional<DdcAiUsageFeedbackBO> current = judging(id, version);
-            if (current.isEmpty()) {
-                log.debug("AI judge result discarded because the sample was taken over id={}", id);
-                return;
+            if (!feedbackRepository.completeJudgeIfOwned(id, version, (short) verdict.score(), clock.instant())) {
+                log.debug("AI judge result lost a version race id={}", id);
             }
-            Optional<DdcAiUsageFeedbackBO> written = feedbackRepository.update(current.get().toBuilder()
-                    .judgeState(DdcAiJudgeStatePersistenceEnum.DONE)
-                    .judgeScore((short) verdict.score())
-                    .judgedAt(clock.instant())
-                    .judgeLeaseUntil(null)
-                    .judgeError(null)
-                    .build());
-            if (written.isEmpty()) log.debug("AI judge result lost a version race id={}", id);
         });
     }
 
     @Override
     public void failJudge(Long id, Long version, DdcAiRunErrorCodeEnum code) {
-        commandTransactionTemplate.executeWithoutResult(status -> judging(id, version).ifPresent(current -> {
-            boolean exhausted = current.getJudgeAttempts() >= properties.getJudge().getMaxAttempts();
-            feedbackRepository.update(current.toBuilder()
-                    .judgeState(exhausted ? DdcAiJudgeStatePersistenceEnum.FAILED : DdcAiJudgeStatePersistenceEnum.PENDING)
-                    .judgeLeaseUntil(null)
-                    .judgeError(code.getValue())
-                    .build());
-        }));
-    }
-
-    private Optional<DdcAiUsageFeedbackBO> judging(Long id, Long version) {
-        return feedbackRepository.findActiveById(id)
-                .filter(row -> Objects.equals(row.getVersion(), version))
-                .filter(row -> row.getJudgeState() == DdcAiJudgeStatePersistenceEnum.JUDGING);
+        commandTransactionTemplate.executeWithoutResult(status ->
+                feedbackRepository.failJudgeIfOwned(id, version, properties.getJudge().getMaxAttempts(),
+                        code.getValue(), clock.instant()));
     }
 
     @Override

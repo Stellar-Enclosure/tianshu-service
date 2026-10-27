@@ -80,7 +80,6 @@
           AND (f.judge_state = 'PENDING' OR (f.judge_state = 'JUDGING' AND f.judge_lease_until &lt; #{now}))
         ORDER BY f.occurred_at, f.id
         LIMIT #{limit}
-        FOR UPDATE
     </select>
 
     <select id="selectScoreAggregate"
@@ -126,8 +125,23 @@
         WHERE f.tenant_id = #{tenantId} AND f.deleted_at IS NULL AND f.occurred_at &lt; #{before}
         ORDER BY f.id
         LIMIT #{limit}
-        FOR UPDATE
     </select>
+
+    <update id="completeJudgeIfOwned">
+        UPDATE ddc_ai_usage_feedback SET judge_state = 'DONE', judge_score = #{score}, judged_at = #{judgedAt},
+            judge_lease_until = NULL, judge_error = NULL, version = version + 1,
+            update_user_id = #{et.updateUserId}, update_time = #{et.updateTime}
+        WHERE tenant_id = #{et.tenantId} AND id = #{et.id} AND version = #{et.version}
+            AND judge_state = 'JUDGING' AND deleted_at IS NULL
+    </update>
+
+    <update id="failJudgeIfOwned">
+        UPDATE ddc_ai_usage_feedback SET judge_state = CASE WHEN judge_attempts &gt;= #{maxAttempts}
+            THEN 'FAILED' ELSE 'PENDING' END, judge_lease_until = NULL, judge_error = #{error},
+            version = version + 1, update_user_id = #{et.updateUserId}, update_time = #{et.updateTime}
+        WHERE tenant_id = #{et.tenantId} AND id = #{et.id} AND version = #{et.version}
+            AND judge_state = 'JUDGING' AND deleted_at IS NULL
+    </update>
 
     <update id="deleteVersionedById">
         UPDATE ddc_ai_usage_feedback

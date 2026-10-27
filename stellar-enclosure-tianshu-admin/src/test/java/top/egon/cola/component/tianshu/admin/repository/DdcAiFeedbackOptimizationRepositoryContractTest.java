@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -42,7 +43,8 @@ class DdcAiFeedbackOptimizationRepositoryContractTest {
 
     private final DdcAiUsageFeedbackMapper feedbackMapper = mock(DdcAiUsageFeedbackMapper.class);
     private final DdcAiUsageFeedbackRepositoryImpl feedbackRepository =
-            new DdcAiUsageFeedbackRepositoryImpl(feedbackMapper, new DdcAiUsageFeedbackConverterImpl(), null);
+            new DdcAiUsageFeedbackRepositoryImpl(feedbackMapper, new DdcAiUsageFeedbackConverterImpl(),
+                    new top.egon.cola.component.common.mybatis.autoconfigure.EgonColaMybatisPlusProperties());
 
     @BeforeAll
     static void bindValidation() {
@@ -75,7 +77,7 @@ class DdcAiFeedbackOptimizationRepositoryContractTest {
         for (String statement : List.of(FEEDBACK + ".selectActiveById", FEEDBACK + ".selectActiveByIds",
                 FEEDBACK + ".selectClaimableForJudge", FEEDBACK + ".selectScoreAggregate", FEEDBACK + ".selectWorst",
                 FEEDBACK + ".selectPage", FEEDBACK + ".countPage", FEEDBACK + ".selectExpiredIdsForUpdate",
-                FEEDBACK + ".deleteVersionedById",
+                FEEDBACK + ".deleteVersionedById", FEEDBACK + ".completeJudgeIfOwned", FEEDBACK + ".failJudgeIfOwned",
                 POLICY + ".selectActiveById", POLICY + ".selectActiveByIds", POLICY + ".selectActiveByResourceId",
                 POLICY + ".selectActiveByResourceIdForUpdate", POLICY + ".selectEvaluableForUpdate",
                 POLICY + ".selectJudgeEnabledResourceIds", POLICY + ".deleteVersionedById",
@@ -87,7 +89,7 @@ class DdcAiFeedbackOptimizationRepositoryContractTest {
     }
 
     @Test
-    void claimAndRetentionQueriesKeepBoundedTenantRowLocks() throws Exception {
+    void claimAndRetentionReadBoundedCandidatesWithoutLocks() throws Exception {
         Configuration configuration = parse();
 
         String claim = sql(configuration, FEEDBACK + ".selectClaimableForJudge", Map.of("tenantId", 42L,
@@ -97,10 +99,80 @@ class DdcAiFeedbackOptimizationRepositoryContractTest {
                 Map.of("tenantId", 42L, "before", NOW, "limit", 1000));
 
         assertThat(claim).contains("from ddc_ai_usage_feedback f", "f.tenant_id = ?", "f.explicit_score is null",
-                "f.judge_attempts < ?", "f.judge_state = 'judging' and f.judge_lease_until < ?",
-                "for update").doesNotContain("_t0");
+                "f.judge_attempts < ?", "f.judge_state = 'judging' and f.judge_lease_until < ?")
+                .doesNotContain("_t0", "for update", "for share");
         assertThat(evaluable).contains("p.active_run_id is null", "nulls first", "for update");
-        assertThat(expired).contains("f.occurred_at < ?", "for update");
+        assertThat(expired).contains("f.occurred_at < ?").doesNotContain("for update", "for share");
+    }
+
+    @Test
+    void judgeCompletionAndFailureAreVersionedPrimaryCasWrites() throws Exception {
+        Configuration configuration = parse();
+        var row = DdcAiUsageFeedbackPO.builder().id(1L).tenantId(42L).version(7L)
+                .updateUserId("worker").updateTime(NOW).build();
+        String complete = sql(configuration, FEEDBACK + ".completeJudgeIfOwned",
+                Map.of("et", row, "score", (short) 80, "judgedAt", NOW));
+        String fail = sql(configuration, FEEDBACK + ".failJudgeIfOwned",
+                Map.of("et", row, "maxAttempts", 3, "error", "MODEL_TIMEOUT"));
+        for (String statement : List.of(complete, fail)) {
+            assertThat(statement).contains("tenant_id = ?", "id = ?", "version = ?", "version = version + 1",
+                    "judge_state = 'judging'", "deleted_at is null", "update_user_id = ?", "update_time = ?")
+                    .doesNotContain("select ", "for update", "for share");
+        }
+        assertThat(complete).contains("judge_state = 'done'", "judge_lease_until = null");
+        assertThat(fail).contains("case when judge_attempts >= ?", "then 'failed' else 'pending' end");
+    }
+
+    @Test
+    void judgeWritesPassTheActualTenantAndLocalRouteGuards() throws Exception {
+        var configuration = parse();
+        configuration.setEnvironment(new org.apache.ibatis.mapping.Environment("test",
+                new org.mybatis.spring.transaction.SpringManagedTransactionFactory(),
+                org.mockito.Mockito.mock(javax.sql.DataSource.class)));
+        var properties = new top.egon.cola.component.common.mybatis.autoconfigure.EgonColaMybatisPlusProperties();
+        var sqlGuard = new top.egon.cola.component.common.mybatis.interceptor.EgonColaTenantIdGuardInnerInterceptor(
+                () -> "service:judge", properties);
+        new org.springframework.context.annotation.CommonAnnotationBeanPostProcessor()
+                .postProcessBeforeInitialization(sqlGuard, "sqlGuard");
+        var routeGuard = new top.egon.cola.component.common.mybatis.interceptor.EgonColaLocalWriteGuardInnerInterceptor(
+                query -> new top.egon.cola.component.common.mybatis.routing.EgonColaRouteResult(
+                        List.of(new top.egon.cola.component.common.mybatis.routing.EgonColaPhysicalTargetBO(
+                                "shard_0", "public", "ddc_ai_usage_feedback_t0")), "a".repeat(64)),
+                sqlGuard, org.mockito.Mockito.mock(top.egon.cola.component.common.mybatis.routing.EgonColaTwoLevelRouteStrategy.class),
+                Map.of());
+        var row = DdcAiUsageFeedbackPO.builder().id(1L).tenantId(42L).version(7L)
+                .updateUserId("service:judge").updateTime(NOW).build();
+        for (var entry : Map.of("completeJudgeIfOwned", Map.<String, Object>of("et", row, "score", (short) 80, "judgedAt", NOW),
+                "failJudgeIfOwned", Map.<String, Object>of("et", row, "maxAttempts", 3, "error", "MODEL_TIMEOUT")).entrySet()) {
+            var statement = configuration.getMappedStatement(FEEDBACK + "." + entry.getKey());
+            var handler = configuration.newStatementHandler(org.mockito.Mockito.mock(org.apache.ibatis.executor.Executor.class),
+                    statement, entry.getValue(), org.apache.ibatis.session.RowBounds.DEFAULT, null,
+                    statement.getBoundSql(entry.getValue()));
+            org.assertj.core.api.Assertions.assertThatCode(() -> {
+                sqlGuard.beforePrepare(handler, null, null);
+                routeGuard.beforePrepare(handler, null, null);
+            }).as(entry.getKey()).doesNotThrowAnyException();
+        }
+    }
+
+    @Test
+    void judgeWritesCarryTrustedTenantActorAndClaimVersion() {
+        MDC.put("userId", "service:judge");
+        when(feedbackMapper.completeJudgeIfOwned(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.eq((short) 80), org.mockito.ArgumentMatchers.eq(NOW))).thenReturn(1);
+        assertThat(feedbackRepository.completeJudgeIfOwned(1L, 7L, (short) 80, NOW)).isTrue();
+        var captured = org.mockito.ArgumentCaptor.forClass(DdcAiUsageFeedbackPO.class);
+        verify(feedbackMapper).completeJudgeIfOwned(captured.capture(), org.mockito.ArgumentMatchers.eq((short) 80),
+                org.mockito.ArgumentMatchers.eq(NOW));
+        assertThat(captured.getValue().getId()).isEqualTo(1L);
+        assertThat(captured.getValue().getTenantId()).isEqualTo(42L);
+        assertThat(captured.getValue().getVersion()).isEqualTo(7L);
+        assertThat(captured.getValue().getUpdateUserId()).isEqualTo("service:judge");
+        assertThat(captured.getValue().getUpdateTime()).isEqualTo(NOW);
+        assertThat(feedbackRepository.failJudgeIfOwned(1L, 7L, 3, "MODEL_TIMEOUT", NOW)).isFalse();
+        MDC.remove("userId");
+        assertThatThrownBy(() -> feedbackRepository.completeJudgeIfOwned(1L, 7L, (short) 80, NOW))
+                .hasMessageContaining("AUDIT_USER_REQUIRED");
     }
 
     @Test
@@ -143,18 +215,21 @@ class DdcAiFeedbackOptimizationRepositoryContractTest {
     }
 
     @Test
-    void retentionCountsOnlySuccessfulVersionedDeletesOfLockedRows() {
-        DdcAiUsageFeedbackPO first = DdcAiUsageFeedbackPO.builder().id(1L).tenantId(42L).version(7L).build();
-        DdcAiUsageFeedbackPO stale = DdcAiUsageFeedbackPO.builder().id(2L).tenantId(42L).version(8L).build();
+    void retentionCountsOnlySuccessfulVersionedDeletesOfStillExpiredRows() {
+        DdcAiUsageFeedbackPO first = DdcAiUsageFeedbackPO.builder().id(1L).tenantId(42L).version(7L).occurredAt(NOW.minusSeconds(1)).build();
+        DdcAiUsageFeedbackPO stale = DdcAiUsageFeedbackPO.builder().id(2L).tenantId(42L).version(8L).occurredAt(NOW.minusSeconds(1)).build();
+        DdcAiUsageFeedbackPO recent = DdcAiUsageFeedbackPO.builder().id(3L).tenantId(42L).version(9L).occurredAt(NOW.plusSeconds(1)).build();
         when(feedbackMapper.selectExpiredIdsForUpdate(42L, NOW, 1000)).thenReturn(List.of(1L, 2L, 3L));
         when(feedbackMapper.selectActiveById(42L, 1L)).thenReturn(first);
         when(feedbackMapper.selectActiveById(42L, 2L)).thenReturn(stale);
+        when(feedbackMapper.selectActiveById(42L, 3L)).thenReturn(recent);
         when(feedbackMapper.deleteVersionedById(first)).thenReturn(1);
         when(feedbackMapper.deleteVersionedById(stale)).thenReturn(0);
 
         assertThat(feedbackRepository.softDeleteExpired(NOW, 1000)).isEqualTo(1);
         verify(feedbackMapper).deleteVersionedById(first);
         verify(feedbackMapper).deleteVersionedById(stale);
+        verify(feedbackMapper, never()).deleteVersionedById(recent);
         assertThat(first.getVersion()).isEqualTo(7L);
         assertThat(first.getUpdateUserId()).isEqualTo("system:ai-retention");
         assertThat(first.getUpdateTime()).isNotNull();

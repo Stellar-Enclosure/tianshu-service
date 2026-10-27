@@ -54,7 +54,7 @@ public interface DdcAiUsageFeedbackMapper extends EgonColaMapper<DdcAiUsageFeedb
             @Param("tenantId") @NotNull(groups = EgonColaModelValidationGroups.Query.class) @Positive(groups = EgonColaModelValidationGroups.Query.class) Long tenantId,
             @Param("ids") @NotNull(groups = EgonColaModelValidationGroups.Query.class) Collection<@Positive(groups = EgonColaModelValidationGroups.Query.class) Long> ids);
 
-    /** 认领待评分样本并加行锁；须在事务内调用。 / Claims pending samples with row locks; must run inside a transaction. */
+    /** 无锁读取待评分候选，后续写入按版本 CAS 认领。 / Reads candidates without locks; the subsequent version CAS claims them. */
     @Validated(EgonColaModelValidationGroups.Query.class)
     List<DdcAiUsageFeedbackPO> selectClaimableForJudge(
             @Param("tenantId") @NotNull(groups = EgonColaModelValidationGroups.Query.class) @Positive(groups = EgonColaModelValidationGroups.Query.class) Long tenantId,
@@ -95,13 +95,19 @@ public interface DdcAiUsageFeedbackMapper extends EgonColaMapper<DdcAiUsageFeedb
             @Param("tenantId") @NotNull(groups = EgonColaModelValidationGroups.Query.class) @Positive(groups = EgonColaModelValidationGroups.Query.class) Long tenantId,
             @Param("query") @NotNull(groups = EgonColaModelValidationGroups.Query.class) DdcAiUsageFeedbackPageQuery query);
 
-    /** 锁定待清理的过期样本 ID。 / Locks the IDs of expired samples awaiting retention cleanup. */
+    /** 无锁读取过期样本候选 ID。 / Reads candidate IDs for retention cleanup without locks. */
     @Validated(EgonColaModelValidationGroups.Query.class)
     List<Long> selectExpiredIdsForUpdate(
             @Param("tenantId") @NotNull(groups = EgonColaModelValidationGroups.Query.class) @Positive(groups = EgonColaModelValidationGroups.Query.class) Long tenantId,
             @Param("before") @NotNull(groups = EgonColaModelValidationGroups.Query.class) Instant before,
             @Param("limit") @Min(value = 1, groups = EgonColaModelValidationGroups.Query.class)
             @Max(value = 5000, groups = EgonColaModelValidationGroups.Query.class) int limit);
+
+    int completeJudgeIfOwned(@Param("et") DdcAiUsageFeedbackPO feedback,
+            @Param("score") short score, @Param("judgedAt") Instant judgedAt);
+
+    int failJudgeIfOwned(@Param("et") DdcAiUsageFeedbackPO feedback,
+            @Param("maxAttempts") int maxAttempts, @Param("error") String error);
 
     private static Long requireInternalId(Serializable id) {
         if (!(id instanceof Long value) || value <= 0) throw new IllegalArgumentException("ID_MUST_BE_POSITIVE_LONG");

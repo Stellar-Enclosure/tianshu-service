@@ -31,11 +31,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class DdcAiFeedbackPersistenceIT {
 
-    static final String CLAIM_SQL = "SELECT f.id FROM ddc_ai_usage_feedback_t0 f "
+    static final String CLAIM_SQL = "SELECT f.id, f.version FROM ddc_ai_usage_feedback_t0 f "
             + "WHERE f.tenant_id = ? AND f.deleted_at IS NULL AND f.resource_id = ? "
             + "AND f.explicit_score IS NULL AND f.judge_attempts < 3 "
             + "AND (f.judge_state = 'PENDING' OR (f.judge_state = 'JUDGING' AND f.judge_lease_until < ?)) "
-            + "ORDER BY f.occurred_at, f.id LIMIT ? FOR UPDATE";
+            + "ORDER BY f.occurred_at, f.id LIMIT ?";
 
     @Test
     void usageIdIsUniquePerTenantButReusableAcrossTenants() throws Exception {
@@ -103,8 +103,76 @@ class DdcAiFeedbackPersistenceIT {
                 Set<Long> union = new HashSet<>(first);
                 union.addAll(second);
                 assertThat(first).doesNotContainAnyElementsOf(second);
-                assertThat(union).hasSize(40);
+                assertThat(union).isNotEmpty();
+                try (Connection verify = open()) {
+                    List<Long> remaining = claim(verify, fixture, 40, Instant.now()).stream().map(Candidate::id).toList();
+                    assertThat(remaining).doesNotContainAnyElementsOf(union);
+                    assertThat(union.size() + remaining.size()).isEqualTo(40);
+                    verify.rollback();
+                }
             }
+        } finally {
+            fixture.cleanup();
+        }
+    }
+
+    @Test
+    void rolledBackClaimLeavesTheSampleClaimable() throws Exception {
+        Fixture fixture = Fixture.create();
+        long id = DdcAiPersistenceIT.nextId();
+        try (Connection connection = open()) {
+            insertFeedback(connection, fixture, id, usageId(), "PENDING", Instant.now().minusSeconds(10));
+            connection.commit();
+            Candidate candidate = claim(connection, fixture, 1, Instant.now()).getFirst();
+            try (PreparedStatement update = connection.prepareStatement(
+                    "UPDATE ddc_ai_usage_feedback_t0 SET judge_state='JUDGING', judge_attempts=judge_attempts+1, "
+                            + "judge_lease_until=?, version=version+1 WHERE tenant_id=? AND id=? AND version=? AND deleted_at IS NULL")) {
+                update.setTimestamp(1, Timestamp.from(Instant.now().plusSeconds(300)));
+                update.setLong(2, fixture.tenantId());
+                update.setLong(3, candidate.id());
+                update.setLong(4, candidate.version());
+                assertThat(update.executeUpdate()).isEqualTo(1);
+            }
+            connection.rollback();
+            assertThat(claim(connection, fixture, 1, Instant.now())).containsExactly(candidate);
+            connection.rollback();
+        } finally {
+            fixture.cleanup();
+        }
+    }
+
+    @Test
+    void judgeCompletionUsesTheClaimVersionAsItsPrimaryCas() throws Exception {
+        Fixture fixture = Fixture.create();
+        long id = DdcAiPersistenceIT.nextId();
+        Instant now = Instant.now();
+        try (Connection connection = open()) {
+            insertJudging(connection, fixture, id, now.plusSeconds(300));
+            connection.commit();
+            var configuration = new org.apache.ibatis.session.Configuration();
+            String resource = "mybatis/mapper/tianshu/DdcAiUsageFeedbackMapper.xml";
+            try (var input = getClass().getClassLoader().getResourceAsStream(resource)) {
+                new org.apache.ibatis.builder.xml.XMLMapperBuilder(input, configuration, resource,
+                        configuration.getSqlFragments()).parse();
+            }
+            var row = top.egon.cola.component.tianshu.admin.model.po.DdcAiUsageFeedbackPO.builder()
+                    .id(id).tenantId(fixture.tenantId()).version(0L).updateUserId("ai-it").updateTime(now).build();
+            String sql = configuration.getMappedStatement(
+                    "top.egon.cola.component.tianshu.admin.dao.DdcAiUsageFeedbackMapper.completeJudgeIfOwned")
+                    .getBoundSql(java.util.Map.of("et", row, "score", (short) 80, "judgedAt", now)).getSql()
+                    .replace("ddc_ai_usage_feedback", "ddc_ai_usage_feedback_t0");
+            try (PreparedStatement update = connection.prepareStatement(sql)) {
+                update.setShort(1, (short) 80);
+                update.setTimestamp(2, Timestamp.from(now));
+                update.setString(3, "ai-it");
+                update.setTimestamp(4, Timestamp.from(now));
+                update.setLong(5, fixture.tenantId());
+                update.setLong(6, id);
+                update.setLong(7, 0L);
+                assertThat(update.executeUpdate()).isEqualTo(1);
+                assertThat(update.executeUpdate()).isZero();
+            }
+            connection.commit();
         } finally {
             fixture.cleanup();
         }
@@ -120,9 +188,9 @@ class DdcAiFeedbackPersistenceIT {
             insertJudging(connection, fixture, expired, now.minusSeconds(60));
             insertJudging(connection, fixture, live, now.plusSeconds(600));
             connection.commit();
-            List<Long> claimed = claim(connection, fixture, 10, now);
+            List<Candidate> claimed = claim(connection, fixture, 10, now);
             connection.rollback();
-            assertThat(claimed).containsExactly(expired);
+            assertThat(claimed).extracting(Candidate::id).containsExactly(expired);
         } finally {
             fixture.cleanup();
         }
@@ -164,25 +232,27 @@ class DdcAiFeedbackPersistenceIT {
             ready.countDown();
             if (!start.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("CLAIM_START_TIMEOUT");
             Instant now = Instant.now();
-            List<Long> ids = claim(connection, fixture, limit, now);
+            List<Candidate> candidates = claim(connection, fixture, limit, now);
+            List<Long> claimed = new ArrayList<>();
             try (PreparedStatement update = connection.prepareStatement(
                     "UPDATE ddc_ai_usage_feedback_t0 SET judge_state = 'JUDGING', judge_attempts = judge_attempts + 1, "
-                            + "judge_lease_until = ?, version = version + 1 WHERE tenant_id = ? AND id = ?")) {
-                for (Long id : ids) {
+                            + "judge_lease_until = ?, version = version + 1 "
+                            + "WHERE tenant_id = ? AND id = ? AND version = ? AND deleted_at IS NULL")) {
+                for (Candidate candidate : candidates) {
                     update.setTimestamp(1, Timestamp.from(now.plusSeconds(300)));
                     update.setLong(2, fixture.tenantId());
-                    update.setLong(3, id);
-                    update.addBatch();
+                    update.setLong(3, candidate.id());
+                    update.setLong(4, candidate.version());
+                    if (update.executeUpdate() == 1) claimed.add(candidate.id());
                 }
-                update.executeBatch();
             }
             connection.commit();
-            return ids;
+            return claimed;
         }
     }
 
-    static List<Long> claim(Connection connection, Fixture fixture, int limit, Instant now) throws SQLException {
-        List<Long> ids = new ArrayList<>();
+    private static List<Candidate> claim(Connection connection, Fixture fixture, int limit, Instant now) throws SQLException {
+        List<Candidate> candidates = new ArrayList<>();
         try (PreparedStatement statement = connection.prepareStatement(CLAIM_SQL)) {
             statement.setQueryTimeout(5);
             statement.setLong(1, fixture.tenantId());
@@ -190,35 +260,42 @@ class DdcAiFeedbackPersistenceIT {
             statement.setTimestamp(3, Timestamp.from(now));
             statement.setInt(4, limit);
             try (ResultSet result = statement.executeQuery()) {
-                while (result.next()) ids.add(result.getLong(1));
+                while (result.next()) candidates.add(new Candidate(result.getLong(1), result.getLong(2)));
             }
         }
-        return ids;
+        return candidates;
     }
 
     private static int purgeBatch(Connection connection, Fixture fixture, Instant before, int limit)
             throws SQLException {
-        List<Long> ids = new ArrayList<>();
+        List<Candidate> candidates = new ArrayList<>();
         try (PreparedStatement select = connection.prepareStatement(
-                "SELECT f.id FROM ddc_ai_usage_feedback_t0 f WHERE f.tenant_id = ? AND f.deleted_at IS NULL "
-                        + "AND f.occurred_at < ? ORDER BY f.id LIMIT ? FOR UPDATE")) {
+                "SELECT f.id, f.version FROM ddc_ai_usage_feedback_t0 f WHERE f.tenant_id = ? AND f.deleted_at IS NULL "
+                        + "AND f.occurred_at < ? ORDER BY f.id LIMIT ?")) {
             select.setQueryTimeout(5);
             select.setLong(1, fixture.tenantId());
             select.setTimestamp(2, Timestamp.from(before));
             select.setInt(3, limit);
             try (ResultSet result = select.executeQuery()) {
-                while (result.next()) ids.add(result.getLong(1));
+                while (result.next()) candidates.add(new Candidate(result.getLong(1), result.getLong(2)));
             }
         }
-        if (ids.isEmpty()) return 0;
+        int changed = 0;
         try (PreparedStatement update = connection.prepareStatement(
                 "UPDATE ddc_ai_usage_feedback_t0 SET deleted_at = CURRENT_TIMESTAMP AT TIME ZONE 'UTC', "
-                        + "version = version + 1 WHERE tenant_id = ? AND deleted_at IS NULL AND id = ANY (?)")) {
-            update.setLong(1, fixture.tenantId());
-            update.setArray(2, connection.createArrayOf("bigint", ids.toArray()));
-            return update.executeUpdate();
+                        + "version = version + 1 WHERE tenant_id = ? AND id = ? AND version = ? AND deleted_at IS NULL AND occurred_at < ?")) {
+            for (Candidate candidate : candidates) {
+                update.setLong(1, fixture.tenantId());
+                update.setLong(2, candidate.id());
+                update.setLong(3, candidate.version());
+                update.setTimestamp(4, Timestamp.from(before));
+                changed += update.executeUpdate();
+            }
         }
+        return changed;
     }
+
+    private record Candidate(long id, long version) { }
 
     private static long countLive(Connection connection, Fixture fixture) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement(

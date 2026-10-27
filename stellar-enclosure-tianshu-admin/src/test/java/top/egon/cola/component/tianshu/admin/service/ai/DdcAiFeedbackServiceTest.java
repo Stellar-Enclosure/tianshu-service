@@ -40,7 +40,6 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -180,42 +179,45 @@ class DdcAiFeedbackServiceTest {
     }
 
     @Test
-    void completeJudgeWritesDoneAndIgnoresTakenOverSamples() {
-        AtomicReference<DdcAiUsageFeedbackBO> written = new AtomicReference<>();
-        when(feedbackRepository.update(any())).thenAnswer(invocation -> {
-            written.set(invocation.getArgument(0));
-            return Optional.of(invocation.getArgument(0));
+    void competingJudgeClaimsReturnOnlyTheSuccessfulVersionedWrite() throws Exception {
+        var barrier = new java.util.concurrent.CyclicBarrier(2);
+        var won = new java.util.concurrent.atomic.AtomicBoolean();
+        when(feedbackRepository.findClaimableForJudge(Set.of(7L), NOW, 3, 1)).thenAnswer(call -> {
+            barrier.await(5, java.util.concurrent.TimeUnit.SECONDS);
+            return List.of(sample(DdcAiJudgeStatePersistenceEnum.PENDING, 0));
         });
-        when(feedbackRepository.findActiveById(1L)).thenReturn(Optional.of(sample(DdcAiJudgeStatePersistenceEnum.JUDGING, 1)));
-
-        service.completeJudge(1L, 3L, new DdcAiJudgeVerdictDTO(66, "ok"));
-
-        assertThat(written.get().getJudgeState()).isEqualTo(DdcAiJudgeStatePersistenceEnum.DONE);
-        assertThat(written.get().getJudgeScore()).isEqualTo((short) 66);
-        assertThat(written.get().getJudgeLeaseUntil()).isNull();
-        assertThat(written.get().getJudgedAt()).isEqualTo(NOW);
-
-        written.set(null);
-        service.completeJudge(1L, 4L, new DdcAiJudgeVerdictDTO(66, "ok"));
-        assertThat(written.get()).isNull();
+        when(feedbackRepository.update(any())).thenAnswer(call -> {
+            DdcAiUsageFeedbackBO row = call.getArgument(0);
+            return won.compareAndSet(false, true) ? Optional.of(row.toBuilder().version(4L).build()) : Optional.empty();
+        });
+        try (var workers = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+            var first = workers.submit(() -> service.claimForJudge(Set.of(7L), 1));
+            var second = workers.submit(() -> service.claimForJudge(Set.of(7L), 1));
+            var results = java.util.stream.Stream.concat(first.get(10, java.util.concurrent.TimeUnit.SECONDS).stream(),
+                    second.get(10, java.util.concurrent.TimeUnit.SECONDS).stream()).toList();
+            assertThat(results).hasSize(1);
+            assertThat(results.getFirst().getVersion()).isEqualTo(4L);
+            assertThat(results.getFirst().getJudgeState()).isEqualTo(DdcAiJudgeStatePersistenceEnum.JUDGING);
+        }
     }
 
     @Test
-    void failJudgeReturnsToPendingUntilTheAttemptLimit() {
-        AtomicReference<DdcAiUsageFeedbackBO> written = new AtomicReference<>();
-        when(feedbackRepository.update(any())).thenAnswer(invocation -> {
-            written.set(invocation.getArgument(0));
-            return Optional.of(invocation.getArgument(0));
-        });
-        when(feedbackRepository.findActiveById(1L)).thenReturn(Optional.of(sample(DdcAiJudgeStatePersistenceEnum.JUDGING, 1)));
-        service.failJudge(1L, 3L, DdcAiRunErrorCodeEnum.MODEL_TIMEOUT);
-        assertThat(written.get().getJudgeState()).isEqualTo(DdcAiJudgeStatePersistenceEnum.PENDING);
-        assertThat(written.get().getJudgeError()).isEqualTo("MODEL_TIMEOUT");
-        assertThat(written.get().getJudgeLeaseUntil()).isNull();
+    void completeJudgeUsesClaimVersionWithoutReadingALaggingReplica() {
+        when(feedbackRepository.completeJudgeIfOwned(1L, 3L, (short) 66, NOW)).thenReturn(true);
+        service.completeJudge(1L, 3L, new DdcAiJudgeVerdictDTO(66, "ok"));
+        service.completeJudge(1L, 4L, new DdcAiJudgeVerdictDTO(66, "ok"));
+        verify(feedbackRepository).completeJudgeIfOwned(1L, 3L, (short) 66, NOW);
+        verify(feedbackRepository).completeJudgeIfOwned(1L, 4L, (short) 66, NOW);
+        verify(feedbackRepository, never()).findActiveById(1L);
+    }
 
-        when(feedbackRepository.findActiveById(1L)).thenReturn(Optional.of(sample(DdcAiJudgeStatePersistenceEnum.JUDGING, 3)));
-        service.failJudge(1L, 3L, DdcAiRunErrorCodeEnum.INVALID_OUTPUT);
-        assertThat(written.get().getJudgeState()).isEqualTo(DdcAiJudgeStatePersistenceEnum.FAILED);
+    @Test
+    void failJudgeUsesClaimVersionAndLetsThePrimaryCheckTheAttemptLimit() {
+        service.failJudge(1L, 3L, DdcAiRunErrorCodeEnum.MODEL_TIMEOUT);
+        service.failJudge(1L, 4L, DdcAiRunErrorCodeEnum.INVALID_OUTPUT);
+        verify(feedbackRepository).failJudgeIfOwned(1L, 3L, 3, "MODEL_TIMEOUT", NOW);
+        verify(feedbackRepository).failJudgeIfOwned(1L, 4L, 3, "INVALID_OUTPUT", NOW);
+        verify(feedbackRepository, never()).findActiveById(1L);
     }
 
     @Test

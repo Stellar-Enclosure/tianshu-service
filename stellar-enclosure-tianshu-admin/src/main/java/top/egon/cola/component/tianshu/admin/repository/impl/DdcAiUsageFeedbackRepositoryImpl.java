@@ -76,6 +76,23 @@ public class DdcAiUsageFeedbackRepositoryImpl extends EgonColaRepository<DdcAiUs
     }
 
     @Override
+    public boolean completeJudgeIfOwned(Long id, Long version, short score, Instant judgedAt) {
+        return mapper.completeJudgeIfOwned(judgeUpdate(id, version, judgedAt), score, judgedAt) == 1;
+    }
+
+    @Override
+    public boolean failJudgeIfOwned(Long id, Long version, int maxAttempts, String error, Instant updatedAt) {
+        return mapper.failJudgeIfOwned(judgeUpdate(id, version, updatedAt), maxAttempts, error) == 1;
+    }
+
+    private DdcAiUsageFeedbackPO judgeUpdate(Long id, Long version, Instant updatedAt) {
+        String actor = MDC.get(properties.getAudit().getUserIdMdcKey());
+        if (actor == null || actor.isBlank()) throw new IllegalStateException("AUDIT_USER_REQUIRED");
+        return DdcAiUsageFeedbackPO.builder().id(id).tenantId(tenantId()).version(version)
+                .updateUserId(actor).updateTime(updatedAt).build();
+    }
+
+    @Override
     public DdcAiScoreAggregateBO aggregate(Long resourceId, Long versionId, Instant windowStart, Instant windowEnd) {
         DdcAiScoreAggregatePO row = mapper.selectScoreAggregate(tenantId(), resourceId, versionId, windowStart, windowEnd);
         long samples = row == null || row.getSampleCount() == null ? 0L : row.getSampleCount();
@@ -120,7 +137,7 @@ public class DdcAiUsageFeedbackRepositoryImpl extends EgonColaRepository<DdcAiUs
         int changed = 0;
         for (Long id : ids) {
             DdcAiUsageFeedbackPO row = mapper.selectActiveById(tenantId, id);
-            if (row != null) {
+            if (row != null && row.getOccurredAt() != null && row.getOccurredAt().isBefore(before)) {
                 row.setUpdateUserId(actor).setUpdateTime(updateTime);
                 if (removeById(row)) changed++;
             }
