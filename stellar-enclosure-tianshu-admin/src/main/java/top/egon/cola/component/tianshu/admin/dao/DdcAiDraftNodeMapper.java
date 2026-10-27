@@ -60,6 +60,15 @@ public interface DdcAiDraftNodeMapper extends EgonColaMapper<DdcAiDraftNodePO> {
             @Positive(groups = EgonColaModelValidationGroups.Query.class) Long resourceId);
 
     @Validated(EgonColaModelValidationGroups.Query.class)
+    List<DdcAiDraftNodePO> selectTreeAtResourceVersion(
+            @Param("tenantId") @NotNull(groups = EgonColaModelValidationGroups.Query.class)
+            @Positive(groups = EgonColaModelValidationGroups.Query.class) Long tenantId,
+            @Param("resourceId") @NotNull(groups = EgonColaModelValidationGroups.Query.class)
+            @Positive(groups = EgonColaModelValidationGroups.Query.class) Long resourceId,
+            @Param("resourceVersion") @NotNull(groups = EgonColaModelValidationGroups.Query.class)
+            @jakarta.validation.constraints.PositiveOrZero(groups = EgonColaModelValidationGroups.Query.class) Long resourceVersion);
+
+    @Validated(EgonColaModelValidationGroups.Query.class)
     DdcAiDraftNodePO selectByResourceIdAndPath(
             @Param("tenantId") @NotNull(groups = EgonColaModelValidationGroups.Query.class)
             @Positive(groups = EgonColaModelValidationGroups.Query.class) Long tenantId,

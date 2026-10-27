@@ -519,6 +519,29 @@ class DdcAiPersistenceContractTest {
     }
 
     @Test
+    void draftTreeQueryMatchesTheObservedRootVersionAndPassesTheTenantGuard() throws Exception {
+        var configuration = aiMappers();
+        var statement = configuration.getMappedStatement(BASE + "dao.DdcAiDraftNodeMapper.selectTreeAtResourceVersion");
+        var parameters = Map.<String, Object>of("tenantId", 41L, "resourceId", 83L, "resourceVersion", 7L);
+        assertThat(mappedSql(configuration, statement.getId(), parameters))
+                .contains("n.tenant_id = ?", "n.resource_id = ?", "r.version = ?", "r.tenant_id = n.tenant_id")
+                .doesNotContain("for update", "for share");
+        var guard = new top.egon.cola.component.common.mybatis.interceptor.EgonColaTenantIdGuardInnerInterceptor(
+                () -> "system:test", new top.egon.cola.component.common.mybatis.autoconfigure.EgonColaMybatisPlusProperties());
+        new org.springframework.context.annotation.CommonAnnotationBeanPostProcessor()
+                .postProcessBeforeInitialization(guard, "sqlGuard");
+        org.slf4j.MDC.put("tenantId", "41");
+        try {
+            org.assertj.core.api.Assertions.assertThatCode(() -> guard.beforeQuery(
+                    org.mockito.Mockito.mock(org.apache.ibatis.executor.Executor.class), statement, parameters,
+                    org.apache.ibatis.session.RowBounds.DEFAULT, null, statement.getBoundSql(parameters)))
+                    .doesNotThrowAnyException();
+        } finally {
+            org.slf4j.MDC.remove("tenantId");
+        }
+    }
+
+    @Test
     void publicationIdempotencyLookupIsTenantGlobalAcrossResourceRoots() throws Exception {
         Configuration configuration = aiMappers();
         String statement = BASE + "dao.DdcAiPublicationMapper.selectByTenantRequestId";

@@ -950,7 +950,9 @@ public class DdcAiResourceServiceImpl implements DdcAiResourceService {
         DdcAiResourceBO resource = resourceRepository.findProjectedById(query.id())
                 .orElseThrow(DdcAiResourceServiceImpl::notFound);
         scopeValidator.assertCanRead(resource);
-        List<DdcAiDraftNodeBO> persistedNodes = draftNodeRepository.findActiveByResourceId(resource.getId());
+        List<DdcAiDraftNodeBO> persistedNodes = draftNodeRepository.findActiveByResourceVersion(
+                resource.getId(), resource.getVersion());
+        if (resource.getKind() == DdcAiKindEnum.SKILL && persistedNodes.isEmpty()) throw revisionConflict();
         PreparedContent prepared = preparePersistedDraft(resource, persistedNodes);
         return result(resource, prepared);
     }

@@ -22,6 +22,13 @@ public interface DdcAiDraftNodeRepository {
             @NotNull(groups = EgonColaModelValidationGroups.Query.class)
             @Positive(groups = EgonColaModelValidationGroups.Query.class) Long resourceId);
 
+    @Validated(EgonColaModelValidationGroups.Query.class)
+    List<DdcAiDraftNodeBO> findActiveByResourceVersion(
+            @NotNull(groups = EgonColaModelValidationGroups.Query.class)
+            @Positive(groups = EgonColaModelValidationGroups.Query.class) Long resourceId,
+            @NotNull(groups = EgonColaModelValidationGroups.Query.class)
+            @jakarta.validation.constraints.PositiveOrZero(groups = EgonColaModelValidationGroups.Query.class) Long resourceVersion);
+
     @Validated(EgonColaModelValidationGroups.Insert.class)
     DdcAiDraftNodeBO insert(
             @NotNull(groups = EgonColaModelValidationGroups.Insert.class)

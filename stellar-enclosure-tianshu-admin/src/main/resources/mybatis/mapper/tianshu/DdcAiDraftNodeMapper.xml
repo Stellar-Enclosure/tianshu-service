@@ -49,6 +49,12 @@
         ORDER BY n.path, n.id
     </select>
 
+    <select id="selectTreeAtResourceVersion" resultMap="DdcAiDraftNodePOResultMap">
+        SELECT <include refid="DraftNodeColumns"/><include refid="ActiveDraftOwner"/>
+          AND n.resource_id = #{resourceId} AND r.version = #{resourceVersion}
+        ORDER BY n.path, n.id
+    </select>
+
     <select id="selectByResourceIdAndPath" resultMap="DdcAiDraftNodePOResultMap">
         SELECT <include refid="DraftNodeColumns"/><include refid="ActiveDraftOwner"/>
           AND n.resource_id = #{resourceId} AND n.path = #{path}

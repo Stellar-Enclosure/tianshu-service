@@ -51,6 +51,12 @@ public class DdcAiDraftNodeRepositoryImpl extends EgonColaRepository<DdcAiDraftN
     }
 
     @Override
+    public List<DdcAiDraftNodeBO> findActiveByResourceVersion(Long resourceId, Long resourceVersion) {
+        return converter.toTargetList(mapper.selectTreeAtResourceVersion(
+                EgonColaTenantIdProvider.currentTenantId(), resourceId, resourceVersion));
+    }
+
+    @Override
     public DdcAiDraftNodeBO insert(DdcAiDraftNodeBO node) {
         DdcAiDraftNodePO persisted = converter.toSource(node);
         if (!save(persisted)) throw new IllegalStateException("AI_DRAFT_NODE_INSERT_FAILED");

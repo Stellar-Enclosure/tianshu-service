@@ -233,13 +233,13 @@ class DdcAiDraftServiceTest {
     }
 
     @Test
-    void getLocksTheTenantScopedRootBeforeReadingTheCompleteLiveTree() {
+    void getReadsTheTreeAtTheObservedResourceVersion() {
         executeTransactionCallbacksInline(readTransactionTemplate);
         DdcAiResourceBO resource = resource(RESOURCE_ID, 3L, DdcAiKindEnum.SKILL, null, 902L);
         DdcAiDraftNodeBO root = draftNode(91L, "", null, DdcAiNodeTypeEnum.DIRECTORY, null);
         DdcAiDraftNodeBO file = draftNode(92L, "SKILL.md", "", DdcAiNodeTypeEnum.FILE, "check\n");
         when(resourceRepository.findProjectedById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(draftNodeRepository.findActiveByResourceId(RESOURCE_ID)).thenReturn(List.of(root, file));
+        when(draftNodeRepository.findActiveByResourceVersion(RESOURCE_ID, 3L)).thenReturn(List.of(root, file));
         when(draftNodeConverter.toDTO(root)).thenReturn(node("", DdcAiNodeTypeEnum.DIRECTORY, null));
         when(draftNodeConverter.toDTO(file)).thenReturn(node("SKILL.md", DdcAiNodeTypeEnum.FILE, "check\n"));
         when(strategyRegistry.get(DdcAiKindEnum.SKILL)).thenReturn(skillStrategy);
@@ -258,7 +258,19 @@ class DdcAiDraftServiceTest {
         order.verify(resourceRepository).findProjectedById(RESOURCE_ID);
         verify(resourceRepository, never()).findActiveForShareById(any());
         order.verify(scopeValidator).assertCanRead(resource);
-        order.verify(draftNodeRepository).findActiveByResourceId(RESOURCE_ID);
+        order.verify(draftNodeRepository).findActiveByResourceVersion(RESOURCE_ID, 3L);
+    }
+
+    @Test
+    void skillDraftDoesNotReturnAnEmptyTreeWhenTheReplicaHasAnotherResourceVersion() {
+        executeTransactionCallbacksInline(readTransactionTemplate);
+        DdcAiResourceBO resource = resource(RESOURCE_ID, 3L, DdcAiKindEnum.SKILL, null, 902L);
+        when(resourceRepository.findProjectedById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(draftNodeRepository.findActiveByResourceVersion(RESOURCE_ID, 3L)).thenReturn(List.of());
+
+        assertThatThrownBy(() -> service.get(new DdcAiIdQuery(RESOURCE_ID)))
+                .isInstanceOf(CommonException.class).hasMessageContaining("Resource revision changed");
+        verifyNoInteractions(draftNodeConverter);
     }
 
     @Test
