@@ -47,6 +47,11 @@ import org.springframework.security.oauth2.core.OAuth2AccessToken;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE, properties = {
         "egon.cola.component.tianshu.enabled=true",
+        "egon.cola.component.tianshu.tenant-id=1001",
+        "egon.cola.component.mybatis-plus.enabled=false",
+        "egon.cola.component.cache.enabled=false",
+        "egon.cola.component.transactional-outbox.enabled=false",
+        "egon.cola.component.dtp.enabled=false",
         "egon.cola.component.tianshu.biz-code=demo-biz",
         "egon.cola.component.tianshu.app-code=demo-app",
         "egon.cola.component.tianshu.env=dev",
@@ -60,7 +65,8 @@ import org.springframework.security.oauth2.core.OAuth2AccessToken;
         "egon.cola.platform.tianquan.shoubing.resource-uri=https://api.example/tianshu",
         "egon.cola.platform.tianquan.shoubing.service-client.app-id=tianshu-app",
         "egon.cola.platform.tianquan.shoubing.service-client.registration-id=tianshu-registration",
-        "spring.autoconfigure.exclude=org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,"
+        "spring.autoconfigure.exclude=top.egon.cola.component.common.mybatis.autoconfigure.EgonColaShardingAutoConfiguration,"
+                + "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,"
                 + "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration,"
                 + "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration"
 })
@@ -102,12 +108,12 @@ class DdcStarterRuntimeFlowTest {
     @TestConfiguration(proxyBeanMethods = false)
     static class RuntimeTestConfiguration {
 
-        @Bean
+        @Bean("ddcConfigClient")
         RecordingDdcConfigClient recordingDdcConfigClient() {
             return new RecordingDdcConfigClient();
         }
 
-        @Bean
+        @Bean("idpServiceOAuth2Client")
         IdpServiceOAuth2Client serviceClient() {
             IdpServiceOAuth2Client client = mock(IdpServiceOAuth2Client.class);
             Instant issuedAt = Instant.now();
