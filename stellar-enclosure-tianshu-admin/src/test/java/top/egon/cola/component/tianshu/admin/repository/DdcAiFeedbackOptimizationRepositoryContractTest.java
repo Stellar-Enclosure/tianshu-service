@@ -101,7 +101,7 @@ class DdcAiFeedbackOptimizationRepositoryContractTest {
         assertThat(claim).contains("from ddc_ai_usage_feedback f", "f.tenant_id = ?", "f.explicit_score is null",
                 "f.judge_attempts < ?", "f.judge_state = 'judging' and f.judge_lease_until < ?")
                 .doesNotContain("_t0", "for update", "for share");
-        assertThat(evaluable).contains("p.active_run_id is null", "nulls first", "for update");
+        assertThat(evaluable).contains("p.active_run_id is null", "nulls first").doesNotContain("for update", "for share");
         assertThat(expired).contains("f.occurred_at < ?").doesNotContain("for update", "for share");
     }
 

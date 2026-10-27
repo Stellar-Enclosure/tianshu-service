@@ -143,6 +143,18 @@ class DdcAiOptimizationServiceTest {
     }
 
     @Test
+    void losingPolicyVersionRaceRollsBackTheNewRun() {
+        when(policyRepository.findEvaluableForUpdate(50)).thenReturn(List.of(policy(DdcAiPolicyStatePersistenceEnum.ARMED)));
+        when(feedbackService.aggregate(eq(7L), eq(99L), any(), eq(NOW))).thenReturn(aggregate(25, "71.50"));
+        org.mockito.Mockito.doReturn(Optional.empty()).when(policyRepository).update(any());
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.evaluateTenant(NOW))
+                .hasMessage("AI_OPTIMIZATION_POLICY_CAS_MISS");
+        verify(runRepository).insert(any());
+        verify(transactions.getTransactionManager()).rollback(null);
+    }
+
+    @Test
     void evaluateConvergesExhaustsCoolsDownOrWaitsForSamples() {
         when(feedbackService.aggregate(eq(7L), eq(99L), any(), eq(NOW))).thenReturn(aggregate(25, "85.00"));
         when(policyRepository.findEvaluableForUpdate(50)).thenReturn(List.of(policy(DdcAiPolicyStatePersistenceEnum.ARMED)));

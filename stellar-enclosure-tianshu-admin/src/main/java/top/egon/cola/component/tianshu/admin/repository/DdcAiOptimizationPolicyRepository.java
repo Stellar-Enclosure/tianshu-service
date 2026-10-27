@@ -30,7 +30,7 @@ public interface DdcAiOptimizationPolicyRepository {
     Optional<DdcAiOptimizationPolicyBO> findActiveByResourceIdForUpdate(
             @NotNull(groups = EgonColaModelValidationGroups.Query.class) @Positive(groups = EgonColaModelValidationGroups.Query.class) Long resourceId);
 
-    /** 须在事务内调用；跳过被其他实例锁定的行。 / Must run in a transaction; skips rows locked by other instances. */
+    /** 无锁读取候选；执行时由策略版本 CAS 决定竞争结果。 / Reads candidates without locks; policy-version CAS resolves races. */
     @Validated(EgonColaModelValidationGroups.Query.class)
     List<DdcAiOptimizationPolicyBO> findEvaluableForUpdate(
             @Min(value = 1, groups = EgonColaModelValidationGroups.Query.class) @Max(value = 500, groups = EgonColaModelValidationGroups.Query.class) int limit);

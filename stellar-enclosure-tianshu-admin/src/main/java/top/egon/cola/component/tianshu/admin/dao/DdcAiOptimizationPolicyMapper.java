@@ -60,7 +60,7 @@ public interface DdcAiOptimizationPolicyMapper extends EgonColaMapper<DdcAiOptim
             @Param("tenantId") @NotNull(groups = EgonColaModelValidationGroups.Query.class) @Positive(groups = EgonColaModelValidationGroups.Query.class) Long tenantId,
             @Param("resourceId") @NotNull(groups = EgonColaModelValidationGroups.Query.class) @Positive(groups = EgonColaModelValidationGroups.Query.class) Long resourceId);
 
-    /** 锁定可评估策略；须在事务内调用。 / Locks evaluable policies; must run inside a transaction. */
+    /** 无锁读取可评估策略候选。 / Reads evaluable policy candidates without locks. */
     @Validated(EgonColaModelValidationGroups.Query.class)
     List<DdcAiOptimizationPolicyPO> selectEvaluableForUpdate(
             @Param("tenantId") @NotNull(groups = EgonColaModelValidationGroups.Query.class) @Positive(groups = EgonColaModelValidationGroups.Query.class) Long tenantId,

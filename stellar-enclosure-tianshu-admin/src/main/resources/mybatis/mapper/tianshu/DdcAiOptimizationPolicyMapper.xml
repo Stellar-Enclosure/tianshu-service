@@ -82,7 +82,6 @@
           AND p.state IN ('ARMED', 'AWAITING_PUBLISH') AND p.active_run_id IS NULL
         ORDER BY p.last_evaluated_at ASC NULLS FIRST, p.id
         LIMIT #{limit}
-        FOR UPDATE
     </select>
 
     <select id="selectJudgeEnabledResourceIds" resultType="java.lang.Long">
