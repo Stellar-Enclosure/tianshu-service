@@ -20,6 +20,7 @@ import top.egon.cola.component.common.mybatis.sharding.bootstrap.EgonColaShardin
 import top.egon.cola.component.common.mybatis.sharding.strategy.EgonColaShardingStrategyFactory;
 import top.egon.cola.component.common.mybatis.sharding.strategy.EgonColaSingleTableShardingStrategy;
 import top.egon.cola.component.common.mybatis.sharding.strategy.EgonColaStandardTenantIdShardingStrategy;
+import top.egon.cola.component.outbox.autoconfigure.OutboxMpStorageProperties;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -42,6 +43,36 @@ class DdcI18nUpgradeCliTest {
                 new String[]{"upgrade-i18n", "--target-config", "/a.yml", "--target-config", "/b.yml"})) {
             assertThatThrownBy(() -> DdcPersistenceMigrationCli.parseMode(invalid)).isInstanceOf(IllegalArgumentException.class);
         }
+    }
+
+    @Test void outboxUpgradeRequiresAProtectedSingleTargetAndUnchangedLocalTopology() throws Exception {
+        assertThat(DdcPersistenceMigrationCli.parseMode(new String[]{"upgrade-outbox", "--target-config", "/private/config.yml"}))
+                .isEqualTo(DdcPersistenceMigrationCli.Mode.UPGRADE_OUTBOX);
+        for (String[] invalid : List.of(new String[]{"upgrade-outbox"},
+                new String[]{"upgrade-outbox", "--target-config", "relative.yml"},
+                new String[]{"upgrade-outbox", "--target-config", "/a.yml", "--source-config", "/b.yml"})) {
+            assertThatThrownBy(() -> DdcPersistenceMigrationCli.parseMode(invalid)).isInstanceOf(IllegalArgumentException.class);
+        }
+        Path config = temporary.resolve("outbox-target.yml");
+        Files.writeString(config, "test: fixture\n");
+        Files.setPosixFilePermissions(config, PosixFilePermissions.fromString("rw-r--r--"));
+        assertThatThrownBy(() -> DdcPersistenceMigrationCli.main(new String[]{"upgrade-outbox", "--target-config", config.toString()}))
+                .hasMessageContaining("FILE_PERMISSIONS_UNSAFE");
+
+        var valid = bind(environment());
+        var storage = new OutboxMpStorageProperties();
+        assertThatCode(() -> DdcPersistenceMigrationCli.requireOutboxUpgradeTopology(valid, storage)).doesNotThrowAnyException();
+        var distributed = bind(environment()).setTransactionDefaultType("XA");
+        var readwrite = bind(environment()).setMode(EgonColaShardingProperties.ModeEnum.SHARDING_READWRITE);
+        var multiple = bind(environment());
+        multiple.setDataSources(List.of(valid.getDataSources().getFirst(), valid.getDataSources().getFirst()));
+        for (var invalid : List.of(distributed, readwrite, multiple)) {
+            assertThatThrownBy(() -> DdcPersistenceMigrationCli.requireOutboxUpgradeTopology(invalid, storage))
+                    .hasMessageContaining("UNCHANGED_TOPOLOGY_REQUIRED");
+        }
+        storage.setPreviousRouteFingerprints(List.of("a".repeat(64)));
+        assertThatThrownBy(() -> DdcPersistenceMigrationCli.requireOutboxUpgradeTopology(valid, storage))
+                .hasMessageContaining("UNCHANGED_TOPOLOGY_REQUIRED");
     }
 
     @Test void rejectsUnprotectedAndSymlinkTargetsBeforeReadingConfigurationOrConnecting() throws Exception {

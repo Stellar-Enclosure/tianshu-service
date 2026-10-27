@@ -247,7 +247,7 @@ class DdcTianshuDdlContractTest {
 
         JsonNode manifest = OBJECT_MAPPER.readTree(requiredResource(OUTBOX_MANIFEST));
         assertThat(manifest.path("family").asText()).isEqualTo("component-outbox");
-        assertThat(manifest.path("scripts").size()).isEqualTo(1);
+        assertThat(manifest.path("scripts").size()).isEqualTo(2);
         JsonNode script = manifest.path("scripts").get(0);
         assertThat(script.path("version").asText()).isEqualTo("20260924_001");
         String path = script.path("path").asText();
@@ -257,6 +257,13 @@ class DdcTianshuDdlContractTest {
         assertThat(script.path("sha256").asText()).isEqualTo(sha256(sqlBytes));
         assertThat(sql).contains("create table egon_cola_outbox_message", "create table ddl_history")
                 .contains("ck_outbox_technical_tenant", "ck_outbox_not_soft_deleted", "ck_outbox_version");
+        JsonNode shardScript = manifest.path("scripts").get(1);
+        assertThat(shardScript.path("version").asText()).isEqualTo("20261027_001");
+        assertThat(shardScript.path("path").asText()).isEqualTo("db/egon-outbox-mp/V20261027_001__add_outbox_shard_slot.sql");
+        byte[] shardSql = requiredResource(shardScript.path("path").asText());
+        assertThat(shardScript.path("sha256").asText()).isEqualTo(sha256(shardSql));
+        assertThat(new String(shardSql, java.nio.charset.StandardCharsets.UTF_8).toLowerCase(java.util.Locale.ROOT))
+                .contains("add column shard_slot", "ck_outbox_message_shard_identity", "ck_outbox_key_shard_identity");
     }
 
     @Test

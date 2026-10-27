@@ -69,7 +69,9 @@ public final class DdcPersistenceMigrationCli {
 
     public static void main(String[] args) throws IOException {
         DdcMigrationCliCommand command = parseInvocation(args);
-        if (command.mode() == Mode.UPGRADE_I18N) validateProtectedFile(command.targetConfig(), "target-config");
+        if (command.mode() == Mode.UPGRADE_I18N || command.mode() == Mode.UPGRADE_OUTBOX) {
+            validateProtectedFile(command.targetConfig(), "target-config");
+        }
         if (command.sourceConfig() == null) {
             execute(command.mode(), loadEnvironment(command.targetConfig()));
             return;
@@ -87,17 +89,18 @@ public final class DdcPersistenceMigrationCli {
             case "validate" -> Mode.VALIDATE;
             case "initialize" -> Mode.INITIALIZE;
             case "upgrade-i18n" -> Mode.UPGRADE_I18N;
+            case "upgrade-outbox" -> Mode.UPGRADE_OUTBOX;
             case "import" -> Mode.IMPORT;
             case "verify" -> Mode.VERIFY;
             default -> throw usageFailure();
         };
         if (args.length == 1) {
-            if (mode == Mode.IMPORT || mode == Mode.VERIFY || mode == Mode.UPGRADE_I18N) throw usageFailure();
+            if (mode == Mode.IMPORT || mode == Mode.VERIFY || mode == Mode.UPGRADE_I18N || mode == Mode.UPGRADE_OUTBOX) throw usageFailure();
             return new DdcMigrationCliCommand(mode, null, null, null, null);
         }
 
         Map<String, Path> options = parseOptions(args);
-        if (mode == Mode.INITIALIZE || mode == Mode.UPGRADE_I18N || (mode == Mode.VALIDATE && options.size() == 1
+        if (mode == Mode.INITIALIZE || mode == Mode.UPGRADE_I18N || mode == Mode.UPGRADE_OUTBOX || (mode == Mode.VALIDATE && options.size() == 1
                 && options.containsKey("--target-config"))) {
             if (options.size() != 1 || !options.containsKey("--target-config")) throw usageFailure();
             return new DdcMigrationCliCommand(mode, null, options.get("--target-config"), null, null);
@@ -151,6 +154,7 @@ public final class DdcPersistenceMigrationCli {
             validationUtils.validate(shardingProperties);
             validationUtils.validate(mybatisProperties);
             validationUtils.validate(storageProperties);
+            if (mode == Mode.UPGRADE_OUTBOX) requireOutboxUpgradeTopology(shardingProperties, storageProperties);
 
             ResourcePatternResolver resources = new PathMatchingResourcePatternResolver();
             ObjectMapper objectMapper = Jackson2ObjectMapperBuilder.json().build();
@@ -179,6 +183,15 @@ public final class DdcPersistenceMigrationCli {
             EgonColaPhysicalDataSourceFactory physicalFactory = new EgonColaPhysicalDataSourceFactory();
             Map<String, DataSource> physicalSources = physicalFactory.create(shardingProperties);
             try {
+                if (mode == Mode.UPGRADE_OUTBOX) {
+                    var outbox = new OutboxManagedDdlInitializer(ddlRunner, topologyValidator, validationUtils,
+                            shardingProperties, storageProperties.setAutoInitializeDdl(true), objectMapper);
+                    outbox.initialize(physicalSources, yaml);
+                    new OutboxSchemaMetadataValidator(outbox, topology.fingerprint(), storageProperties,
+                            objectMapper, validationUtils).validate();
+                    log.info("Tianshu Outbox schema upgrade completed: routeFingerprint={}", topology.fingerprint());
+                    return topology.fingerprint();
+                }
                 if (mode == Mode.UPGRADE_I18N) {
                     EgonColaDdlManifestBO outboxManifest = loadManifest(resources, objectMapper, validationUtils,
                             OUTBOX_MANIFEST_RESOURCE, "component-outbox");
@@ -237,6 +250,16 @@ public final class DdcPersistenceMigrationCli {
             } finally {
                 physicalFactory.close(physicalSources.values());
             }
+        }
+    }
+
+    static void requireOutboxUpgradeTopology(EgonColaShardingProperties sharding, OutboxMpStorageProperties storage) {
+        if (sharding.getMode() != EgonColaShardingProperties.ModeEnum.SHARDING
+                || !"LOCAL".equals(sharding.getTransactionDefaultType())
+                || sharding.getDataSources().size() != 1
+                || sharding.getDataSources().getFirst().role() != EgonColaShardingProperties.DataSourceRoleEnum.PRIMARY
+                || !storage.getPreviousRouteFingerprints().isEmpty()) {
+            throw new IllegalStateException("TIANSHU_OUTBOX_UPGRADE_SINGLE_UNCHANGED_TOPOLOGY_REQUIRED");
         }
     }
 
@@ -355,7 +378,7 @@ public final class DdcPersistenceMigrationCli {
                                     tableStrategy, SnowflakeIdGenerator::nextLongId, Clock.systemUTC(), reportDirectory);
                             case VERIFY -> importService.verifyDatabase(
                                     sourceConnection, targetConnection, mapping, targetRouteFingerprint, tableStrategy);
-                            case INITIALIZE, UPGRADE_I18N -> throw usageFailure();
+                            case INITIALIZE, UPGRADE_I18N, UPGRADE_OUTBOX -> throw usageFailure();
                         };
                     }
                 }
@@ -583,7 +606,7 @@ public final class DdcPersistenceMigrationCli {
     }
 
     private static IllegalArgumentException usageFailure() {
-        return new IllegalArgumentException("USAGE: DdcPersistenceMigrationCli <validate|initialize|upgrade-i18n|import|verify> "
+        return new IllegalArgumentException("USAGE: DdcPersistenceMigrationCli <validate|initialize|upgrade-i18n|upgrade-outbox|import|verify> "
                 + "[--source-config <file> --target-config <file> --mapping <file> --report-dir <directory>]");
     }
 
@@ -591,6 +614,7 @@ public final class DdcPersistenceMigrationCli {
         VALIDATE,
         INITIALIZE,
         UPGRADE_I18N,
+        UPGRADE_OUTBOX,
         IMPORT,
         VERIFY
     }

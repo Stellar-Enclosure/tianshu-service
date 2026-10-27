@@ -27,6 +27,8 @@ Permission Manifest 的来源版本、资源和权限展示索引、导入回执
 
 旧 `upgrade-i18n` 仅适用于截至 `20261022_001` 的历史单表升级。新增 Permission 结构不得通过旧入口绕过新表或 route fingerprint 校验。Tianshu 的 `public.ddl_history` 和 Outbox 技术 schema 的 history 分别管理，均核验完整 topology。
 
+已有 Tianshu 库只需要升级组件 Outbox 结构时，可在停止所有生产者和 worker 后，使用受保护的绝对路径目标配置运行 `DdcPersistenceMigrationCli upgrade-outbox --target-config /secure/tianshu-target.yml`。该入口只执行组件 Outbox manifest 并校验 Outbox 结构，不执行 Tianshu 业务表迁移；要求目标是现有单主库 `SHARDING`/`LOCAL` 拓扑且不接受 `previous-route-fingerprints`，历史指纹或 checksum 不符时失败。新版本增加 `shard_slot` 和标识归属约束；升级前应核查历史消息是否占用不匹配的保留前缀。旧 SQL 和历史消息不会被自动改写。完成升级并通过 `validate` 后再恢复服务。此入口不迁移业务分片、不提供强一致主库业务读；切换多主从组仍需另行规划数据和路由迁移。
+
 应用只读就绪检查覆盖表、列、具名约束及复合 FK、索引、函数原文和已启用触发器。应用启动不创建表或修复 schema；缺少结构时拒绝就绪。
 
 首次注册前的 B0 显式准备 IdP 机器身份/Resource Grant、RBAC catalogScope/producer、本地 biz/env/app/namespace/binding 和 exact source-import grant。默认仅授予 RBAC Outbox publisher。B0 不依赖尚未产生的管理权限，也不是服务启动副作用。注册、来源确认和激活后，B1 才为管理员赋予明确权限字符。
