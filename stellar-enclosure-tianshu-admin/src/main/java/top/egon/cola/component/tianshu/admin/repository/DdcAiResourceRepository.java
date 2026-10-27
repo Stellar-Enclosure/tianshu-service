@@ -29,6 +29,11 @@ public interface DdcAiResourceRepository {
             @Positive(groups = EgonColaModelValidationGroups.Query.class) Long id);
 
     @Validated(EgonColaModelValidationGroups.Query.class)
+    Optional<DdcAiResourceBO> findProjectedById(
+            @NotNull(groups = EgonColaModelValidationGroups.Query.class)
+            @Positive(groups = EgonColaModelValidationGroups.Query.class) Long id);
+
+    @Validated(EgonColaModelValidationGroups.Query.class)
     Optional<DdcAiResourceBO> findActiveForShareById(
             @NotNull(groups = EgonColaModelValidationGroups.Query.class)
             @Positive(groups = EgonColaModelValidationGroups.Query.class) Long id);

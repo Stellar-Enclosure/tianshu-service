@@ -56,6 +56,12 @@ public class DdcAiResourceRepositoryImpl extends EgonColaRepository<DdcAiResourc
     }
 
     @Override
+    public Optional<DdcAiResourceBO> findProjectedById(Long id) {
+        return Optional.ofNullable(mapper.selectProjectedById(EgonColaTenantIdProvider.currentTenantId(), id))
+                .map(converter::toTarget);
+    }
+
+    @Override
     public Optional<DdcAiResourceBO> findActiveForShareById(Long id) {
         return Optional.ofNullable(mapper.selectActiveForShareById(EgonColaTenantIdProvider.currentTenantId(), id))
                 .map(converter::toTarget);

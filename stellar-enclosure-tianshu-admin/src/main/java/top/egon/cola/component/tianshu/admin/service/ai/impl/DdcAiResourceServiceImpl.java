@@ -606,7 +606,7 @@ public class DdcAiResourceServiceImpl implements DdcAiResourceService {
     }
 
     private DdcAiResourceBO readableResource(Long resourceId) {
-        DdcAiResourceBO resource = resourceRepository.findActiveForShareById(resourceId)
+        DdcAiResourceBO resource = resourceRepository.findProjectedById(resourceId)
                 .orElseThrow(DdcAiResourceServiceImpl::notFound);
         scopeValidator.assertCanRead(resource);
         return resource;
@@ -947,7 +947,7 @@ public class DdcAiResourceServiceImpl implements DdcAiResourceService {
     }
 
     private DdcAiResourceResult getInTransaction(DdcAiIdQuery query) {
-        DdcAiResourceBO resource = resourceRepository.findActiveForShareById(query.id())
+        DdcAiResourceBO resource = resourceRepository.findProjectedById(query.id())
                 .orElseThrow(DdcAiResourceServiceImpl::notFound);
         scopeValidator.assertCanRead(resource);
         List<DdcAiDraftNodeBO> persistedNodes = draftNodeRepository.findActiveByResourceId(resource.getId());

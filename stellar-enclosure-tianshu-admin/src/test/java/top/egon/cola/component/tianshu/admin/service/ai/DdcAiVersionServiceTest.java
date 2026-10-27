@@ -342,7 +342,7 @@ class DdcAiVersionServiceTest {
             when(skillStrategy.kind()).thenReturn(DdcAiKindEnum.SKILL);
             when(skillStrategy.prepare(any(DdcAiContentDTO.class))).thenReturn(prepared);
         }
-        when(resourceRepository.findActiveForShareById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(resourceRepository.findProjectedById(RESOURCE_ID)).thenReturn(Optional.of(resource));
         when(versionRepository.findByResourceIdAndVersionNo(RESOURCE_ID, 4L)).thenReturn(Optional.of(version));
         when(versionNodeRepository.findTreeByVersionId(VERSION_ID)).thenReturn(persistedNodes);
         when(contentStrategyRegistry.get(DdcAiKindEnum.SKILL)).thenReturn(skillStrategy);
@@ -368,7 +368,7 @@ class DdcAiVersionServiceTest {
         DdcAiVersionBO fixed = promptVersion(820003L, 3L);
         DdcAiVersionSummaryDTO currentSummary = promptSummary(current);
         DdcAiVersionSummaryDTO fixedSummary = promptSummary(fixed);
-        when(resourceRepository.findActiveForShareById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(resourceRepository.findProjectedById(RESOURCE_ID)).thenReturn(Optional.of(resource));
         when(versionRepository.findByResourceIdAndVersionNo(RESOURCE_ID, 4L)).thenReturn(Optional.of(current));
         when(versionRepository.findByResourceIdAndVersionNo(RESOURCE_ID, 3L)).thenReturn(Optional.of(fixed));
         when(versionNodeRepository.findTreeByVersionId(820004L)).thenReturn(List.of());
@@ -390,7 +390,7 @@ class DdcAiVersionServiceTest {
         assertThat(fixedResult.getVersion()).isSameAs(fixedSummary);
         assertThat(currentResult.getContent().getPromptText()).isEqualTo(PROMPT);
         assertThat(fixedResult.getContent().getPromptText()).isEqualTo(PROMPT);
-        verify(resourceRepository, times(2)).findActiveForShareById(RESOURCE_ID);
+        verify(resourceRepository, times(2)).findProjectedById(RESOURCE_ID);
         verify(scopeValidator, times(2)).assertCanRead(resource);
         verify(versionRepository).findByResourceIdAndVersionNo(RESOURCE_ID, 4L);
         verify(versionRepository).findByResourceIdAndVersionNo(RESOURCE_ID, 3L);
@@ -402,7 +402,7 @@ class DdcAiVersionServiceTest {
     void getPublishedVersionRejectsAKeyOrKindThatDoesNotMatchTheStableRoot() {
         executeTransactionCallbacksInline(readTransactionTemplate);
         DdcAiResourceBO resource = resource(RESOURCE_ID, 9L).setKind(DdcAiKindEnum.PROMPT);
-        when(resourceRepository.findActiveForShareById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(resourceRepository.findProjectedById(RESOURCE_ID)).thenReturn(Optional.of(resource));
 
         assertThatThrownBy(() -> service.getPublishedVersion(
                 new DdcAiResourceQuery(SCOPE.namespaceCode(), "different-key", null, RESOURCE_ID),
@@ -421,7 +421,7 @@ class DdcAiVersionServiceTest {
         executeTransactionCallbacksInline(readTransactionTemplate);
         DdcAiResourceBO resource = resource(RESOURCE_ID, 9L)
                 .setCurrentVersionId(null).setCurrentVersionNo(null);
-        when(resourceRepository.findActiveForShareById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(resourceRepository.findProjectedById(RESOURCE_ID)).thenReturn(Optional.of(resource));
 
         assertThatThrownBy(() -> service.getPublishedVersion(
                 new DdcAiResourceQuery(SCOPE.namespaceCode(), "review-order", null, RESOURCE_ID),
@@ -518,7 +518,7 @@ class DdcAiVersionServiceTest {
                 .createdAt(CREATED_AT).build();
         DdcAiVersionPageQuery query = DdcAiVersionPageQuery.builder()
                 .resourceId(RESOURCE_ID).pageNo(2).pageSize(10).build();
-        when(resourceRepository.findActiveForShareById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(resourceRepository.findProjectedById(RESOURCE_ID)).thenReturn(Optional.of(resource));
         when(versionRepository.pageByResourceId(RESOURCE_ID, new PageQuery(2, 10))).thenReturn(
                 DdcPageResult.<DdcAiVersionBO>builder().records(List.of(version)).total(11L)
                         .pageNo(2).pageSize(10).build());
@@ -546,7 +546,7 @@ class DdcAiVersionServiceTest {
                 .targetCreated(false).createdAt(CREATED_AT).build();
         DdcAiPublicationPageQuery query = DdcAiPublicationPageQuery.builder()
                 .resourceId(RESOURCE_ID).pageNo(1).pageSize(20).build();
-        when(resourceRepository.findActiveForShareById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(resourceRepository.findProjectedById(RESOURCE_ID)).thenReturn(Optional.of(resource));
         when(publicationRepository.pageByResourceId(RESOURCE_ID, null, new PageQuery(1, 20))).thenReturn(
                 DdcPageResult.<DdcAiPublicationBO>builder().records(List.of(publication)).total(1L)
                         .pageNo(1).pageSize(20).build());
@@ -563,8 +563,8 @@ class DdcAiVersionServiceTest {
         executeTransactionCallbacksInline(readTransactionTemplate);
         DdcAiResourceBO published = resource(RESOURCE_ID, 9L).setCurrentVersionId(820004L).setCurrentVersionNo(4L);
         DdcAiResourceBO unpublished = resource(RESOURCE_ID + 1, 2L).setCurrentVersionId(null).setCurrentVersionNo(null);
-        when(resourceRepository.findActiveForShareById(RESOURCE_ID)).thenReturn(Optional.of(published));
-        when(resourceRepository.findActiveForShareById(RESOURCE_ID + 1)).thenReturn(Optional.of(unpublished));
+        when(resourceRepository.findProjectedById(RESOURCE_ID)).thenReturn(Optional.of(published));
+        when(resourceRepository.findProjectedById(RESOURCE_ID + 1)).thenReturn(Optional.of(unpublished));
         when(versionRepository.findActiveById(820004L)).thenReturn(Optional.of(promptVersion(820004L, 4L)));
 
         DdcAiVersionHeadResult head = service.getVersionHead(

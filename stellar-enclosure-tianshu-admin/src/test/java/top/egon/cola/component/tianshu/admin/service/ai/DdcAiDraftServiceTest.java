@@ -238,7 +238,7 @@ class DdcAiDraftServiceTest {
         DdcAiResourceBO resource = resource(RESOURCE_ID, 3L, DdcAiKindEnum.SKILL, null, 902L);
         DdcAiDraftNodeBO root = draftNode(91L, "", null, DdcAiNodeTypeEnum.DIRECTORY, null);
         DdcAiDraftNodeBO file = draftNode(92L, "SKILL.md", "", DdcAiNodeTypeEnum.FILE, "check\n");
-        when(resourceRepository.findActiveForShareById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(resourceRepository.findProjectedById(RESOURCE_ID)).thenReturn(Optional.of(resource));
         when(draftNodeRepository.findActiveByResourceId(RESOURCE_ID)).thenReturn(List.of(root, file));
         when(draftNodeConverter.toDTO(root)).thenReturn(node("", DdcAiNodeTypeEnum.DIRECTORY, null));
         when(draftNodeConverter.toDTO(file)).thenReturn(node("SKILL.md", DdcAiNodeTypeEnum.FILE, "check\n"));
@@ -255,7 +255,8 @@ class DdcAiDraftServiceTest {
                 .containsExactly("", "SKILL.md");
         assertThat(result.getDraft().getNodes().getLast().getContent()).isEqualTo("check\n");
         InOrder order = inOrder(resourceRepository, scopeValidator, draftNodeRepository);
-        order.verify(resourceRepository).findActiveForShareById(RESOURCE_ID);
+        order.verify(resourceRepository).findProjectedById(RESOURCE_ID);
+        verify(resourceRepository, never()).findActiveForShareById(any());
         order.verify(scopeValidator).assertCanRead(resource);
         order.verify(draftNodeRepository).findActiveByResourceId(RESOURCE_ID);
     }

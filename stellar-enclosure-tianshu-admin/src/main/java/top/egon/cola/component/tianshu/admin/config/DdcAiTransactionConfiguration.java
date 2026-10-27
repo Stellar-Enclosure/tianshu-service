@@ -20,7 +20,6 @@ public class DdcAiTransactionConfiguration {
     @Bean("ddcAiReadTransactionTemplate")
     public TransactionTemplate ddcAiReadTransactionTemplate(
             @Qualifier("transactionManager") PlatformTransactionManager transactionManager) {
-        // API-003 takes a root FOR SHARE lock; PostgreSQL rejects that lock in a JDBC READ ONLY transaction.
         TransactionTemplate template = new TransactionTemplate(transactionManager);
         template.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
         template.setTimeout(8);

@@ -466,6 +466,10 @@ class DdcAiPersistenceContractTest {
         assertThat(lockSql).contains("from ddc_ai_resource r", "r.tenant_id = ?", "r.id = ?",
                 "r.deleted_at is null", "n.deleted_at is null", "cv.deleted_at is null", "for share of r");
         assertThat(lockSql).doesNotContain("for update");
+        String replicaSql = mappedSql(configuration, mapper + "selectProjectedById",
+                Map.of("tenantId", 41L, "id", 83L));
+        assertThat(replicaSql).isEqualTo(lockSql.replace(" for share of r", ""))
+                .doesNotContain("for update", "for share");
         assertThat(configuration.getMappedStatement(mapper + "selectActiveForShareById").getTimeout()).isEqualTo(2);
         assertThat(configuration.getMappedStatement(mapper + "selectForUpdateById").getTimeout()).isEqualTo(2);
 
@@ -492,6 +496,26 @@ class DdcAiPersistenceContractTest {
         assertThat(configuration.getResultMap(mapper + "DdcAiResourcePOResultMap").getResultMappings())
                 .extracting(org.apache.ibatis.mapping.ResultMapping::getProperty)
                 .contains("namespaceCode", "currentVersionNo");
+    }
+
+    @Test
+    void unlockedResourceProjectionPassesTheActualTenantGuard() throws Exception {
+        var configuration = aiMappers();
+        var statement = configuration.getMappedStatement(BASE + "dao.DdcAiResourceMapper.selectProjectedById");
+        var parameters = Map.<String, Object>of("tenantId", 41L, "id", 83L);
+        var guard = new top.egon.cola.component.common.mybatis.interceptor.EgonColaTenantIdGuardInnerInterceptor(
+                () -> "system:test", new top.egon.cola.component.common.mybatis.autoconfigure.EgonColaMybatisPlusProperties());
+        new org.springframework.context.annotation.CommonAnnotationBeanPostProcessor()
+                .postProcessBeforeInitialization(guard, "sqlGuard");
+        org.slf4j.MDC.put("tenantId", "41");
+        try {
+            org.assertj.core.api.Assertions.assertThatCode(() -> guard.beforeQuery(
+                    org.mockito.Mockito.mock(org.apache.ibatis.executor.Executor.class), statement, parameters,
+                    org.apache.ibatis.session.RowBounds.DEFAULT, null, statement.getBoundSql(parameters)))
+                    .doesNotThrowAnyException();
+        } finally {
+            org.slf4j.MDC.remove("tenantId");
+        }
     }
 
     @Test
