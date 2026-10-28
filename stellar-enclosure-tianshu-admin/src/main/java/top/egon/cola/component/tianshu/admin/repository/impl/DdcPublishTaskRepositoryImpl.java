@@ -15,6 +15,7 @@ import top.egon.cola.component.common.mybatis.model.EgonColaIdentifierGenerator;
 import top.egon.cola.component.tianshu.admin.common.DdcAdminException;
 import top.egon.cola.component.tianshu.admin.dao.DdcPublishTaskMapper;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishTaskBO;
+import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishAckSummaryBO;
 import top.egon.cola.component.tianshu.admin.model.convertor.DdcPublishTaskConverter;
 import top.egon.cola.component.tianshu.admin.model.po.DdcPublishTaskPO;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcPageResult;
@@ -57,6 +58,10 @@ public class DdcPublishTaskRepositoryImpl extends EgonColaRepository<DdcPublishT
     @Override public boolean fenceObservedVersion(DdcPublishTaskBO task) {
         return mapper.fenceObservedVersion(tenantId(), task.getId(), task.getVersion(), actor(),
                 java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS)) == 1;
+    }
+    @Override public int updateAckSummary(DdcPublishTaskBO task, DdcPublishAckSummaryBO summary, LocalDateTime updatedAt) {
+        return mapper.updateAckSummary(tenantId(), task, summary, updatedAt, actor(),
+                java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS));
     }
     @Override public List<DdcPublishTaskBO> findAll() {
         return converter.toTargetList(mapper.selectAll(tenantId()));

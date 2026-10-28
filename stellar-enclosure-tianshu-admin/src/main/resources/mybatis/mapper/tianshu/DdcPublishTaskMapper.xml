@@ -74,6 +74,33 @@
         UPDATE ddc_publish_task SET version = version + 1, update_user_id = #{actor}, update_time = #{now}
         WHERE tenant_id = #{tenantId} AND id = #{id} AND version = #{expectedVersion} AND deleted_at IS NULL
     </update>
+    <update id="updateAckSummary">
+        UPDATE ddc_publish_task t
+        SET ack_count = #{summary.success}, failed_count = #{summary.failed},
+            ignored_count = #{summary.ignored}, timeout_count = #{summary.timeout},
+            <if test="summary.terminalStatus != null">
+                status = #{summary.terminalStatus}, completed_at = #{updatedAt},
+                failure_stage = #{summary.failureStage}, error_message = #{summary.errorMessage},
+            </if>
+            updated_at = #{updatedAt}, version = t.version + 1, update_user_id = #{actor}, update_time = #{now}
+        WHERE t.tenant_id = #{tenantId} AND t.id = #{task.id} AND t.change_id = #{task.changeId}
+          AND t.version = #{task.version} AND t.status = #{task.status} AND t.deleted_at IS NULL
+          AND (SELECT count(*) FROM ddc_publish_ack a WHERE a.tenant_id = #{tenantId} AND a.change_id = #{task.changeId} AND a.deleted_at IS NULL) = #{summary.total}
+          AND (SELECT count(*) FROM ddc_publish_ack a WHERE a.tenant_id = #{tenantId} AND a.change_id = #{task.changeId} AND a.ack_status = 'SUCCESS' AND a.deleted_at IS NULL) = #{summary.success}
+          AND (SELECT count(*) FROM ddc_publish_ack a WHERE a.tenant_id = #{tenantId} AND a.change_id = #{task.changeId} AND a.ack_status = 'FAILED' AND a.deleted_at IS NULL) = #{summary.failed}
+          AND (SELECT count(*) FROM ddc_publish_ack a WHERE a.tenant_id = #{tenantId} AND a.change_id = #{task.changeId} AND a.ack_status = 'IGNORED' AND a.deleted_at IS NULL) = #{summary.ignored}
+          AND (SELECT count(*) FROM ddc_publish_ack a WHERE a.tenant_id = #{tenantId} AND a.change_id = #{task.changeId} AND a.ack_status = 'TIMEOUT' AND a.deleted_at IS NULL) = #{summary.timeout}
+        <choose>
+            <when test="summary.publicationCheck == 'PUBLISHED'">
+                AND EXISTS (SELECT 1 FROM ddc_config_item ci WHERE ci.tenant_id = #{tenantId}
+                    AND ci.id = #{task.configItemId} AND ci.published_version = #{task.targetVersion} AND ci.deleted_at IS NULL)
+            </when>
+            <when test="summary.publicationCheck == 'UNPUBLISHED'">
+                AND NOT EXISTS (SELECT 1 FROM ddc_config_item ci WHERE ci.tenant_id = #{tenantId}
+                    AND ci.id = #{task.configItemId} AND ci.published_version = #{task.targetVersion} AND ci.deleted_at IS NULL)
+            </when>
+        </choose>
+    </update>
     <select id="selectAll" resultMap="DdcPublishTaskPOResultMap">
         SELECT <include refid="Columns"/> <include refid="TaskJoin"/>
         WHERE t.tenant_id = #{tenantId} AND t.deleted_at IS NULL ORDER BY t.id

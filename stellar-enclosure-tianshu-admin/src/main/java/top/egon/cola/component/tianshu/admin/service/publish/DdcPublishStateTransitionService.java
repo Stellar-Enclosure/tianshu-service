@@ -7,6 +7,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishAckBO;
+import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishAckSummaryBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishTaskBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcConfigItemBO;
 import top.egon.cola.component.tianshu.admin.model.enums.PublishStatus;
@@ -20,6 +21,8 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.Objects;
 import java.util.Set;
 
 @Service("ddcPublishStateTransitionService")
@@ -132,6 +135,52 @@ public class DdcPublishStateTransitionService {
             signalAfterCommit(changeId);
         }
         return requiredTask(changeId);
+    }
+
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+    public DdcPublishTaskBO refreshAfterAck(DdcPublishTaskBO task, DdcPublishAckBO acknowledged) {
+        List<DdcPublishAckBO> targets = new ArrayList<>(ackRepository.findByChangeId(task.getChangeId()));
+        // The replica cannot yet see this transaction's ACK write.
+        targets.removeIf(value -> Objects.equals(value.getId(), acknowledged.getId()));
+        targets.add(acknowledged);
+        int success = count(targets, DdcAckStatus.SUCCESS.name());
+        int failed = count(targets, DdcAckStatus.FAILED.name());
+        int ignored = count(targets, DdcAckStatus.IGNORED.name());
+        int timeout = count(targets, DdcAckStatus.TIMEOUT.name());
+        LocalDateTime changedAt = now();
+        DdcPublishAckSummaryBO summary;
+        if (failed > 0) {
+            summary = new DdcPublishAckSummaryBO(targets.size(), success, failed, ignored, timeout,
+                    PublishStatus.FAILED.name(), "ACK", "one or more publish targets failed", "ANY");
+        } else if (task.getTargetCount() != null && success == targets.size() && success == task.getTargetCount()) {
+            summary = new DdcPublishAckSummaryBO(targets.size(), success, failed, ignored, timeout,
+                    PublishStatus.SUCCESS.name(), null, null, "PUBLISHED");
+            if (taskRepository.updateAckSummary(task, summary, changedAt) == 1) {
+                return applyAckSummary(task, summary, changedAt);
+            }
+            summary = new DdcPublishAckSummaryBO(targets.size(), success, failed, ignored, timeout,
+                    null, null, null, "UNPUBLISHED");
+        } else {
+            summary = new DdcPublishAckSummaryBO(targets.size(), success, failed, ignored, timeout,
+                    null, null, null, "ANY");
+        }
+        if (taskRepository.updateAckSummary(task, summary, changedAt) != 1) {
+            throw new org.springframework.dao.OptimisticLockingFailureException("publish ACK summary changed after the replica read");
+        }
+        return applyAckSummary(task, summary, changedAt);
+    }
+
+    private DdcPublishTaskBO applyAckSummary(DdcPublishTaskBO task, DdcPublishAckSummaryBO summary, LocalDateTime changedAt) {
+        task.setAckCount(summary.success()).setFailedCount(summary.failed()).setIgnoredCount(summary.ignored())
+                .setTimeoutCount(summary.timeout()).setUpdatedAt(changedAt).setVersion(Math.addExact(task.getVersion(), 1L));
+        if (summary.terminalStatus() != null) {
+            task.setStatus(summary.terminalStatus()).setCompletedAt(changedAt)
+                    .setFailureStage(summary.failureStage()).setErrorMessage(summary.errorMessage());
+            notifyTerminalAfterCommit(task);
+        } else {
+            signalAfterCommit(task.getChangeId());
+        }
+        return task;
     }
 
     @Transactional

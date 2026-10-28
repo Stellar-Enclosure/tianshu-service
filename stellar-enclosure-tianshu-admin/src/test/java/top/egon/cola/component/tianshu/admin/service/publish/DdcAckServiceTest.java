@@ -195,6 +195,26 @@ public class DdcAckServiceTest {
     }
 
     @Test
+    void ackSummaryRollsBackWhenAReplicaMissesAnotherTarget() {
+        DdcPublishTaskBO task = savePublishingTask("ack-replica-miss").setTargetCount(2);
+        saveTarget(task, "instance-1", "lease-1");
+        saveTarget(task, "instance-2", "lease-2");
+        DdcPublishAckBO first = ackRepository.findByChangeIdAndInstanceIdAndLeaseId(task.getChangeId(), "instance-1", "lease-1").orElseThrow();
+        DdcPublishAckBO second = ackRepository.findByChangeIdAndInstanceIdAndLeaseId(task.getChangeId(), "instance-2", "lease-2").orElseThrow();
+        second.setAckStatus(DdcAckStatus.SUCCESS.name());
+        Mockito.when(ackRepository.findByChangeId(task.getChangeId())).thenReturn(List.of(first));
+        var manager = Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class);
+        Mockito.when(manager.getTransaction(Mockito.any())).thenReturn(new org.springframework.transaction.support.SimpleTransactionStatus());
+
+        assertThatThrownBy(() -> new org.springframework.transaction.support.TransactionTemplate(manager).execute(
+                status -> publishService.ack(ackRequest(task.getChangeId(), "instance-1", "lease-1", CHECKSUM))))
+                .isInstanceOf(org.springframework.dao.OptimisticLockingFailureException.class);
+        Mockito.verify(manager).rollback(Mockito.any());
+        assertThat(task.getAckCount()).isZero();
+        assertThat(task.getStatus()).isEqualTo(PublishStatus.PUBLISHING.name());
+    }
+
+    @Test
     void rejectsUnknownIdentityVersionAndChecksumWithoutCreatingTarget() {
         DdcPublishTaskBO task = savePublishingTask("ack-reject");
         saveTarget(task, "instance-1", "lease-1");
@@ -362,6 +382,7 @@ public class DdcAckServiceTest {
         public final PublishCompletionWaiterRegistry waiterRegistry = new PublishCompletionWaiterRegistry();
         private DdcPublishStateTransitionService transitions;
         private DdcPendingPublishDispatcher dispatcher;
+        private DdcConfigItemRepository configItems;
 
         public InMemoryPersistence() {
             Mockito.when(outbox.enqueue(Mockito.any())).thenAnswer(invocation -> {
@@ -374,6 +395,20 @@ public class DdcAckServiceTest {
             Mockito.when(tasks.findForUpdateByChangeId(Mockito.anyString()))
                     .thenAnswer(invocation -> Optional.ofNullable(taskRows.get(invocation.getArgument(0))));
             Mockito.when(tasks.fenceObservedVersion(Mockito.any())).thenReturn(true);
+            Mockito.when(tasks.updateAckSummary(Mockito.any(), Mockito.any(), Mockito.any())).thenAnswer(invocation -> {
+                DdcPublishTaskBO task = invocation.getArgument(0);
+                var summary = invocation.<top.egon.cola.component.tianshu.admin.model.bo.DdcPublishAckSummaryBO>getArgument(1);
+                List<DdcPublishAckBO> rows = ackRows.getOrDefault(task.getChangeId(), new CopyOnWriteArrayList<>());
+                if (rows.size() != summary.total()
+                        || rows.stream().filter(row -> "SUCCESS".equals(row.getAckStatus())).count() != summary.success()
+                        || rows.stream().filter(row -> "FAILED".equals(row.getAckStatus())).count() != summary.failed()
+                        || rows.stream().filter(row -> "IGNORED".equals(row.getAckStatus())).count() != summary.ignored()
+                        || rows.stream().filter(row -> "TIMEOUT".equals(row.getAckStatus())).count() != summary.timeout()) return 0;
+                boolean published = configItems.findByPublicId(task.getConfigId())
+                        .map(config -> Objects.equals(config.getPublishedVersion(), task.getTargetVersion())).orElse(false);
+                return "PUBLISHED".equals(summary.publicationCheck()) && !published
+                        || "UNPUBLISHED".equals(summary.publicationCheck()) && published ? 0 : 1;
+            });
             Mockito.when(tasks.findByStatusIn(Mockito.anyCollection())).thenAnswer(invocation -> {
                 Collection<String> statuses = invocation.getArgument(0);
                 return taskRows.values().stream().filter(task -> statuses.contains(task.getStatus())).toList();
@@ -502,6 +537,7 @@ public class DdcAckServiceTest {
         }
 
         public DdcPublishStateTransitionService stateTransitions(DdcConfigItemRepository configItems) {
+            this.configItems = configItems;
             transitions = new DdcPublishStateTransitionService(tasks, configItems, acks, resourceRegistry,
                     waiterRegistry, Clock.systemUTC());
             return transitions;

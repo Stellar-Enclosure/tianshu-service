@@ -231,16 +231,16 @@ public class DdcPublishService {
                 throw new org.springframework.dao.TransientDataAccessResourceException("publish acknowledgement version changed");
             }
             return DdcPublishResultVO.from(
-                    stateTransitions.refreshAfterAck(request.getChangeId())
+                    stateTransitions.refreshAfterAck(task, target)
             );
         }
         target.setCurrentVersion(request.getCurrentVersion());
         target.setAckStatus(request.getStatus().name());
         target.setErrorMessage(request.getErrorMessage());
         target.setAckAt(toAckAt(request.getAckTime()));
-        publishAckRepository.update(target);
+        DdcPublishAckBO saved = publishAckRepository.update(target);
         return DdcPublishResultVO.from(
-                stateTransitions.refreshAfterAck(request.getChangeId())
+                stateTransitions.refreshAfterAck(task, saved)
         );
     }
 

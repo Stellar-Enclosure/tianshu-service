@@ -7,6 +7,7 @@ import org.springframework.validation.annotation.Validated;
 import top.egon.cola.component.common.core.pojo.PageQuery;
 import top.egon.cola.component.common.mybatis.model.EgonColaModelValidationGroups;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishTaskBO;
+import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishAckSummaryBO;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcPageResult;
 
 import java.time.LocalDateTime;
@@ -27,6 +28,8 @@ public interface DdcPublishTaskRepository {
 
     @Validated(EgonColaModelValidationGroups.Update.class)
     boolean fenceObservedVersion(@NotNull DdcPublishTaskBO task);
+
+    int updateAckSummary(@NotNull DdcPublishTaskBO task, @NotNull DdcPublishAckSummaryBO summary, @NotNull LocalDateTime updatedAt);
 
     @Validated(EgonColaModelValidationGroups.Query.class)
     List<DdcPublishTaskBO> findAll();

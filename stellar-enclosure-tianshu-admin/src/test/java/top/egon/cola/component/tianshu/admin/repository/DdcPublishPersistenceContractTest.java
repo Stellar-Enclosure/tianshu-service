@@ -184,6 +184,55 @@ class DdcPublishPersistenceContractTest {
     }
 
     @Test
+    void ackSummaryConditionsUseOneTenantAndPrimaryGroupForEveryReferencedTable() throws Exception {
+        var configuration = operationalMappers();
+        configuration.setEnvironment(new org.apache.ibatis.mapping.Environment("test",
+                new org.mybatis.spring.transaction.SpringManagedTransactionFactory(), mock(javax.sql.DataSource.class)));
+        var properties = new top.egon.cola.component.common.mybatis.autoconfigure.EgonColaMybatisPlusProperties();
+        var tenantGuard = new top.egon.cola.component.common.mybatis.interceptor.EgonColaTenantIdGuardInnerInterceptor(() -> "system:test", properties);
+        new org.springframework.context.annotation.CommonAnnotationBeanPostProcessor().postProcessBeforeInitialization(tenantGuard, "sqlGuard");
+        var routeGuard = new top.egon.cola.component.common.mybatis.interceptor.EgonColaLocalWriteGuardInnerInterceptor(
+                query -> new top.egon.cola.component.common.mybatis.routing.EgonColaRouteResult(
+                        List.of(new top.egon.cola.component.common.mybatis.routing.EgonColaPhysicalTargetBO("primary", "public", query.logicalTable())), "a".repeat(64)),
+                tenantGuard, mock(top.egon.cola.component.common.mybatis.routing.EgonColaTwoLevelRouteStrategy.class), Map.of());
+        var task = top.egon.cola.component.tianshu.admin.model.bo.DdcPublishTaskBO.builder()
+                .id(9L).version(7L).changeId("change").status("PUBLISHING").configItemId(21L).targetVersion(2L).build();
+        var statement = configuration.getMappedStatement(BASE + "dao.DdcPublishTaskMapper.updateAckSummary");
+        var parser = new org.apache.shardingsphere.infra.parser.ShardingSphereSQLParserEngine(
+                org.apache.shardingsphere.infra.spi.type.typed.TypedSPILoader.getService(
+                        org.apache.shardingsphere.database.connector.core.type.DatabaseType.class, "PostgreSQL"),
+                new org.apache.shardingsphere.sql.parser.engine.api.CacheOption(16, 64),
+                new org.apache.shardingsphere.sql.parser.engine.api.CacheOption(16, 64));
+        org.slf4j.MDC.put("tenantId", "101"); org.slf4j.MDC.put("userId", "system:test");
+        try {
+            for (String publication : List.of("ANY", "PUBLISHED", "UNPUBLISHED")) {
+                var summary = new top.egon.cola.component.tianshu.admin.model.bo.DdcPublishAckSummaryBO(
+                        2, publication.equals("ANY") ? 1 : 2, 0, 0, 0,
+                        publication.equals("PUBLISHED") ? "SUCCESS" : null, null, null, publication);
+                var parameters = Map.<String, Object>of("tenantId", 101L, "task", task, "summary", summary,
+                        "updatedAt", java.time.LocalDateTime.of(2026, 10, 28, 0, 0), "actor", "system:test",
+                        "now", java.time.Instant.parse("2026-10-28T00:00:00Z"));
+                String sql = statement.getBoundSql(parameters).getSql();
+                assertThat(parser.parse(sql, false)).isNotNull();
+                assertThat(sql.toLowerCase(java.util.Locale.ROOT)).contains("t.tenant_id = ?", "t.id = ?", "t.version = ?",
+                        "a.tenant_id = ?", "a.deleted_at is null").doesNotContain("for update");
+                var executor = mock(org.apache.ibatis.executor.Executor.class);
+                var invocation = new org.apache.ibatis.plugin.Invocation(executor,
+                        org.apache.ibatis.executor.Executor.class.getMethod("update", org.apache.ibatis.mapping.MappedStatement.class, Object.class),
+                        new Object[]{statement, parameters});
+                org.assertj.core.api.Assertions.assertThatCode(() ->
+                        new top.egon.cola.component.common.mybatis.interceptor.EgonColaOriginalSqlGuardInterceptor(properties).intercept(invocation))
+                        .doesNotThrowAnyException();
+                var handler = configuration.newStatementHandler(executor, statement, parameters,
+                        org.apache.ibatis.session.RowBounds.DEFAULT, null, statement.getBoundSql(parameters));
+                org.assertj.core.api.Assertions.assertThatCode(() -> routeGuard.beforePrepare(handler, null, null)).doesNotThrowAnyException();
+            }
+        } finally {
+            org.slf4j.MDC.remove("tenantId"); org.slf4j.MDC.remove("userId");
+        }
+    }
+
+    @Test
     void twoWritersCannotFenceTheSameObservedAcknowledgementVersion() throws Exception {
         var mapper = org.mockito.Mockito.mock(top.egon.cola.component.tianshu.admin.dao.DdcPublishAckMapper.class);
         var won = new java.util.concurrent.atomic.AtomicBoolean();

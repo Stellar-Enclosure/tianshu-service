@@ -9,6 +9,8 @@ import top.egon.cola.component.common.mybatis.business.EgonColaTenantIdProvider;
 import top.egon.cola.component.common.mybatis.extension.EgonColaMapper;
 import top.egon.cola.component.common.mybatis.model.EgonColaModelValidationGroups;
 import top.egon.cola.component.tianshu.admin.model.po.DdcPublishTaskPO;
+import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishTaskBO;
+import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishAckSummaryBO;
 
 import java.io.Serializable;
 import java.time.LocalDateTime;
@@ -46,6 +48,9 @@ public interface DdcPublishTaskMapper extends EgonColaMapper<DdcPublishTaskPO> {
     DdcPublishTaskPO selectForUpdateByChangeId(@Param("tenantId") Long tenantId, @Param("changeId") String changeId);
     int fenceObservedVersion(@Param("tenantId") Long tenantId, @Param("id") Long id,
             @Param("expectedVersion") Long expectedVersion, @Param("actor") String actor, @Param("now") Instant now);
+    int updateAckSummary(@Param("tenantId") Long tenantId, @Param("task") DdcPublishTaskBO task,
+            @Param("summary") DdcPublishAckSummaryBO summary, @Param("updatedAt") LocalDateTime updatedAt,
+            @Param("actor") String actor, @Param("now") Instant now);
     List<DdcPublishTaskPO> selectAll(@Param("tenantId") Long tenantId);
     List<DdcPublishTaskPO> selectByStatusIn(@Param("tenantId") Long tenantId, @Param("statuses") Collection<String> statuses);
     List<DdcPublishTaskPO> selectByStatusInAndUpdatedAtBefore(@Param("tenantId") Long tenantId,
