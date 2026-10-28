@@ -49,6 +49,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -297,6 +298,18 @@ class DdcPublishDispatchConsistencyTest {
                 .get()
                 .extracting(DdcConfigItemBO::getPublishedVersion)
                 .isEqualTo(2L);
+    }
+
+    @Test
+    void missingReplicaTargetsAreRetryableBeforeRedisDispatch() {
+        DdcPublishTaskBO task = savePreparedPublish("replica-target-lag");
+        dispatcher.dispatch(task.getChangeId());
+        DdcConfigDispatchPreparedEvent event = persistence.preparedEvent(persistence.pollOutboxMessage());
+        when(ackRepository.findByChangeId(task.getChangeId())).thenReturn(List.of());
+
+        assertThatThrownBy(() -> persistence.deliver(event))
+                .isInstanceOf(org.springframework.dao.TransientDataAccessResourceException.class);
+        verify(redisRepository, never()).dispatch(any(), any());
     }
 
     @Test

@@ -173,6 +173,9 @@ public class DdcPendingPublishDispatcher {
             if (!resourceMatchesTask(task, command)) {
                 throw new DdcAdminException("prepared config event no longer matches its publish task");
             }
+            if (!targetsMatch(task, command)) {
+                throw new org.springframework.dao.TransientDataAccessResourceException("publish targets are not yet visible together");
+            }
             redisRepository.dispatch(command, event);
             if (!advancePublishedVersion(command)) {
                 throw new IllegalStateException("published pointer update is uncertain after Redis dispatch");
@@ -290,6 +293,10 @@ public class DdcPendingPublishDispatcher {
                 || !Objects.equals(task.getTenantId(), command.tenantId())) {
             return false;
         }
+        return true;
+    }
+
+    private boolean targetsMatch(DdcPublishTaskBO task, DdcAtomicPublishCommand command) {
         List<DdcPublishTarget> persistedTargets = ackRepository.findByChangeId(task.getChangeId()).stream()
                 .sorted(Comparator.comparing(DdcPublishAckBO::getInstanceId)
                         .thenComparing(DdcPublishAckBO::getLeaseId))
