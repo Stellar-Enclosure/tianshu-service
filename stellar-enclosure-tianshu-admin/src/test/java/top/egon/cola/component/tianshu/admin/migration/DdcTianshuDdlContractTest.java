@@ -42,6 +42,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -60,6 +61,9 @@ class DdcTianshuDdlContractTest {
     private static final Set<String> TIANSHU_AI_OPTIMIZATION_TABLES = Set.of(
             "ddc_ai_usage_feedback_t0", "ddc_ai_optimization_policy_t0", "ddc_ai_optimization_run_t0");
     private static final String I18N_SQL = "db/egon-mp/V20261022_001__tianshu_page_i18n.sql";
+    private static final String LIST_SQL = "db/egon-mp/V20261028_001__tianshu_list_templates.sql";
+    private static final Set<String> LIST_TABLES = Set.of("ddc_list_definition_t0", "ddc_list_template_t0",
+            "ddc_list_template_column_t0", "ddc_list_selection_t0");
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final Pattern CREATE_TABLE = Pattern.compile(
             "(?im)^\\s*CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(?:public\\.)?([a-z0-9_]+)");
@@ -108,7 +112,7 @@ class DdcTianshuDdlContractTest {
 
         assertThat(manifest.path("family").asText()).isEqualTo("tianshu");
         assertThat(typedManifest.family()).isEqualTo("tianshu");
-        assertThat(manifest.path("scripts").size()).isEqualTo(6);
+        assertThat(manifest.path("scripts").size()).isEqualTo(7);
         JsonNode v001 = manifest.path("scripts").get(0);
         JsonNode v002 = manifest.path("scripts").get(1);
         JsonNode v003 = manifest.path("scripts").get(2);
@@ -132,8 +136,12 @@ class DdcTianshuDdlContractTest {
         assertThat(v006.path("version").asText()).isEqualTo("20261023_001");
         assertThat(v006.path("path").asText()).isEqualTo(DdcPermissionMetadataSchemaFixture.RESOURCE);
         assertThat(v006.path("sha256").asText()).isEqualTo(sha256(requiredResource(DdcPermissionMetadataSchemaFixture.RESOURCE)));
+        JsonNode v007 = manifest.path("scripts").get(6);
+        assertThat(v007.path("version").asText()).isEqualTo("20261028_001");
+        assertThat(v007.path("path").asText()).isEqualTo(LIST_SQL);
+        assertThat(v007.path("sha256").asText()).isEqualTo(sha256(requiredResource(LIST_SQL)));
         assertThat(typedManifest.scripts().subList(typedManifest.startingIndex(null), typedManifest.scripts().size()))
-                .extracting(EgonColaDdlManifestBO.ScriptBO::version).containsExactly("20261018_001", "20261022_001", "20261023_001");
+                .extracting(EgonColaDdlManifestBO.ScriptBO::version).containsExactly("20261018_001", "20261022_001", "20261023_001", "20261028_001");
         assertThat(typedManifest.freshBaselineVersion()).isEqualTo("20261018_001");
         assertThat(typedManifest.startingIndex(null)).isEqualTo(3);
     }
@@ -293,7 +301,8 @@ class DdcTianshuDdlContractTest {
         assertThat(sharding.getTransactionDefaultType()).isEqualTo("LOCAL");
         assertThat(sharding.getDataSources()).singleElement()
                 .satisfies(source -> assertThat(source.role()).isEqualTo(EgonColaShardingProperties.DataSourceRoleEnum.PRIMARY));
-        assertThat(sharding.getTables()).hasSize(31);
+        assertThat(sharding.getTables()).hasSize(35);
+        assertThat(sharding.getTables()).containsKeys("ddc_list_definition", "ddc_list_template", "ddc_list_template_column", "ddc_list_selection");
         assertThat(sharding.getTables()).containsKey("ddc_i18n_page");
         assertThat(sharding.getTables()).containsKeys(TIANSHU_TABLES.stream()
                 .filter(table -> !"ddl_history".equals(table))
@@ -394,6 +403,18 @@ class DdcTianshuDdlContractTest {
                         false, null, null, null, "uk_instance_business"), routeFingerprint, manifest))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("TIANSHU_SCHEMA_INDEX_MISMATCH: uk_instance_business");
+    }
+
+    @Test
+    void readinessRejectsMissingTemplateUniquenessOrImmutableDefinitionTrigger() throws Exception {
+        var manifest = OBJECT_MAPPER.readValue(requiredResource(TIANSHU_MANIFEST), EgonColaDdlManifestBO.class);
+        String fingerprint = "a".repeat(64);
+        for (String missing : List.of("uk_list_template_default", "tr_ddc_list_definition_immutable")) {
+            DataSource primary = readinessDataSource(manifest.scripts().getFirst(), fingerprint, true,
+                    false, null, null, null, missing);
+            assertThatThrownBy(() -> DdcDatabaseReadyValidator.validateTianshuSchema(primary, fingerprint, manifest))
+                    .hasMessage("TIANSHU_LIST_TEMPLATE_SCHEMA_INVALID");
+        }
     }
 
     @Test
@@ -576,6 +597,25 @@ class DdcTianshuDdlContractTest {
             PreparedStatement statement = mock(PreparedStatement.class);
             ResultSet rows = mock(ResultSet.class);
             when(statement.executeQuery()).thenReturn(rows);
+            if (sql.startsWith("/* tianshu-list-templates ")) {
+                List<Object[]> values = new java.util.ArrayList<>();
+                if (sql.contains(" indexes */")) {
+                    if (!"uk_list_template_name".equals(missingIndex)) values.add(new Object[]{"uk_list_template_name", true, true, true,
+                            "(deleted_at IS NULL)", "tenant_id", "catalog_scope_id", "page_resource_key", "list_key", "template_type", "owner_digest", "lower((template_name)::text)", 7, 7});
+                    if (!"uk_list_template_default".equals(missingIndex)) values.add(new Object[]{"uk_list_template_default", true, true, true,
+                            "((deleted_at IS NULL) AND is_default)", "tenant_id", "catalog_scope_id", "page_resource_key", "list_key", "template_type", "owner_digest", null, 6, 6});
+                } else if (!"tr_ddc_list_definition_immutable".equals(missingIndex)) {
+                    values.add(new Object[]{"ddc_metadata_reject_mutation", 27, "O", false});
+                }
+                int[] index = {-1};
+                when(rows.next()).thenAnswer(call -> ++index[0] < values.size());
+                when(rows.getString(anyInt())).thenAnswer(call -> {
+                    Object value = values.get(index[0])[(int) call.getArgument(0) - 1]; return value == null ? null : value.toString();
+                });
+                when(rows.getBoolean(anyInt())).thenAnswer(call -> values.get(index[0])[(int) call.getArgument(0) - 1]);
+                when(rows.getInt(anyInt())).thenAnswer(call -> values.get(index[0])[(int) call.getArgument(0) - 1]);
+                return statement;
+            }
             if (DdcPermissionMetadataSchemaFixture.handles(sql)) {
                 ResultSet metadataRows = DdcPermissionMetadataSchemaFixture.rows(sql, null);
                 when(statement.executeQuery()).thenReturn(metadataRows);
@@ -596,7 +636,8 @@ class DdcTianshuDdlContractTest {
                 when(rows.getString(2)).thenAnswer(row -> predicates.get(index[0] - 1).predicate());
             } else if (sql.contains("pg_catalog.pg_constraint")) {
                 List<String[]> constraints = new java.util.ArrayList<>();
-                for (String table : java.util.stream.Stream.concat(TIANSHU_TABLES.stream(), java.util.stream.Stream.of("ddc_i18n_page_t0")).toList()) {
+                for (String table : java.util.stream.Stream.concat(java.util.stream.Stream.concat(TIANSHU_TABLES.stream(), LIST_TABLES.stream()),
+                        java.util.stream.Stream.of("ddc_i18n_page_t0")).toList()) {
                     for (String constraint : sqlConstraints(table)) {
                         if (!constraint.equals(missingConstraint)) {
                             constraints.add(new String[]{table, constraint});
@@ -635,7 +676,8 @@ class DdcTianshuDdlContractTest {
         try {
             String sql = new String(requiredResource(TIANSHU_SQL), java.nio.charset.StandardCharsets.UTF_8)
                     + "\n" + new String(requiredResource(I18N_SQL), java.nio.charset.StandardCharsets.UTF_8)
-                    + "\n" + DdcPermissionMetadataSchemaFixture.sql();
+                    + "\n" + DdcPermissionMetadataSchemaFixture.sql()
+                    + "\n" + new String(requiredResource(LIST_SQL), java.nio.charset.StandardCharsets.UTF_8);
             Matcher definition = Pattern.compile("(?is)CREATE\\s+TABLE\\s+" + Pattern.quote(table)
                     + "\\s*\\((.*?)\\n\\);").matcher(sql);
             if (!definition.find()) {
@@ -699,7 +741,8 @@ class DdcTianshuDdlContractTest {
         try {
             String sql = new String(requiredResource(TIANSHU_SQL), java.nio.charset.StandardCharsets.UTF_8)
                     + "\n" + new String(requiredResource(I18N_SQL), java.nio.charset.StandardCharsets.UTF_8)
-                    + "\n" + DdcPermissionMetadataSchemaFixture.sql();
+                    + "\n" + DdcPermissionMetadataSchemaFixture.sql()
+                    + "\n" + new String(requiredResource(LIST_SQL), java.nio.charset.StandardCharsets.UTF_8);
             Matcher definition = Pattern.compile("(?is)CREATE\\s+TABLE\\s+" + Pattern.quote(table)
                     + "\\s*\\((.*?)\\n\\);").matcher(sql);
             Set<String> constraints = new java.util.LinkedHashSet<>();

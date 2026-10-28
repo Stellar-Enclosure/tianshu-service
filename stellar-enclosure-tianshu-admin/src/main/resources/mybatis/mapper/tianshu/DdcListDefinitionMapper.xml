@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="top.egon.cola.component.tianshu.admin.dao.DdcListDefinitionMapper">
+    <resultMap id="Row" type="top.egon.cola.component.tianshu.admin.model.bo.DdcListDefinitionBO">
+        <id property="id" column="id"/><result property="tenantId" column="tenant_id"/>
+        <result property="catalogScopeId" column="catalog_scope_id"/><result property="activationVersion" column="activation_version"/>
+        <result property="producerId" column="producer_id"/><result property="producerVersion" column="producer_version"/>
+        <result property="artifactDigest" column="artifact_digest"/><result property="pageResourceKey" column="page_resource_key"/>
+        <result property="listKey" column="list_key"/><result property="definitionDigest" column="definition_digest"/>
+        <result property="definitionJson" column="definition_json"/><result property="createdAt" column="created_at"/>
+    </resultMap>
+    <select id="find" resultMap="Row">
+        SELECT * FROM ddc_list_definition WHERE tenant_id=#{tenantId} AND catalog_scope_id=#{scopeId}
+          AND activation_version=#{activationVersion} AND page_resource_key=#{pageKey} AND list_key=#{listKey}
+    </select>
+    <insert id="insert">
+        INSERT INTO ddc_list_definition (id,tenant_id,catalog_scope_id,activation_version,producer_id,producer_version,
+          artifact_digest,page_resource_key,list_key,definition_digest,definition_json,created_at)
+        VALUES (#{row.id},#{row.tenantId},#{row.catalogScopeId},#{row.activationVersion},#{row.producerId},#{row.producerVersion},
+          #{row.artifactDigest},#{row.pageResourceKey},#{row.listKey},#{row.definitionDigest},#{row.definitionJson},#{row.createdAt})
+    </insert>
+</mapper>

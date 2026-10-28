@@ -28,6 +28,7 @@ import top.egon.cola.component.tianshu.admin.model.convertor.DdcNamespaceResultC
 import top.egon.cola.component.tianshu.admin.model.vo.DdcNamespaceResult;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcPageResult;
 import top.egon.cola.component.tianshu.admin.service.metadata.DdcNamespaceService;
+import top.egon.cola.component.tianshu.admin.service.list.DdcNamespaceDataScopeGuard;
 import top.egon.cola.component.yuheng.openapi.annotation.EgonApiCatalog;
 import top.egon.cola.component.yuheng.openapi.annotation.EgonGatewayPolicy;
 
@@ -49,6 +50,7 @@ public class DdcNamespaceController {
 
     @Qualifier("ddcNamespaceService") private final DdcNamespaceService namespaceService;
     @Qualifier("ddcNamespaceResultConverterImpl") private final DdcNamespaceResultConverter resultConverter;
+    @Qualifier("ddcNamespaceDataScopeGuard") private final DdcNamespaceDataScopeGuard dataScope;
 
     @Operation(operationId = "tianshu.ddcNamespaceController.list")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
@@ -59,6 +61,7 @@ public class DdcNamespaceController {
     public ResultRecord<List<DdcNamespaceResult>> list(
             @RequestParam(value = "bizCode", required = false) String bizCode,
             @RequestParam(value = "keyword", required = false) String keyword) {
+        dataScope.requirePage();
         return ResultRecord.success(resultConverter.toTargetList(namespaceService.list(bizCode, keyword)));
     }
 
@@ -72,6 +75,7 @@ public class DdcNamespaceController {
             @RequestParam(value = "bizCode", required = false) String bizCode,
             @RequestParam(value = "keyword", required = false) String keyword,
             PageQuery pageQuery) {
+        dataScope.requirePage();
         DdcPageResult<DdcNamespaceBO> page = namespaceService.page(bizCode, keyword, pageQuery);
         return PageResultRecord.success(resultConverter.toTargetList(page.getRecords()), page.getTotal(),
                 page.getPageNo(), page.getPageSize());

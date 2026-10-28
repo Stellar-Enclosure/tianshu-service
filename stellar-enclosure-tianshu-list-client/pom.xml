@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>top.egon</groupId>
+        <artifactId>stellar-enclosure-tianshu</artifactId>
+        <version>0.0.1</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+    <artifactId>stellar-enclosure-tianshu-list-client</artifactId>
+    <packaging>jar</packaging>
+    <name>stellar-enclosure-tianshu-list-client</name>
+    <description>Authenticated business-service access to Tianshu list templates.</description>
+    <dependencies>
+        <dependency>
+            <groupId>top.egon</groupId><artifactId>stellar-enclosure-tianshu-starter</artifactId><version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>top.egon</groupId><artifactId>stellar-enclosure-tianquan-jianshen-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.servlet</groupId><artifactId>jakarta.servlet-api</artifactId><scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

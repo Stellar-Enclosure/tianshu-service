@@ -20,7 +20,7 @@ import java.time.Duration;
 import java.util.HexFormat;
 import java.util.List;
 
-/** Explicit, resumable transition for the single page-language table addition. */
+/** Explicit, resumable transition for a reviewed additive metadata topology. */
 @RequiredArgsConstructor
 final class DdcI18nTopologyUpgrade {
     static final String VERSION = "20261022_001";
@@ -43,6 +43,12 @@ final class DdcI18nTopologyUpgrade {
     private final Runnable validatePreviousOutbox;
     private final Runnable validateInstalledPreviousTopology;
     private final Runnable validateCurrentTopology;
+    private UpgradePlan plan = UpgradePlan.I18N;
+
+    DdcI18nTopologyUpgrade listTemplates() {
+        plan = UpgradePlan.LIST_TEMPLATES;
+        return this;
+    }
 
     void upgrade() {
         validateManifests();
@@ -79,9 +85,9 @@ final class DdcI18nTopologyUpgrade {
 
     private void validateManifests() {
         if (!"tianshu".equals(tianshuManifest.family()) || !"component-outbox".equals(outboxManifest.family())
-                || !VERSIONS.equals(tianshuManifest.scripts().stream().map(EgonColaDdlManifestBO.ScriptBO::version).toList())
+                || !plan.versions.equals(tianshuManifest.scripts().stream().map(EgonColaDdlManifestBO.ScriptBO::version).toList())
                 || !"20261018_001".equals(tianshuManifest.freshBaselineVersion())
-                || !SCRIPT.equals(tianshuManifest.scripts().getLast().path())
+                || !plan.script.equals(tianshuManifest.scripts().getLast().path())
                 || previousFingerprint == null || !previousFingerprint.matches("[0-9a-f]{64}")
                 || currentFingerprint == null || !currentFingerprint.matches("[0-9a-f]{64}")
                 || previousFingerprint.equals(currentFingerprint)
@@ -138,12 +144,14 @@ final class DdcI18nTopologyUpgrade {
         } else {
             throw new IllegalStateException("TIANSHU_I18N_UPGRADE_FINGERPRINT_MISMATCH");
         }
-        try (PreparedStatement statement = statement(connection,
-                "SELECT to_regclass('public.ddc_i18n_page_t0') IS NOT NULL");
+        String tableCheck = "SELECT " + plan.tables.stream()
+                .map(table -> "to_regclass('public." + table + "_t0') IS NOT NULL")
+                .collect(java.util.stream.Collectors.joining(", "));
+        try (PreparedStatement statement = statement(connection, tableCheck);
              ResultSet row = statement.executeQuery()) {
-            if (!row.next() || row.getBoolean(1) != tianshu.complete()) {
-                throw new IllegalStateException("TIANSHU_I18N_UPGRADE_TABLE_HISTORY_MISMATCH");
-            }
+            if (!row.next()) throw new IllegalStateException("TIANSHU_I18N_UPGRADE_TABLE_HISTORY_MISMATCH");
+            for (int index = 1; index <= plan.tables.size(); index++)
+                if (row.getBoolean(index) != tianshu.complete()) throw new IllegalStateException("TIANSHU_I18N_UPGRADE_TABLE_HISTORY_MISMATCH");
         }
         return new HistoryPair(state, outbox.count(), tianshu.count());
     }
@@ -221,7 +229,7 @@ final class DdcI18nTopologyUpgrade {
             else if (uncertainCommit != failure) uncertainCommit.addSuppressed(failure);
         }
         if (uncertainCommit != null && !confirmPromotion(uncertainCommit)) {
-            throw new IllegalStateException("TIANSHU_I18N_UPGRADE_COMMIT_UNKNOWN; rerun upgrade-i18n to verify or resume", uncertainCommit);
+            throw new IllegalStateException("TIANSHU_I18N_UPGRADE_COMMIT_UNKNOWN; rerun " + plan.command + " to verify or resume", uncertainCommit);
         }
     }
 
@@ -302,6 +310,21 @@ final class DdcI18nTopologyUpgrade {
     }
 
     private enum State { PREVIOUS, CURRENT }
+    private enum UpgradePlan {
+        I18N(VERSIONS, SCRIPT, List.of(TABLE), "upgrade-i18n"),
+        LIST_TEMPLATES(List.of("20260922_001", "20260928_001", "20261017_001", "20261018_001",
+                "20261022_001", "20261023_001", "20261028_001"),
+                "db/egon-mp/V20261028_001__tianshu_list_templates.sql",
+                List.of("ddc_list_definition", "ddc_list_template", "ddc_list_template_column", "ddc_list_selection"),
+                "upgrade-list-templates");
+        private final List<String> versions;
+        private final String script;
+        private final List<String> tables;
+        private final String command;
+        UpgradePlan(List<String> versions, String script, List<String> tables, String command) {
+            this.versions = versions; this.script = script; this.tables = tables; this.command = command;
+        }
+    }
     private record History(String fingerprint, int count, boolean complete) { }
     private record HistoryPair(State state, int outboxCount, int tianshuCount) { }
 }

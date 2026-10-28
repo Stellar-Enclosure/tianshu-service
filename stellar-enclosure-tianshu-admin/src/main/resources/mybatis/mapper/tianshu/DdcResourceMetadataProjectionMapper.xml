@@ -33,6 +33,22 @@
         WHERE tenant_id=#{tenantId} AND catalog_scope_id=#{catalogScopeId} AND source_id=#{sourceId} AND deleted_at IS NULL
         ORDER BY id
     </select>
+    <select id="findActivatedResource" resultMap="Row" timeout="2">
+        SELECT r.* FROM ddc_resource_metadata_projection r
+        JOIN ddc_catalog_activation_producer a ON a.tenant_id=r.tenant_id AND a.catalog_scope_id=r.catalog_scope_id
+          AND a.source_id=r.source_id
+        WHERE r.tenant_id=#{tenantId} AND r.catalog_scope_id=#{catalogScopeId} AND a.activation_projection_id=#{projectionId}
+          AND r.metadata_kind='RESOURCE' AND r.definition_key=#{key} AND r.deleted_at IS NULL AND a.deleted_at IS NULL
+        LIMIT 2
+    </select>
+    <select id="findActivatedResources" resultMap="Row" timeout="5">
+        SELECT r.* FROM ddc_resource_metadata_projection r
+        JOIN ddc_catalog_activation_producer a ON a.tenant_id=r.tenant_id AND a.catalog_scope_id=r.catalog_scope_id AND a.source_id=r.source_id
+        WHERE r.tenant_id=#{tenantId} AND r.catalog_scope_id=#{catalogScopeId} AND a.activation_projection_id=#{projectionId}
+          AND r.metadata_kind='RESOURCE' AND r.deleted_at IS NULL AND a.deleted_at IS NULL AND r.definition_key IN
+          <foreach collection="keys" item="key" open="(" separator="," close=")">#{key}</foreach>
+        LIMIT 257
+    </select>
     <sql id="SelectedFilter">
         FROM ddc_resource_metadata_projection r
         JOIN ddc_catalog_activation_producer a ON a.tenant_id=r.tenant_id AND a.catalog_scope_id=r.catalog_scope_id AND a.source_id=r.source_id

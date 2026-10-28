@@ -41,6 +41,15 @@ public class DdcResourceMetadataProjectionRepositoryImpl extends EgonColaReposit
         return converter.toTargetList(mapper.findBySource(EgonColaTenantIdProvider.currentTenantId(), catalogScopeId, sourceId));
     }
 
+    @Override public List<DdcResourceMetadataProjectionBO> findActivatedResource(Long catalogScopeId, Long projectionId, String key) {
+        return converter.toTargetList(mapper.findActivatedResource(EgonColaTenantIdProvider.currentTenantId(), catalogScopeId, projectionId, key));
+    }
+
+    @Override public List<DdcResourceMetadataProjectionBO> findActivatedResources(Long catalogScopeId, Long projectionId, List<String> keys) {
+        if (keys.isEmpty() || keys.size() > 256 || keys.stream().distinct().count() != keys.size()) throw new IllegalArgumentException("Invalid metadata key batch");
+        return converter.toTargetList(mapper.findActivatedResources(EgonColaTenantIdProvider.currentTenantId(), catalogScopeId, projectionId, keys));
+    }
+
     @Override public void insertAll(List<DdcResourceMetadataProjectionBO> commands) {
         Long tenantId = EgonColaTenantIdProvider.currentTenantId();
         if (commands.isEmpty()) return;

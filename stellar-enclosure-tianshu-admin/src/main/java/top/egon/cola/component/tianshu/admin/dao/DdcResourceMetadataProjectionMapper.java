@@ -14,4 +14,8 @@ public interface DdcResourceMetadataProjectionMapper extends EgonColaMapper<DdcR
     long countSearch(@Param("tenantId") Long tenantId, @Param("catalogScopeId") Long catalogScopeId,
             @Param("projectionId") Long projectionId, @Param("filter") DdcResourceMetadataQuery filter);
     List<DdcResourceMetadataProjectionPO> findBySource(@Param("tenantId") Long tenantId, @Param("catalogScopeId") Long catalogScopeId, @Param("sourceId") Long sourceId);
+    List<DdcResourceMetadataProjectionPO> findActivatedResource(@Param("tenantId") Long tenantId, @Param("catalogScopeId") Long catalogScopeId,
+            @Param("projectionId") Long projectionId, @Param("key") String key);
+    List<DdcResourceMetadataProjectionPO> findActivatedResources(@Param("tenantId") Long tenantId, @Param("catalogScopeId") Long catalogScopeId,
+            @Param("projectionId") Long projectionId, @Param("keys") List<String> keys);
 }

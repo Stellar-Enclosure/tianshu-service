@@ -33,6 +33,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class DdcNamespaceControllerTest {
     @Autowired private MockMvc mockMvc;
     @MockitoBean(name = "ddcNamespaceService") private DdcNamespaceService namespaceService;
+    @MockitoBean(name = "ddcNamespaceDataScopeGuard") private top.egon.cola.component.tianshu.admin.service.list.DdcNamespaceDataScopeGuard dataScope;
     @MockitoBean(name = "ddcNamespaceResultConverterImpl") private DdcNamespaceResultConverter resultConverter;
 
     @Test

@@ -66,6 +66,25 @@ class DdcI18nTopologyUpgradeTest {
         verifyNoInteractions(runner, oldOutboxReady, oldTopologyReady, newTopologyReady);
     }
 
+    @Test void listTemplateUpgradeAcceptsOnlyTheCompletePriorHistoryAndPromotesBothFingerprints() throws Exception {
+        tianshu = manifest("db/egon-mp/repository-manifest.json");
+        store.rows.put("public", history(tianshu, 3, false, OLD));
+        upgrade().listTemplates().upgrade();
+        assertThat(store.rows.get("public")).extracting(Row::version)
+                .containsExactly("20261018_001", "20261022_001", "20261023_001", "20261028_001");
+        assertThat(store.rows.get("public")).allMatch(row -> row.fingerprint().equals(CURRENT));
+        assertThat(store.rows.get("egon_outbox")).allMatch(row -> row.fingerprint().equals(CURRENT));
+        verify(newTopologyReady).run();
+    }
+
+    @Test void listTemplateUpgradeRejectsPartiallyPresentTablesBeforeDdl() throws Exception {
+        tianshu = manifest("db/egon-mp/repository-manifest.json");
+        store.rows.put("public", history(tianshu, 3, false, OLD));
+        store.partialTables = true;
+        assertThatThrownBy(() -> upgrade().listTemplates().upgrade()).hasMessageContaining("TABLE_HISTORY_MISMATCH");
+        verifyNoInteractions(runner);
+    }
+
     @Test void upgradesFullLegacyHistoryAndUpdatesOnlyBothFingerprintsAtomically() throws Exception {
         upgrade().upgrade();
         assertThat(store.rows.get("public")).hasSize(5).allMatch(row -> row.fingerprint().equals(CURRENT));
@@ -264,6 +283,7 @@ class DdcI18nTopologyUpgradeTest {
         private final List<String> updateSql = new ArrayList<>();
         private int connections;
         private boolean tableExists;
+        private boolean partialTables;
         private boolean failPublicUpdate;
         private boolean failCommitAfterApplying;
         private boolean failCommitBeforeApplying;
@@ -306,7 +326,8 @@ class DdcI18nTopologyUpgradeTest {
                     });
                     when(statement.executeQuery()).thenAnswer(query -> {
                         if (sql.startsWith("SELECT current_schema")) return result(List.<Object[]>of(new Object[]{"public", false, false}));
-                        if (sql.startsWith("SELECT to_regclass")) return result(List.<Object[]>of(new Object[]{tableExists}));
+                        if (sql.startsWith("SELECT to_regclass")) return result(List.<Object[]>of(
+                                new Object[]{tableExists, partialTables || tableExists, tableExists, tableExists}));
                         String schema = sql.contains("egon_outbox.ddl_history") ? "egon_outbox" : "public";
                         return result(transaction.get(schema).stream().map(row -> new Object[]{row.script(), row.type(), row.version(),
                                 row.checksum(), row.fingerprint(), row.tenant()}).toList());

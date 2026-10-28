@@ -69,7 +69,7 @@ public final class DdcPersistenceMigrationCli {
 
     public static void main(String[] args) throws IOException {
         DdcMigrationCliCommand command = parseInvocation(args);
-        if (command.mode() == Mode.UPGRADE_I18N || command.mode() == Mode.UPGRADE_OUTBOX) {
+        if (command.mode() == Mode.UPGRADE_I18N || command.mode() == Mode.UPGRADE_LIST_TEMPLATES || command.mode() == Mode.UPGRADE_OUTBOX) {
             validateProtectedFile(command.targetConfig(), "target-config");
         }
         if (command.sourceConfig() == null) {
@@ -89,18 +89,19 @@ public final class DdcPersistenceMigrationCli {
             case "validate" -> Mode.VALIDATE;
             case "initialize" -> Mode.INITIALIZE;
             case "upgrade-i18n" -> Mode.UPGRADE_I18N;
+            case "upgrade-list-templates" -> Mode.UPGRADE_LIST_TEMPLATES;
             case "upgrade-outbox" -> Mode.UPGRADE_OUTBOX;
             case "import" -> Mode.IMPORT;
             case "verify" -> Mode.VERIFY;
             default -> throw usageFailure();
         };
         if (args.length == 1) {
-            if (mode == Mode.IMPORT || mode == Mode.VERIFY || mode == Mode.UPGRADE_I18N || mode == Mode.UPGRADE_OUTBOX) throw usageFailure();
+            if (mode == Mode.IMPORT || mode == Mode.VERIFY || mode == Mode.UPGRADE_I18N || mode == Mode.UPGRADE_LIST_TEMPLATES || mode == Mode.UPGRADE_OUTBOX) throw usageFailure();
             return new DdcMigrationCliCommand(mode, null, null, null, null);
         }
 
         Map<String, Path> options = parseOptions(args);
-        if (mode == Mode.INITIALIZE || mode == Mode.UPGRADE_I18N || mode == Mode.UPGRADE_OUTBOX || (mode == Mode.VALIDATE && options.size() == 1
+        if (mode == Mode.INITIALIZE || mode == Mode.UPGRADE_I18N || mode == Mode.UPGRADE_LIST_TEMPLATES || mode == Mode.UPGRADE_OUTBOX || (mode == Mode.VALIDATE && options.size() == 1
                 && options.containsKey("--target-config"))) {
             if (options.size() != 1 || !options.containsKey("--target-config")) throw usageFailure();
             return new DdcMigrationCliCommand(mode, null, options.get("--target-config"), null, null);
@@ -169,12 +170,18 @@ public final class DdcPersistenceMigrationCli {
             EgonColaShardingYamlLoader yamlLoader = new EgonColaShardingYamlLoader(
                     strategyFactory, new DefaultResourceLoader(), environment);
             if (mode == Mode.UPGRADE_I18N) requireI18nUpgradeStrategy(shardingProperties);
+            if (mode == Mode.UPGRADE_LIST_TEMPLATES) {
+                requireListTemplateUpgradeStrategy(shardingProperties);
+                if (!storageProperties.getPreviousRouteFingerprints().isEmpty()) throw new IllegalStateException("TIANSHU_LIST_UPGRADE_UNCHANGED_HISTORY_REQUIRED");
+            }
             byte[] yaml = yamlLoader.load(shardingProperties);
             var topology = topologyValidator.validate(shardingProperties, yaml);
-            EgonColaShardingProperties previousProperties = mode == Mode.UPGRADE_I18N
+            EgonColaShardingProperties previousProperties = mode == Mode.UPGRADE_I18N || mode == Mode.UPGRADE_LIST_TEMPLATES
                     ? bind(environment, EgonColaShardingProperties.PREFIX, EgonColaShardingProperties.class) : null;
             var previousTopology = mode == Mode.UPGRADE_I18N
-                    ? priorI18nTopology(shardingProperties, previousProperties, topology, yamlLoader, topologyValidator) : null;
+                    ? priorI18nTopology(shardingProperties, previousProperties, topology, yamlLoader, topologyValidator)
+                    : mode == Mode.UPGRADE_LIST_TEMPLATES
+                    ? priorListTemplateTopology(shardingProperties, previousProperties, topology, yamlLoader, topologyValidator) : null;
             EgonColaDdlManifestBO tianshuManifest = loadManifest(
                     resources, objectMapper, validationUtils, TIANSHU_MANIFEST_RESOURCE, "tianshu");
             EgonColaPostgreDdlRunner ddlRunner = new EgonColaPostgreDdlRunner(
@@ -192,7 +199,7 @@ public final class DdcPersistenceMigrationCli {
                     log.info("Tianshu Outbox schema upgrade completed: routeFingerprint={}", topology.fingerprint());
                     return topology.fingerprint();
                 }
-                if (mode == Mode.UPGRADE_I18N) {
+                if (mode == Mode.UPGRADE_I18N || mode == Mode.UPGRADE_LIST_TEMPLATES) {
                     EgonColaDdlManifestBO outboxManifest = loadManifest(resources, objectMapper, validationUtils,
                             OUTBOX_MANIFEST_RESOURCE, "component-outbox");
                     DataSource primary = onlyPrimaryDataSource(shardingProperties, physicalSources, "TARGET");
@@ -215,11 +222,13 @@ public final class DdcPersistenceMigrationCli {
                         new OutboxSchemaMetadataValidator(currentOutbox, topology.fingerprint(), storageProperties,
                                 objectMapper, validationUtils).validate();
                     };
-                    new DdcI18nTopologyUpgrade(primary, shardingProperties.getDataSources().getFirst().name(), tianshuManifest,
+                    var upgrade = new DdcI18nTopologyUpgrade(primary, shardingProperties.getDataSources().getFirst().name(), tianshuManifest,
                             outboxManifest, previousTopology.fingerprint(), topology.fingerprint(), ddlRunner, resources,
                             mybatisProperties.getDdl().getLockTimeout(), mybatisProperties.getDdl().getStatementTimeout(),
-                            previousOutboxReady, previousReady, currentReady).upgrade();
-                    log.info("Tianshu page-language topology upgrade completed: routeFingerprint={}", topology.fingerprint());
+                            previousOutboxReady, previousReady, currentReady);
+                    if (mode == Mode.UPGRADE_LIST_TEMPLATES) upgrade.listTemplates();
+                    upgrade.upgrade();
+                    log.info("Tianshu metadata topology upgrade completed: mode={} routeFingerprint={}", mode, topology.fingerprint());
                     return topology.fingerprint();
                 }
                 OutboxManagedDdlInitializer outboxInitializer = new OutboxManagedDdlInitializer(
@@ -308,6 +317,60 @@ public final class DdcPersistenceMigrationCli {
         }
     }
 
+    private static final List<String> LIST_TEMPLATE_TABLES = List.of("ddc_list_definition", "ddc_list_template",
+            "ddc_list_template_column", "ddc_list_selection");
+
+    static EgonColaShardingTopologyValidator.TopologyBO priorListTemplateTopology(
+            EgonColaShardingProperties current, EgonColaShardingProperties previous,
+            EgonColaShardingTopologyValidator.TopologyBO currentTopology, EgonColaShardingYamlLoader loader,
+            EgonColaShardingTopologyValidator validator) {
+        requireListTemplateUpgradeStrategy(current);
+        if (current == previous) throw new IllegalStateException("TIANSHU_LIST_UPGRADE_INDEPENDENT_BIND_REQUIRED");
+        Map<String, EgonColaShardingProperties.TableProperties> tables = new LinkedHashMap<>(previous.getTables());
+        LIST_TEMPLATE_TABLES.forEach(tables::remove);
+        previous.setTables(tables);
+        var previousTopology = validator.validate(previous, loader.load(previous));
+        var expected = new java.util.TreeMap<>(currentTopology.profiles());
+        var primary = current.getDataSources().getFirst();
+        for (String table : LIST_TEMPLATE_TABLES) {
+            var profile = expected.remove(table);
+            var nodes = profile == null ? null : profile.actualNodes().get(
+                    new top.egon.cola.component.common.mybatis.routing.EgonColaRoutingProfileBO.PartitionKeyBO(0, 0));
+            if (profile == null || profile.kind() != top.egon.cola.component.common.mybatis.routing.EgonColaRoutingProfileBO.TableKindEnum.TENANT_LEGACY
+                    || profile.actualNodes().size() != 1 || nodes == null || nodes.size() != 1
+                    || !primary.name().equals(nodes.getFirst().group()) || !"public".equals(nodes.getFirst().schema())
+                    || !(table + "_t0").equals(nodes.getFirst().table())) {
+                throw new IllegalStateException("TIANSHU_LIST_UPGRADE_ADDITIVE_TOPOLOGY_REQUIRED");
+            }
+        }
+        if (!expected.equals(previousTopology.profiles()) || !currentTopology.schemas().equals(previousTopology.schemas())
+                || !currentTopology.broadcastTables().equals(previousTopology.broadcastTables())
+                || currentTopology.fingerprint().equals(previousTopology.fingerprint())) {
+            throw new IllegalStateException("TIANSHU_LIST_UPGRADE_ADDITIVE_TOPOLOGY_REQUIRED");
+        }
+        return previousTopology;
+    }
+
+    private static void requireListTemplateUpgradeStrategy(EgonColaShardingProperties properties) {
+        requireSinglePrimary(properties, "TARGET");
+        if (properties.getMode() != EgonColaShardingProperties.ModeEnum.SHARDING
+                || properties.getConfigStyle() != EgonColaShardingProperties.ConfigStyleEnum.STRATEGY
+                || !"LOCAL".equals(properties.getTransactionDefaultType())
+                || properties.getNativeRulesResource() != null && !properties.getNativeRulesResource().isBlank()) {
+            throw new IllegalStateException("TIANSHU_LIST_UPGRADE_STANDARD_LOCAL_TOPOLOGY_REQUIRED");
+        }
+        for (String name : LIST_TEMPLATE_TABLES) {
+            var table = properties.getTables().get(name);
+            if (table == null || !"STANDARD_TENANT_ID".equals(table.type()) || !"public".equals(table.schema())
+                    || table.dataSource() != null && !table.dataSource().isBlank()
+                    || table.shardingColumn() != null && !"tenant_id".equals(table.shardingColumn())
+                    || table.tableColumns() != null && !table.tableColumns().isEmpty()
+                    || table.rootKeyName() != null && !table.rootKeyName().isBlank()) {
+                throw new IllegalStateException("TIANSHU_LIST_UPGRADE_STANDARD_LOCAL_TOPOLOGY_REQUIRED");
+            }
+        }
+    }
+
     private static void executeMigration(DdcMigrationCliCommand command) throws IOException {
         validateProtectedFile(command.sourceConfig(), "source-config");
         validateProtectedFile(command.targetConfig(), "target-config");
@@ -378,7 +441,7 @@ public final class DdcPersistenceMigrationCli {
                                     tableStrategy, SnowflakeIdGenerator::nextLongId, Clock.systemUTC(), reportDirectory);
                             case VERIFY -> importService.verifyDatabase(
                                     sourceConnection, targetConnection, mapping, targetRouteFingerprint, tableStrategy);
-                            case INITIALIZE, UPGRADE_I18N, UPGRADE_OUTBOX -> throw usageFailure();
+                            case INITIALIZE, UPGRADE_I18N, UPGRADE_LIST_TEMPLATES, UPGRADE_OUTBOX -> throw usageFailure();
                         };
                     }
                 }
@@ -606,7 +669,7 @@ public final class DdcPersistenceMigrationCli {
     }
 
     private static IllegalArgumentException usageFailure() {
-        return new IllegalArgumentException("USAGE: DdcPersistenceMigrationCli <validate|initialize|upgrade-i18n|upgrade-outbox|import|verify> "
+        return new IllegalArgumentException("USAGE: DdcPersistenceMigrationCli <validate|initialize|upgrade-i18n|upgrade-list-templates|upgrade-outbox|import|verify> "
                 + "[--source-config <file> --target-config <file> --mapping <file> --report-dir <directory>]");
     }
 
@@ -614,6 +677,7 @@ public final class DdcPersistenceMigrationCli {
         VALIDATE,
         INITIALIZE,
         UPGRADE_I18N,
+        UPGRADE_LIST_TEMPLATES,
         UPGRADE_OUTBOX,
         IMPORT,
         VERIFY

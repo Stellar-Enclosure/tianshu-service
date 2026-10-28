@@ -41,6 +41,21 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.P
         labelPage = "tianshu.permissions", labelKey = "permission.ai.report")
 @PermissionMessage(pageCode = "tianshu.permissions", key = "permission.ai.report", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Report usage of authorized AI resources"))
+@PermissionDefinition(code = DdcPermissionCodes.NAMESPACE_TEMPLATE_SYSTEM, meaning = "Manage system templates for the namespace list",
+        labelPage = "tianshu.permissions", labelKey = "permission.namespace.template.system")
+@PermissionMessage(pageCode = "tianshu.permissions", key = "permission.namespace.template.system", defaultLocale = "en-US",
+        defaults = {@LocalizedText(locale = "en-US", text = "Manage namespace list system templates"),
+                @LocalizedText(locale = "zh-CN", text = "管理命名空间列表系统模板")})
+@PermissionDefinition(code = DdcPermissionCodes.NAMESPACE_TEMPLATE_PERSONAL, meaning = "Manage personal templates for the namespace list",
+        labelPage = "tianshu.permissions", labelKey = "permission.namespace.template.personal")
+@PermissionMessage(pageCode = "tianshu.permissions", key = "permission.namespace.template.personal", defaultLocale = "en-US",
+        defaults = {@LocalizedText(locale = "en-US", text = "Manage personal namespace list templates"),
+                @LocalizedText(locale = "zh-CN", text = "管理命名空间列表个人模板")})
+@PermissionDefinition(code = DdcPermissionCodes.NAMESPACE_EXPORT, meaning = "Export authorized namespace list results",
+        labelPage = "tianshu.permissions", labelKey = "permission.namespace.export")
+@PermissionMessage(pageCode = "tianshu.permissions", key = "permission.namespace.export", defaultLocale = "en-US",
+        defaults = {@LocalizedText(locale = "en-US", text = "Export namespace list results"),
+                @LocalizedText(locale = "zh-CN", text = "导出命名空间列表")})
 public final class DdcPermissionCodes {
 
     public static final String READ = "TIANSHU_READ";
@@ -52,6 +67,9 @@ public final class DdcPermissionCodes {
     public static final String AI_WRITE = "TIANSHU_AI_WRITE";
     public static final String AI_PUBLISH = "TIANSHU_AI_PUBLISH";
     public static final String AI_REPORT = "TIANSHU_AI_REPORT";
+    public static final String NAMESPACE_TEMPLATE_SYSTEM = "TIANSHU_NAMESPACE_TEMPLATE_SYSTEM";
+    public static final String NAMESPACE_TEMPLATE_PERSONAL = "TIANSHU_NAMESPACE_TEMPLATE_PERSONAL";
+    public static final String NAMESPACE_EXPORT = "TIANSHU_NAMESPACE_EXPORT";
 
     private DdcPermissionCodes() { }
 }

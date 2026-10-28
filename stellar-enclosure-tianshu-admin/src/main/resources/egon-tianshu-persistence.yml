@@ -53,6 +53,10 @@ egon:
             ddc_catalog_activation_projection: { type: STANDARD_TENANT_ID }
             ddc_catalog_activation_producer: { type: STANDARD_TENANT_ID }
             ddc_i18n_published_override: { type: STANDARD_TENANT_ID }
+            ddc_list_definition: { type: STANDARD_TENANT_ID }
+            ddc_list_template: { type: STANDARD_TENANT_ID }
+            ddc_list_template_column: { type: STANDARD_TENANT_ID }
+            ddc_list_selection: { type: STANDARD_TENANT_ID }
             ddc_ai_version: { type: STANDARD_TENANT_ID }
             ddc_ai_draft_node: { type: STANDARD_TENANT_ID }
             ddc_ai_version_node: { type: STANDARD_TENANT_ID }

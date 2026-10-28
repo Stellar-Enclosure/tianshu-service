@@ -47,7 +47,9 @@ class PermissionProducerCoverageTest {
             "top.egon.cola.platform.tianquan.jianshen.contract.permission.EffectivePermissionSnapshot",
             "top.egon.cola.platform.tianquan.jianshen.contract.permission.FieldCatalogSnapshot",
             "top.egon.cola.platform.tianquan.jianshen.contract.permission.SourceImportReceipt",
-            "top.egon.cola.platform.tianquan.jianshen.contract.permission.SourceImportRequest");
+            "top.egon.cola.platform.tianquan.jianshen.contract.permission.SourceImportRequest",
+            "top.egon.cola.component.tianshu.api.list.ListDelegationRequest",
+            "top.egon.cola.component.tianshu.api.list.ListDelegationResponse");
     private final ObjectMapper json = new ObjectMapper().findAndRegisterModules();
 
     @Test
@@ -90,7 +92,7 @@ class PermissionProducerCoverageTest {
                 }
             }
         }
-        assertThat(apiKeys).hasSize(89);
+        assertThat(apiKeys).hasSize(97);
         assertThat(resources.values().stream().filter(value -> value.type() == ResourceType.API)
                 .map(PermissionManifest.ResourceDefinition::key).toList()).containsExactlyInAnyOrderElementsOf(apiKeys);
         assertThat(resources.values().stream().filter(value -> value.type() == ResourceType.FIELD)
@@ -107,7 +109,7 @@ class PermissionProducerCoverageTest {
             fragment.permissionDefinitions().forEach(value -> assertThat(definitions.add(value.code())).isTrue());
             fragment.messages().forEach(message -> assertThat(messages.put(message.pageCode() + ":" + message.key(), message)).isNull());
         }
-        assertThat(definitions).hasSize(9).doesNotContain("*");
+        assertThat(definitions).hasSize(12).doesNotContain("*");
         for (var fragment : fragments) {
             for (var resource : fragment.resources()) assertThat(messages)
                     .containsKey(resource.i18n().pageCode() + ":" + resource.i18n().labelKey());

@@ -41,8 +41,16 @@ public class DdcDatabaseReadyValidator implements SmartInitializingSingleton {
             "ddc_biz_t0", "ddc_env_t0", "ddc_app_t0", "ddc_namespace_t0", "ddc_namespace_env_app_t0",
             "ddc_config_item_t0", "ddc_config_version_t0", "ddc_publish_task_t0", "ddc_publish_ack_t0",
             "ddc_instance_t0", "ddc_operation_log_t0", "ddc_ai_resource_t0", "ddc_ai_version_t0",
-            "ddc_ai_draft_node_t0", "ddc_ai_version_node_t0", "ddc_ai_publication_t0", "ddc_i18n_page_t0", "ddl_history");
+            "ddc_ai_draft_node_t0", "ddc_ai_version_node_t0", "ddc_ai_publication_t0", "ddc_i18n_page_t0",
+            "ddc_list_definition_t0", "ddc_list_template_t0", "ddc_list_template_column_t0", "ddc_list_selection_t0", "ddl_history");
     private static final Map<String, Set<String>> TABLE_COLUMNS = Map.ofEntries(
+            Map.entry("ddc_list_definition_t0", Set.of("id", "tenant_id", "catalog_scope_id", "activation_version", "producer_id",
+                    "producer_version", "artifact_digest", "page_resource_key", "list_key", "definition_digest", "definition_json", "created_at")),
+            Map.entry("ddc_list_template_t0", Set.of("id", "tenant_id", "catalog_scope_id", "page_resource_key", "list_key", "template_type",
+                    "owner_issuer", "owner_subject", "owner_digest", "template_name", "is_default", "version", "created_by", "created_at", "updated_by", "updated_at", "deleted_at")),
+            Map.entry("ddc_list_template_column_t0", Set.of("tenant_id", "catalog_scope_id", "template_id", "column_key", "sort_order")),
+            Map.entry("ddc_list_selection_t0", Set.of("id", "tenant_id", "catalog_scope_id", "page_resource_key", "list_key", "owner_issuer",
+                    "owner_subject", "owner_digest", "template_id", "version", "updated_at")),
             Map.entry("ddc_i18n_page_t0", Set.of("id", "tenant_id", "create_user_id", "create_time", "update_user_id",
                     "update_time", "deleted_at", "version", "biz_code", "namespace_id", "env_code", "app_code",
                     "page_code", "name", "default_locale", "draft_translations", "published_default_locale",
@@ -144,6 +152,10 @@ public class DdcDatabaseReadyValidator implements SmartInitializingSingleton {
             Map.entry("uk_instance_business", new IndexSpecBO("ddc_instance_t0",
                     List.of("tenant_id", "instance_id"))));
     private static final Map<String, Set<String>> TABLE_CONSTRAINTS = Map.ofEntries(
+            Map.entry("ddc_list_definition_t0", Set.of("pk_list_definition", "uk_list_definition_identity", "fk_list_definition_activation")),
+            Map.entry("ddc_list_template_t0", Set.of("pk_list_template", "uk_list_template_owner", "uk_list_template_list", "fk_list_template_scope", "ck_list_template_owner")),
+            Map.entry("ddc_list_template_column_t0", Set.of("pk_list_template_column", "uk_list_template_column_order", "fk_list_template_column_template")),
+            Map.entry("ddc_list_selection_t0", Set.of("pk_list_selection", "uk_list_selection_owner", "fk_list_selection_template")),
             Map.entry("ddc_i18n_page_t0", Set.of("pk_i18n_page", "uk_i18n_page_tenant_id", "fk_i18n_page_namespace",
                     "ck_i18n_page_code", "ck_i18n_page_draft", "ck_i18n_page_published")),
             Map.entry("ddc_biz_t0", Set.of("pk_biz", "uk_biz_tenant_id", "uk_biz_public")),
@@ -232,6 +244,7 @@ public class DdcDatabaseReadyValidator implements SmartInitializingSingleton {
             validateLifecycleIndexPredicates(connection);
             validateNamedConstraints(connection);
             DdcPermissionMetadataReadyValidator.validate(connection);
+            DdcListTemplateReadyValidator.validate(connection);
             validateHistory(connection, manifest, routeFingerprint);
         } catch (SQLException failure) {
             throw new IllegalStateException("TIANSHU_DATABASE_SCHEMA_NOT_READY", failure);

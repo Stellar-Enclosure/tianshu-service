@@ -20,6 +20,7 @@ Service registry, dynamic configuration center and Prompt/Skill resource control
 |---|---|
 | [Base Starter](stellar-enclosure-tianshu-starter/) | Transport-independent configuration, management and registry clients; ConfigData, refresh, ACK and lease contracts/runtime. |
 | [HTTP Registration Starter](stellar-enclosure-tianshu-http-registration-starter/) | HTTP service registration, heartbeat/recovery and metadata contribution SPI. |
+| [List Template Client](stellar-enclosure-tianshu-list-client/) | Authenticated business-service access to centralized list templates. |
 | [AI Starter](stellar-enclosure-tianshu-ai-starter/) | Queued usage feedback, published Skill synchronization and optional authoring directory upload. |
 | [Admin](stellar-enclosure-tianshu-admin/) | Human management REST APIs, direct machine gRPC facades, PostgreSQL facts, Redis state and publication orchestration. |
 | [Test](stellar-enclosure-tianshu-test/) | Sample consumer application and lifecycle/contract verification. |

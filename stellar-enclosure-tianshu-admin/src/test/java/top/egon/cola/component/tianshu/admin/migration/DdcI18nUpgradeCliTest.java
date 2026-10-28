@@ -100,12 +100,30 @@ class DdcI18nUpgradeCliTest {
             var validator = new EgonColaShardingTopologyValidator(validation);
             var currentTopology = validator.validate(current, loader.load(current));
             var previousTopology = DdcPersistenceMigrationCli.priorI18nTopology(current, previous, currentTopology, loader, validator);
-            assertThat(current.getTables()).containsKey("ddc_i18n_page").hasSize(31);
-            assertThat(previous.getTables()).doesNotContainKey("ddc_i18n_page").hasSize(30);
+            assertThat(current.getTables()).containsKey("ddc_i18n_page").hasSize(35);
+            assertThat(previous.getTables()).doesNotContainKey("ddc_i18n_page").hasSize(34);
             assertThat(previousTopology.profiles()).doesNotContainKey("ddc_i18n_page");
             assertThat(currentTopology.profiles()).containsKey("ddc_i18n_page");
             assertThat(previousTopology.fingerprint()).isNotEqualTo(currentTopology.fingerprint());
             assertThat(validator.validate(current, loader.load(current)).fingerprint()).isEqualTo(currentTopology.fingerprint());
+        }
+    }
+
+    @Test void listTemplateUpgradeRemovesOnlyItsFourNewRoutes() throws Exception {
+        assertThat(DdcPersistenceMigrationCli.parseMode(new String[]{"upgrade-list-templates", "--target-config", "/private/config.yml"}))
+                .isEqualTo(DdcPersistenceMigrationCli.Mode.UPGRADE_LIST_TEMPLATES);
+        try (var validators = Validation.buildDefaultValidatorFactory()) {
+            ValidationUtils validation = new ValidationUtils(validators.getValidator());
+            var environment = environment();
+            var current = bind(environment);
+            var previous = bind(environment);
+            var loader = loader(environment, validation);
+            var validator = new EgonColaShardingTopologyValidator(validation);
+            var topology = validator.validate(current, loader.load(current));
+            var prior = DdcPersistenceMigrationCli.priorListTemplateTopology(current, previous, topology, loader, validator);
+            assertThat(previous.getTables()).doesNotContainKeys("ddc_list_definition", "ddc_list_template", "ddc_list_template_column", "ddc_list_selection");
+            assertThat(current.getTables()).containsKeys("ddc_list_definition", "ddc_list_template", "ddc_list_template_column", "ddc_list_selection");
+            assertThat(prior.fingerprint()).isNotEqualTo(topology.fingerprint());
         }
     }
 

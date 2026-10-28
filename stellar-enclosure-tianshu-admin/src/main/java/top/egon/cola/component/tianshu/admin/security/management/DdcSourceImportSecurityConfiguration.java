@@ -27,7 +27,7 @@ public class DdcSourceImportSecurityConfiguration {
     @Bean
     public IdpEndpointAuthenticationPolicy idpEndpointAuthenticationPolicy() {
         return new IdpEndpointAuthenticationPolicy(List.of("/api/v1/tianshu/i18n/public/bundle"),
-                List.of("/internal/v1/i18n/source-imports", "/internal/v1/i18n/source-imports/*"));
+                List.of("/internal/v1/i18n/source-imports", "/internal/v1/i18n/source-imports/*", "/internal/v1/tianshu/list-delegation"));
     }
 
     @Bean("ddcSourceImportSecurityFilterChain")

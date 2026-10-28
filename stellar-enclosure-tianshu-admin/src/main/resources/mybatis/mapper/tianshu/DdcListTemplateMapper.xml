@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="top.egon.cola.component.tianshu.admin.dao.DdcListTemplateMapper">
+    <resultMap id="Template" type="top.egon.cola.component.tianshu.admin.model.bo.DdcListTemplateBO">
+        <id property="id" column="id"/><result property="tenantId" column="tenant_id"/>
+        <result property="catalogScopeId" column="catalog_scope_id"/><result property="pageResourceKey" column="page_resource_key"/>
+        <result property="listKey" column="list_key"/><result property="templateType" column="template_type"/>
+        <result property="ownerIssuer" column="owner_issuer"/><result property="ownerSubject" column="owner_subject"/>
+        <result property="ownerDigest" column="owner_digest"/><result property="templateName" column="template_name"/>
+        <result property="defaultTemplate" column="is_default"/><result property="version" column="version"/>
+        <result property="createdBy" column="created_by"/><result property="createdAt" column="created_at"/>
+        <result property="updatedBy" column="updated_by"/><result property="updatedAt" column="updated_at"/>
+        <result property="deletedAt" column="deleted_at"/>
+    </resultMap>
+    <resultMap id="Selection" type="top.egon.cola.component.tianshu.admin.model.bo.DdcListSelectionBO">
+        <id property="id" column="id"/><result property="tenantId" column="tenant_id"/>
+        <result property="catalogScopeId" column="catalog_scope_id"/><result property="pageResourceKey" column="page_resource_key"/>
+        <result property="listKey" column="list_key"/><result property="ownerIssuer" column="owner_issuer"/>
+        <result property="ownerSubject" column="owner_subject"/><result property="ownerDigest" column="owner_digest"/>
+        <result property="templateId" column="template_id"/><result property="version" column="version"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+    <select id="selectAccessible" resultMap="Template">
+        SELECT * FROM ddc_list_template WHERE tenant_id=#{tenantId} AND catalog_scope_id=#{scopeId}
+          AND page_resource_key=#{pageKey} AND list_key=#{listKey} AND deleted_at IS NULL
+          AND (template_type='SYSTEM' OR (template_type='PERSONAL' AND owner_digest=#{ownerDigest}
+            AND owner_issuer=#{issuer} AND owner_subject=#{subject})) ORDER BY template_type, template_name, id LIMIT 101
+    </select>
+    <select id="lockById" resultMap="Template">
+        SELECT * FROM ddc_list_template WHERE tenant_id=#{tenantId} AND catalog_scope_id=#{scopeId}
+          AND page_resource_key=#{pageKey} AND list_key=#{listKey} AND id=#{id} AND deleted_at IS NULL FOR UPDATE
+    </select>
+    <select id="selectColumns" resultType="string">
+        SELECT column_key FROM ddc_list_template_column WHERE tenant_id=#{tenantId} AND catalog_scope_id=#{scopeId}
+          AND template_id=#{id} ORDER BY sort_order
+    </select>
+    <insert id="insertTemplate">
+        INSERT INTO ddc_list_template (id,tenant_id,catalog_scope_id,page_resource_key,list_key,template_type,
+          owner_issuer,owner_subject,owner_digest,template_name,is_default,version,created_by,created_at,updated_by,updated_at)
+        VALUES (#{row.id},#{row.tenantId},#{row.catalogScopeId},#{row.pageResourceKey},#{row.listKey},#{row.templateType},
+          #{row.ownerIssuer},#{row.ownerSubject},#{row.ownerDigest},#{row.templateName},#{row.defaultTemplate},#{row.version},
+          #{row.createdBy},#{row.createdAt},#{row.updatedBy},#{row.updatedAt})
+    </insert>
+    <update id="updateTemplate">
+        UPDATE ddc_list_template SET template_name=#{row.templateName},is_default=#{row.defaultTemplate},
+          version=version+1,updated_by=#{row.updatedBy},updated_at=#{row.updatedAt}
+        WHERE tenant_id=#{row.tenantId} AND catalog_scope_id=#{row.catalogScopeId} AND id=#{row.id}
+          AND version=#{expectedVersion} AND deleted_at IS NULL
+    </update>
+    <update id="clearDefault">
+        UPDATE ddc_list_template SET is_default=false,version=version+1,updated_by=#{row.updatedBy},updated_at=#{row.updatedAt}
+        WHERE tenant_id=#{row.tenantId} AND catalog_scope_id=#{row.catalogScopeId} AND page_resource_key=#{row.pageResourceKey}
+          AND list_key=#{row.listKey} AND template_type=#{row.templateType} AND owner_digest=#{row.ownerDigest}
+          AND owner_issuer=#{row.ownerIssuer} AND owner_subject=#{row.ownerSubject} AND is_default=true
+          AND deleted_at IS NULL AND id&lt;&gt;#{row.id}
+    </update>
+    <delete id="deleteColumns">
+        DELETE FROM ddc_list_template_column WHERE tenant_id=#{tenantId} AND catalog_scope_id=#{scopeId} AND template_id=#{id}
+    </delete>
+    <insert id="insertColumn">
+        INSERT INTO ddc_list_template_column (tenant_id,catalog_scope_id,template_id,column_key,sort_order)
+        VALUES (#{tenantId},#{scopeId},#{id},#{key},#{sortOrder})
+    </insert>
+    <update id="deleteTemplate">
+        UPDATE ddc_list_template SET deleted_at=#{now},is_default=false,version=version+1,updated_by=#{actor},updated_at=#{now}
+        WHERE tenant_id=#{tenantId} AND catalog_scope_id=#{scopeId} AND id=#{id}
+          AND version=#{expectedVersion} AND deleted_at IS NULL
+    </update>
+    <select id="selectSelection" resultMap="Selection">
+        SELECT * FROM ddc_list_selection WHERE tenant_id=#{tenantId} AND catalog_scope_id=#{scopeId}
+          AND page_resource_key=#{pageKey} AND list_key=#{listKey} AND owner_digest=#{ownerDigest}
+          AND owner_issuer=#{issuer} AND owner_subject=#{subject}
+    </select>
+    <insert id="insertSelection">
+        INSERT INTO ddc_list_selection (id,tenant_id,catalog_scope_id,page_resource_key,list_key,owner_issuer,
+          owner_subject,owner_digest,template_id,version,updated_at)
+        VALUES (#{row.id},#{row.tenantId},#{row.catalogScopeId},#{row.pageResourceKey},#{row.listKey},#{row.ownerIssuer},
+          #{row.ownerSubject},#{row.ownerDigest},#{row.templateId},#{row.version},#{row.updatedAt})
+    </insert>
+    <update id="updateSelection">
+        UPDATE ddc_list_selection SET template_id=#{row.templateId},version=version+1,updated_at=#{row.updatedAt}
+        WHERE tenant_id=#{row.tenantId} AND catalog_scope_id=#{row.catalogScopeId} AND id=#{row.id}
+          AND owner_issuer=#{row.ownerIssuer} AND owner_subject=#{row.ownerSubject} AND version=#{expectedVersion}
+    </update>
+    <delete id="deleteSelection">
+        DELETE FROM ddc_list_selection WHERE tenant_id=#{tenantId} AND catalog_scope_id=#{scopeId}
+          AND page_resource_key=#{pageKey} AND list_key=#{listKey} AND owner_digest=#{ownerDigest}
+          AND owner_issuer=#{issuer} AND owner_subject=#{subject}
+    </delete>
+</mapper>

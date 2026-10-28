@@ -8,6 +8,8 @@ import top.egon.cola.component.tianshu.admin.model.vo.DdcPageResult;
 
 public interface DdcResourceMetadataProjectionRepository {
     List<DdcResourceMetadataProjectionBO> findBySource(Long catalogScopeId, Long sourceId);
+    List<DdcResourceMetadataProjectionBO> findActivatedResource(Long catalogScopeId, Long projectionId, String key);
+    List<DdcResourceMetadataProjectionBO> findActivatedResources(Long catalogScopeId, Long projectionId, List<String> keys);
     DdcPageResult<DdcResourceMetadataProjectionBO> search(Long catalogScopeId, Long projectionId, DdcResourceMetadataQuery filter, PageQuery page);
     void insertAll(List<DdcResourceMetadataProjectionBO> rows);
 }
