@@ -87,6 +87,14 @@ class DdcI18nScopeValidatorTest {
         verify(gate, never()).invalidate(anyString());
     }
 
+    @Test void metadataFenceReusesTheExistingParentProtection() {
+        authentication("SCOPE_TIANSHU_PUBLISH", "CAP_TIANSHU_PUBLISH");
+        Long namespace = transaction.execute(status -> validator.requireWithMetadataFence(SCOPE, DdcAdminCapability.PUBLISH));
+        assertThat(namespace).isEqualTo(7L);
+        verify(pages, never()).lockScope(any());
+        verify(gate).assertEnabledFresh("retail", "shop", "prod", "main");
+    }
+
     @Test void freshScopeRejectionStopsPublicationScopeResolution() {
         authentication("SCOPE_TIANSHU_PUBLISH", "CAP_TIANSHU_PUBLISH");
         doThrow(new CommonException(top.egon.cola.component.tianshu.error.DdcErrorStatus.SCOPE_DISABLED))

@@ -26,9 +26,19 @@ public class DdcI18nScopeValidator {
     private final top.egon.cola.platform.tianquan.jianshen.starter.permission.PermissionExecutionGuard permissionExecution;
 
     public Long require(DdcI18nScope scope, DdcAdminCapability capability) {
+        return require(scope, capability, true);
+    }
+
+    /** Caller has fenced the matching metadata scope in the same transaction. */
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+    Long requireWithMetadataFence(DdcI18nScope scope, DdcAdminCapability capability) {
+        return require(scope, capability, false);
+    }
+
+    private Long require(DdcI18nScope scope, DdcAdminCapability capability, boolean acquireParentLocks) {
         requirePermission(capability);
         validateScope(scope);
-        if ((capability == DdcAdminCapability.WRITE || capability == DdcAdminCapability.PUBLISH)
+        if (acquireParentLocks && (capability == DdcAdminCapability.WRITE || capability == DdcAdminCapability.PUBLISH)
                 && org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
             repository.lockScope(scope);
         }

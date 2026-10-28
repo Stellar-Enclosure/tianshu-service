@@ -72,7 +72,7 @@ public class DdcI18nPageService {
         String reviewed = validation.reviewedSources(command.reviewedSourceHashes(), source);
         return Objects.requireNonNull(transaction.execute(status -> {
             lockTarget(selection.descriptor().scope());
-            Long namespaceId = scopes.require(scope, DdcAdminCapability.WRITE);
+            Long namespaceId = scopes.requireWithMetadataFence(scope, DdcAdminCapability.WRITE);
             if (repository.findByPageCode(scope, command.pageCode()).isPresent()) {
                 throw new CommonException(56403, "TIANSHU_I18N_PAGE_EXISTS", "Page code already exists in this scope");
             }
@@ -135,8 +135,9 @@ public class DdcI18nPageService {
         String reviewed = validation.reviewedSources(command.reviewedSourceHashes(), source);
         return Objects.requireNonNull(transaction.execute(status -> {
             lockTarget(target(prior));
-            var page = repository.lockById(id).orElseThrow(DdcI18nPageService::missing);
-            assertScope(page, DdcAdminCapability.WRITE); revision(page, command.expectedRevision());
+            var page = repository.findById(id).orElseThrow(DdcI18nPageService::missing);
+            if (!target(prior).equals(target(page))) throw conflict();
+            assertFencedScope(page, DdcAdminCapability.WRITE); revision(page, command.expectedRevision());
             page.setName(command.name()).setDefaultLocale(command.defaultLocale()).setDraftTranslations(draft)
                     .setDraftActivationVersion(Long.valueOf(command.catalogActivationVersion())).setDraftSourceHashes(reviewed);
             page = repository.update(page).orElseThrow(DdcI18nPageService::conflict);
@@ -155,8 +156,9 @@ public class DdcI18nPageService {
         var source = sources(selection, prior.getPageCode(), false);
         return Objects.requireNonNull(transaction.execute(status -> {
             lockTarget(target(prior));
-            var page = repository.lockById(id).orElseThrow(DdcI18nPageService::missing);
-            assertScope(page, DdcAdminCapability.PUBLISH);
+            var page = repository.findById(id).orElseThrow(DdcI18nPageService::missing);
+            if (!target(prior).equals(target(page))) throw conflict();
+            assertFencedScope(page, DdcAdminCapability.PUBLISH);
             var previous = publications.findByOperation(page.getCatalogScopeId(), id, command.operationId());
             if (previous.isPresent()) {
                 if (!previous.get().getRequestDigest().equals(requestDigest)) throw conflict();
@@ -307,6 +309,10 @@ public class DdcI18nPageService {
     private DdcI18nScope scope(DdcI18nPageBO page) { return new DdcI18nScope(page.getBizCode(), page.getNamespaceCode(), page.getEnvCode(), page.getAppCode()); }
     private void assertScope(DdcI18nPageBO page, DdcAdminCapability capability) {
         if (!Objects.equals(scopes.require(scope(page), capability), page.getNamespaceId())) throw missing();
+    }
+
+    private void assertFencedScope(DdcI18nPageBO page, DdcAdminCapability capability) {
+        if (!Objects.equals(scopes.requireWithMetadataFence(scope(page), capability), page.getNamespaceId())) throw missing();
     }
     private DdcI18nPageBO requirePage(Long id) {
         if (id == null || id <= 0) throw DdcI18nValidation.invalid("Invalid page id");

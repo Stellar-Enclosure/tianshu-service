@@ -76,6 +76,7 @@ class DdcI18nPageServiceTest {
                 .publishedVersion(1L).publishedSourceHashes(CanonicalJson.write(hashes())).build();
         when(repository.findById(1L)).thenReturn(Optional.of(page));
         when(repository.lockById(1L)).thenReturn(Optional.of(page));
+        when(scopes.requireWithMetadataFence(any(), any())).thenReturn(7L);
         when(repository.findByPageCode(PAGE_SCOPE, "orders")).thenReturn(Optional.of(page));
         when(repository.update(any())).thenAnswer(call -> Optional.of(call.<DdcI18nPageBO>getArgument(0)
                 .setVersion(call.<DdcI18nPageBO>getArgument(0).getVersion() + 1)));
@@ -107,9 +108,21 @@ class DdcI18nPageServiceTest {
         assertThat(first.publishedAt()).isEqualTo(NOW); assertThat(page.getVersion()).isEqualTo(5L);
         assertThat(page.getPublishedTranslations()).isEqualTo(page.getDraftTranslations());
         assertThat(service.publish(1L, command)).isEqualTo(first);
+        verify(repository, never()).lockById(anyLong());
+        verify(scopes, atLeastOnce()).requireWithMetadataFence(PAGE_SCOPE, DdcAdminCapability.PUBLISH);
         verify(publications, times(1)).insert(any()); verify(repository, times(1)).update(any());
         verify(audit, times(1)).insert(argThat(log -> log.getOperationType().equals("I18N_PUBLISH") && !log.getOperationContent().contains("Draft")));
         assertThatThrownBy(() -> service.publish(1L, new DdcI18nPublishCommand("5", OPERATION))).isInstanceOf(CommonException.class);
+    }
+
+    @Test void aDifferentReplicaPageScopeCannotReuseThePreviousScopeFence() {
+        var other = DdcI18nPageBO.builder().id(1L).tenantId(101L).namespaceId(8L).namespaceCode("other")
+                .bizCode("trade").envCode("test").appCode("order").catalogScopeId(502L).build();
+        when(repository.findById(1L)).thenReturn(Optional.of(page), Optional.of(other));
+        assertThatThrownBy(() -> service.publish(1L, new DdcI18nPublishCommand("4", OPERATION)))
+                .isInstanceOf(CommonException.class);
+        verify(publications, never()).insert(any());
+        verify(repository, never()).update(any());
     }
 
     @Test void staleRevisionAndLostCasNeverProduceSuccessAudit() {
