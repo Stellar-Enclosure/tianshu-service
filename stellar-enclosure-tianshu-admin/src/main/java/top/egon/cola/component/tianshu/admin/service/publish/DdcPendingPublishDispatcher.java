@@ -177,7 +177,7 @@ public class DdcPendingPublishDispatcher {
             if (!advancePublishedVersion(command)) {
                 throw new IllegalStateException("published pointer update is uncertain after Redis dispatch");
             }
-            stateTransitions.refreshAfterAck(task.getChangeId());
+            stateTransitions.refreshAfterAck(task, null);
             return true;
         }));
     }

@@ -140,9 +140,11 @@ public class DdcPublishStateTransitionService {
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
     public DdcPublishTaskBO refreshAfterAck(DdcPublishTaskBO task, DdcPublishAckBO acknowledged) {
         List<DdcPublishAckBO> targets = new ArrayList<>(ackRepository.findByChangeId(task.getChangeId()));
-        // The replica cannot yet see this transaction's ACK write.
-        targets.removeIf(value -> Objects.equals(value.getId(), acknowledged.getId()));
-        targets.add(acknowledged);
+        if (acknowledged != null) {
+            // The replica cannot yet see this transaction's ACK write.
+            targets.removeIf(value -> Objects.equals(value.getId(), acknowledged.getId()));
+            targets.add(acknowledged);
+        }
         int success = count(targets, DdcAckStatus.SUCCESS.name());
         int failed = count(targets, DdcAckStatus.FAILED.name());
         int ignored = count(targets, DdcAckStatus.IGNORED.name());
