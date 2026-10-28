@@ -45,4 +45,6 @@ public interface DdcPublishAckMapper extends EgonColaMapper<DdcPublishAckPO> {
     int markIncompleteTimeout(@Param("tenantId") Long tenantId, @Param("changeId") String changeId,
             @Param("timeoutStatus") String timeoutStatus, @Param("ackAt") LocalDateTime ackAt, @Param("actor") String actor);
     int resetTargets(@Param("tenantId") Long tenantId, @Param("changeId") String changeId, @Param("actor") String actor);
+    int resetTarget(@Param("tenantId") Long tenantId, @Param("id") Long id,
+            @Param("expectedVersion") Long expectedVersion, @Param("actor") String actor, @Param("now") java.time.Instant now);
 }

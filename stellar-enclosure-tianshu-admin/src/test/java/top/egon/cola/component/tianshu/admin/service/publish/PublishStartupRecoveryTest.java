@@ -51,13 +51,13 @@ class PublishStartupRecoveryTest {
                     if ("101".equals(MDC.get("tenantId"))) throw new IllegalStateException("tenant failure");
                     return List.of(pending, publishing, unknown);
                 });
-        when(repository.claimStaleForRecovery("pending", List.of(
+        when(repository.claimStaleForRecovery(pending, List.of(
                 PublishStatus.PENDING.name(), PublishStatus.PUBLISHING.name(), PublishStatus.UNKNOWN.name()),
                 staleBefore, claimedAt)).thenReturn(1);
-        when(repository.claimStaleForRecovery("publishing", List.of(
+        when(repository.claimStaleForRecovery(publishing, List.of(
                 PublishStatus.PENDING.name(), PublishStatus.PUBLISHING.name(), PublishStatus.UNKNOWN.name()),
                 staleBefore, claimedAt)).thenReturn(0);
-        when(repository.claimStaleForRecovery("unknown", List.of(
+        when(repository.claimStaleForRecovery(unknown, List.of(
                 PublishStatus.PENDING.name(), PublishStatus.PUBLISHING.name(), PublishStatus.UNKNOWN.name()),
                 staleBefore, claimedAt)).thenReturn(1);
         PublishStartupRecovery recovery = new PublishStartupRecovery(repository, dispatcher, properties,
@@ -66,9 +66,11 @@ class PublishStartupRecoveryTest {
         assertThat(recovery.recoverStale()).isEqualTo(2);
 
         assertThat(scanned).containsExactly("101", "202");
-        verify(dispatcher).dispatch("pending");
-        verify(dispatcher, never()).dispatch("publishing");
-        verify(dispatcher).dispatch("unknown");
+        verify(dispatcher).dispatch(pending);
+        verify(dispatcher, never()).dispatch(publishing);
+        verify(dispatcher).dispatch(unknown);
+        assertThat(pending.getVersion()).isEqualTo(4L);
+        assertThat(unknown.getVersion()).isEqualTo(4L);
         assertThat(MDC.get("tenantId")).isNull();
         assertThat(MDC.get("userId")).isNull();
     }
@@ -92,6 +94,6 @@ class PublishStartupRecoveryTest {
     }
 
     private DdcPublishTaskBO task(String changeId, PublishStatus status) {
-        return DdcPublishTaskBO.builder().changeId(changeId).status(status.name()).ackCount(1).targetCount(2).build();
+        return DdcPublishTaskBO.builder().id(1L).version(3L).changeId(changeId).status(status.name()).ackCount(1).targetCount(2).build();
     }
 }

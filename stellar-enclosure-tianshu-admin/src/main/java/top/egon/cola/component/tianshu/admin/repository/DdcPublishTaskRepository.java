@@ -9,6 +9,7 @@ import top.egon.cola.component.common.mybatis.model.EgonColaModelValidationGroup
 import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishTaskBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishAckSummaryBO;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcPageResult;
+import top.egon.cola.component.tianshu.model.config.DdcPublishTarget;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -29,6 +30,8 @@ public interface DdcPublishTaskRepository {
     @Validated(EgonColaModelValidationGroups.Update.class)
     boolean fenceObservedVersion(@NotNull DdcPublishTaskBO task);
 
+    boolean fenceDispatchTargets(@NotNull DdcPublishTaskBO task, @NotNull List<DdcPublishTarget> targets);
+
     int updateAckSummary(@NotNull DdcPublishTaskBO task, @NotNull DdcPublishAckSummaryBO summary, @NotNull LocalDateTime updatedAt);
 
     @Validated(EgonColaModelValidationGroups.Query.class)
@@ -45,7 +48,7 @@ public interface DdcPublishTaskRepository {
             String changeId, PageQuery pageQuery);
 
     @Validated(EgonColaModelValidationGroups.Update.class)
-    int claimStaleForRecovery(String changeId, Collection<String> activeStatuses,
+    int claimStaleForRecovery(DdcPublishTaskBO task, Collection<String> activeStatuses,
             LocalDateTime staleBefore, LocalDateTime claimedAt);
 
     @Validated(EgonColaModelValidationGroups.Query.class)
@@ -53,7 +56,7 @@ public interface DdcPublishTaskRepository {
             String bizCode, String env, String appCode, String resourceName, Collection<String> statuses);
 
     @Validated(EgonColaModelValidationGroups.Update.class)
-    int transitionToPublishing(String changeId, Collection<String> dispatchableStatuses,
+    int transitionToPublishing(DdcPublishTaskBO task, Collection<String> dispatchableStatuses,
             String pendingStatus, String publishingStatus, LocalDateTime dispatchedAt);
 
     @Validated(EgonColaModelValidationGroups.Update.class)
@@ -61,15 +64,15 @@ public interface DdcPublishTaskRepository {
             int timeoutCount, LocalDateTime updatedAt);
 
     @Validated(EgonColaModelValidationGroups.Update.class)
-    int transitionToTerminal(String changeId, String terminalStatus, LocalDateTime completedAt,
+    int transitionToTerminal(DdcPublishTaskBO task, String terminalStatus, LocalDateTime completedAt,
             String failureStage, String errorMessage, Collection<String> activeStatuses);
 
     @Validated(EgonColaModelValidationGroups.Update.class)
-    int resetForRetry(String changeId, String pendingStatus, String operator,
+    int resetForRetry(DdcPublishTaskBO task, String pendingStatus, String operator,
             LocalDateTime updatedAt, Collection<String> retryableStatuses);
 
     @Validated(EgonColaModelValidationGroups.Update.class)
-    int markRetryLeaseExpired(String changeId, String failedStatus, LocalDateTime completedAt,
+    int markRetryLeaseExpired(DdcPublishTaskBO task, String failedStatus, LocalDateTime completedAt,
             String failureStage, String errorMessage, Collection<String> retryableStatuses);
 
     @Validated(EgonColaModelValidationGroups.Insert.class)

@@ -313,6 +313,31 @@ class DdcPublishDispatchConsistencyTest {
     }
 
     @Test
+    void staleTaskOrMismatchedPrimaryTargetsRollBackBeforeRedisDispatch() {
+        DdcPublishTaskBO task = savePreparedPublish("replica-task-lag");
+        dispatcher.dispatch(task.getChangeId());
+        DdcConfigDispatchPreparedEvent event = persistence.preparedEvent(persistence.pollOutboxMessage());
+        var rolledBack = new java.util.concurrent.atomic.AtomicBoolean();
+        persistence.transactionManager.onRollback(() -> rolledBack.set(true));
+        when(taskRepository.fenceObservedVersion(any())).thenReturn(false);
+
+        assertThatThrownBy(() -> persistence.deliver(event))
+                .isInstanceOf(org.springframework.dao.OptimisticLockingFailureException.class);
+        assertThat(rolledBack).isTrue();
+        verify(redisRepository, never()).dispatch(any(), any());
+        verify(taskRepository, never()).findForUpdateByChangeId(any());
+
+        rolledBack.set(false);
+        persistence.transactionManager.onRollback(() -> rolledBack.set(true));
+        when(taskRepository.fenceObservedVersion(any())).thenReturn(true);
+        when(taskRepository.fenceDispatchTargets(any(), any())).thenReturn(false);
+        assertThatThrownBy(() -> persistence.deliver(event))
+                .isInstanceOf(org.springframework.dao.TransientDataAccessResourceException.class);
+        assertThat(rolledBack).isTrue();
+        verify(redisRepository, never()).dispatch(any(), any());
+    }
+
+    @Test
     void largeContentIsDeferredInRedisNotificationButRetainedInCommand() {
         String largeYaml = "feature:\n  value: "
                 + "x".repeat(128)

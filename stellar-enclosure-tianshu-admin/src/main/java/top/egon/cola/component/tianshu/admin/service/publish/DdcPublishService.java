@@ -136,7 +136,7 @@ public class DdcPublishService {
         if (prepared.dispatchRequired()) {
             DdcPublishTaskBO dispatched;
             try {
-                dispatched = dispatcher.dispatch(request.getChangeId());
+                dispatched = dispatcher.dispatch(prepared.task());
             } catch (RuntimeException exception) {
                 waiterRegistry.remove(request.getChangeId(), waiter);
                 throw exception;
@@ -186,7 +186,7 @@ public class DdcPublishService {
                 waiterRegistry.register(changeId);
         DdcPublishTaskBO dispatched;
         try {
-            dispatched = dispatcher.dispatch(changeId);
+            dispatched = dispatcher.dispatch(prepared.task());
         } catch (RuntimeException exception) {
             waiterRegistry.remove(changeId, waiter);
             throw exception;
@@ -280,13 +280,13 @@ public class DdcPublishService {
                 if (!deadline.isAfter(now)) {
                     if (PublishStatus.PENDING.name().equals(task.getStatus())) {
                         stateTransitions.fail(
-                                changeId,
+                                task,
                                 "DISPATCH_TIMEOUT",
                                 "publish dispatch timed out"
                         );
                     } else {
                         stateTransitions.timeout(
-                                changeId,
+                                task,
                                 "publish acknowledgement timed out"
                         );
                     }
@@ -420,21 +420,36 @@ public class DdcPublishService {
                 task.getAppCode(),
                 targets
         )) {
-            stateTransitions.markTargetLeaseExpired(changeId, RETRYABLE_STATUSES);
+            stateTransitions.markTargetLeaseExpired(task, RETRYABLE_STATUSES);
             return RetryPrepareResult.expired();
         }
+        if (!publishTaskRepository.fenceDispatchTargets(task, targets)) {
+            throw new org.springframework.dao.OptimisticLockingFailureException("publish retry targets changed after replica read");
+        }
+        task.setVersion(Math.addExact(task.getVersion(), 1L));
+        LocalDateTime changedAt = now();
         int reset = publishTaskRepository.resetForRetry(
-                changeId,
+                task,
                 PublishStatus.PENDING.name(),
                 operator,
-                now(),
+                changedAt,
                 RETRYABLE_STATUSES
         );
         if (reset != 1) {
             throw new DdcAdminException("publish task is not retryable");
         }
-        publishAckRepository.resetTargets(changeId);
-        return RetryPrepareResult.ready();
+        task.setStatus(PublishStatus.PENDING.name())
+                .setAttemptCount(Math.addExact(task.getAttemptCount() == null ? 0 : task.getAttemptCount(), 1))
+                .setDispatchedAt(null).setCompletedAt(null).setFailureStage(null).setErrorMessage(null)
+                .setAckCount(0).setFailedCount(0).setIgnoredCount(0).setTimeoutCount(0).setUpdatedAt(changedAt)
+                .setVersion(Math.addExact(task.getVersion(), 1L));
+        if (operator != null) task.setOperator(operator);
+        for (DdcPublishAckBO target : targetRows) {
+            if (!publishAckRepository.resetTarget(target)) {
+                throw new org.springframework.dao.OptimisticLockingFailureException("publish acknowledgement changed before retry");
+            }
+        }
+        return RetryPrepareResult.ready(task);
     }
 
     private DdcPublishTaskBO newTask(DdcPublishRequest request,
@@ -698,15 +713,15 @@ public class DdcPublishService {
     }
 
     private record RetryPrepareResult(
-            boolean targetLeaseExpired
+            boolean targetLeaseExpired, DdcPublishTaskBO task
     ) {
 
-        private static RetryPrepareResult ready() {
-            return new RetryPrepareResult(false);
+        private static RetryPrepareResult ready(DdcPublishTaskBO task) {
+            return new RetryPrepareResult(false, task);
         }
 
         private static RetryPrepareResult expired() {
-            return new RetryPrepareResult(true);
+            return new RetryPrepareResult(true, null);
         }
     }
 }

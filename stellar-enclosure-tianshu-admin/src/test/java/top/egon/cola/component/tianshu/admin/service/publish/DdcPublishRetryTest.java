@@ -214,6 +214,21 @@ class DdcPublishRetryTest {
     }
 
     @Test
+    void retryRollsBackWhenAReplicaTargetVersionIsStale() {
+        DdcPublishTaskBO task = saveRetryable(PublishStatus.TIMEOUT, "retry-stale-target");
+        when(leaseService.areActiveTargets(eq("default"), eq("dev"), any(), anyList())).thenReturn(true);
+        when(ackRepository.resetTarget(any())).thenReturn(false);
+        var rolledBack = new java.util.concurrent.atomic.AtomicBoolean();
+        persistence.transactionManager.onRollback(() -> rolledBack.set(true));
+
+        assertThatThrownBy(() -> publishService.retry(task.getChangeId()))
+                .isInstanceOf(org.springframework.dao.OptimisticLockingFailureException.class);
+        assertThat(rolledBack).isTrue();
+        verify(persistence.outbox, never()).enqueue(any());
+        verify(ackRepository, never()).resetTargets(any());
+    }
+
+    @Test
     void rejectsSuccessAndActiveTasks() {
         for (PublishStatus status : List.of(
                 PublishStatus.SUCCESS,

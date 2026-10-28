@@ -74,6 +74,21 @@
         UPDATE ddc_publish_task SET version = version + 1, update_user_id = #{actor}, update_time = #{now}
         WHERE tenant_id = #{tenantId} AND id = #{id} AND version = #{expectedVersion} AND deleted_at IS NULL
     </update>
+    <update id="fenceDispatchTargets">
+        UPDATE ddc_publish_task SET version = version + 1, update_user_id = #{actor}, update_time = #{now}
+        WHERE tenant_id = #{tenantId} AND id = #{task.id} AND version = #{task.version}
+          AND change_id = #{task.changeId} AND deleted_at IS NULL
+          AND target_count = #{targets.size}
+          AND (SELECT count(*) FROM ddc_publish_ack a WHERE a.tenant_id = #{tenantId}
+               AND a.change_id = #{task.changeId} AND a.deleted_at IS NULL) = #{targets.size}
+        <foreach collection="targets" item="target">
+          AND EXISTS (SELECT 1 FROM ddc_publish_ack a WHERE a.tenant_id = #{tenantId}
+              AND a.change_id = #{task.changeId} AND a.instance_id = #{target.instanceId}
+              AND a.deleted_at IS NULL
+              <choose><when test="target.leaseId == null">AND a.lease_id IS NULL</when>
+                  <otherwise>AND a.lease_id = #{target.leaseId}</otherwise></choose>)
+        </foreach>
+    </update>
     <update id="updateAckSummary">
         UPDATE ddc_publish_task t
         SET ack_count = #{summary.success}, failed_count = #{summary.failed},
@@ -144,8 +159,9 @@
 
     <update id="claimStaleForRecovery">
         UPDATE ddc_publish_task SET updated_at = #{claimedAt}, version = version + 1,
-            update_user_id = #{actor}, update_time = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
-        WHERE tenant_id = #{tenantId} AND change_id = #{changeId} AND deleted_at IS NULL
+            update_user_id = #{actor}, update_time = #{now}
+        WHERE tenant_id = #{tenantId} AND id = #{task.id} AND version = #{task.version}
+          AND change_id = #{task.changeId} AND deleted_at IS NULL
           AND status IN <foreach collection="activeStatuses" item="status" open="(" separator="," close=")">#{status}</foreach>
           AND updated_at &lt; #{staleBefore}
     </update>
@@ -154,8 +170,9 @@
             attempt_count = CASE WHEN status = #{pendingStatus} THEN attempt_count ELSE coalesce(attempt_count, 0) + 1 END,
             dispatched_at = #{dispatchedAt}, completed_at = NULL, failure_stage = NULL, error_message = NULL,
             updated_at = #{dispatchedAt}, version = version + 1,
-            update_user_id = #{actor}, update_time = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
-        WHERE tenant_id = #{tenantId} AND change_id = #{changeId} AND deleted_at IS NULL
+            update_user_id = #{actor}, update_time = #{now}
+        WHERE tenant_id = #{tenantId} AND id = #{task.id} AND version = #{task.version}
+          AND change_id = #{task.changeId} AND deleted_at IS NULL
           AND status IN <foreach collection="dispatchableStatuses" item="status" open="(" separator="," close=")">#{status}</foreach>
     </update>
     <update id="updateCounters">
@@ -167,8 +184,9 @@
     <update id="transitionToTerminal">
         UPDATE ddc_publish_task SET status = #{terminalStatus}, completed_at = #{completedAt},
             failure_stage = #{failureStage}, error_message = #{errorMessage}, updated_at = #{completedAt},
-            version = version + 1, update_user_id = #{actor}, update_time = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
-        WHERE tenant_id = #{tenantId} AND change_id = #{changeId} AND deleted_at IS NULL
+            version = version + 1, update_user_id = #{actor}, update_time = #{now}
+        WHERE tenant_id = #{tenantId} AND id = #{task.id} AND version = #{task.version}
+          AND change_id = #{task.changeId} AND deleted_at IS NULL
           AND status IN <foreach collection="activeStatuses" item="status" open="(" separator="," close=")">#{status}</foreach>
     </update>
     <update id="resetForRetry">
@@ -176,15 +194,17 @@
             dispatched_at = NULL, completed_at = NULL, failure_stage = NULL, error_message = NULL,
             ack_count = 0, failed_count = 0, ignored_count = 0, timeout_count = 0,
             operator = coalesce(#{operator}, operator), updated_at = #{updatedAt}, version = version + 1,
-            update_user_id = #{actor}, update_time = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
-        WHERE tenant_id = #{tenantId} AND change_id = #{changeId} AND deleted_at IS NULL
+            update_user_id = #{actor}, update_time = #{now}
+        WHERE tenant_id = #{tenantId} AND id = #{task.id} AND version = #{task.version}
+          AND change_id = #{task.changeId} AND deleted_at IS NULL
           AND status IN <foreach collection="retryableStatuses" item="status" open="(" separator="," close=")">#{status}</foreach>
     </update>
     <update id="markRetryLeaseExpired">
         UPDATE ddc_publish_task SET status = #{failedStatus}, completed_at = #{completedAt},
             failure_stage = #{failureStage}, error_message = #{errorMessage}, updated_at = #{completedAt},
-            version = version + 1, update_user_id = #{actor}, update_time = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
-        WHERE tenant_id = #{tenantId} AND change_id = #{changeId} AND deleted_at IS NULL
+            version = version + 1, update_user_id = #{actor}, update_time = #{now}
+        WHERE tenant_id = #{tenantId} AND id = #{task.id} AND version = #{task.version}
+          AND change_id = #{task.changeId} AND deleted_at IS NULL
           AND status IN <foreach collection="retryableStatuses" item="status" open="(" separator="," close=")">#{status}</foreach>
     </update>
     <update id="deleteVersionedById">

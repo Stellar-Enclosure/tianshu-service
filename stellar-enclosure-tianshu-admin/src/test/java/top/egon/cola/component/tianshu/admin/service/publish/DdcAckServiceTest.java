@@ -300,6 +300,19 @@ public class DdcAckServiceTest {
                 .isEqualTo(DdcAckStatus.TIMEOUT.name());
     }
 
+    @Test
+    void timeoutDoesNotCompleteWhenReplicaMissesATarget() {
+        DdcPublishTaskBO task = savePublishingTask("timeout-replica-lag");
+        saveTarget(task, "instance-1", "lease-1");
+        Mockito.when(ackRepository.findByChangeId(task.getChangeId())).thenReturn(List.of());
+
+        assertThatThrownBy(() -> stateTransitions.timeout(task.getChangeId(), "timeout"))
+                .isInstanceOf(org.springframework.dao.TransientDataAccessResourceException.class);
+        assertThat(task.getStatus()).isEqualTo(PublishStatus.PUBLISHING.name());
+        Mockito.verify(ackRepository, Mockito.never()).markIncompleteTimeout(Mockito.anyString(), Mockito.anyString(), Mockito.any());
+        Mockito.verify(taskRepository, Mockito.never()).findForUpdateByChangeId(Mockito.anyString());
+    }
+
     private DdcPublishTaskBO savePublishingTask(String label) {
         LocalDateTime now = LocalDateTime.now();
         DdcPublishTaskBO task = new DdcPublishTaskBO();
@@ -395,6 +408,7 @@ public class DdcAckServiceTest {
             Mockito.when(tasks.findForUpdateByChangeId(Mockito.anyString()))
                     .thenAnswer(invocation -> Optional.ofNullable(taskRows.get(invocation.getArgument(0))));
             Mockito.when(tasks.fenceObservedVersion(Mockito.any())).thenReturn(true);
+            Mockito.when(tasks.fenceDispatchTargets(Mockito.any(), Mockito.anyList())).thenReturn(true);
             Mockito.when(tasks.updateAckSummary(Mockito.any(), Mockito.any(), Mockito.any())).thenAnswer(invocation -> {
                 DdcPublishTaskBO task = invocation.getArgument(0);
                 var summary = invocation.<top.egon.cola.component.tianshu.admin.model.bo.DdcPublishAckSummaryBO>getArgument(1);
@@ -447,61 +461,41 @@ public class DdcAckServiceTest {
                         .setUpdatedAt(invocation.getArgument(5));
                 return 1;
             });
-            Mockito.when(tasks.transitionToTerminal(Mockito.anyString(), Mockito.anyString(), Mockito.any(),
+            Mockito.when(tasks.transitionToTerminal(Mockito.any(DdcPublishTaskBO.class), Mockito.anyString(), Mockito.any(),
                     Mockito.any(), Mockito.any(), Mockito.anyCollection())).thenAnswer(invocation -> {
-                DdcPublishTaskBO task = taskRows.get(invocation.getArgument(0));
+                DdcPublishTaskBO task = invocation.getArgument(0);
                 Collection<String> statuses = invocation.getArgument(5);
                 if (task == null || !statuses.contains(task.getStatus())) return 0;
-                task.setStatus(invocation.getArgument(1)).setCompletedAt(invocation.getArgument(2))
-                        .setFailureStage(invocation.getArgument(3)).setErrorMessage(invocation.getArgument(4))
-                        .setUpdatedAt(invocation.getArgument(2));
                 return 1;
             });
-            Mockito.when(tasks.transitionToPublishing(Mockito.anyString(), Mockito.anyCollection(), Mockito.anyString(),
+            Mockito.when(tasks.transitionToPublishing(Mockito.any(DdcPublishTaskBO.class), Mockito.anyCollection(), Mockito.anyString(),
                     Mockito.anyString(), Mockito.any())).thenAnswer(invocation -> {
-                DdcPublishTaskBO task = taskRows.get(invocation.getArgument(0));
+                DdcPublishTaskBO task = invocation.getArgument(0);
                 Collection<String> statuses = invocation.getArgument(1);
                 if (task == null || !statuses.contains(task.getStatus())) return 0;
-                String current = task.getStatus();
-                task.setStatus(invocation.getArgument(3));
-                if (!Objects.equals(invocation.getArgument(2), current)) {
-                    task.setAttemptCount((task.getAttemptCount() == null ? 0 : task.getAttemptCount()) + 1);
-                }
-                task.setDispatchedAt(invocation.getArgument(4)).setCompletedAt(null)
-                        .setFailureStage(null).setErrorMessage(null).setUpdatedAt(invocation.getArgument(4));
                 return 1;
             });
-            Mockito.when(tasks.resetForRetry(Mockito.anyString(), Mockito.anyString(), Mockito.any(),
+            Mockito.when(tasks.resetForRetry(Mockito.any(DdcPublishTaskBO.class), Mockito.anyString(), Mockito.any(),
                     Mockito.any(), Mockito.anyCollection())).thenAnswer(invocation -> {
-                DdcPublishTaskBO task = taskRows.get(invocation.getArgument(0));
+                DdcPublishTaskBO task = invocation.getArgument(0);
                 Collection<String> statuses = invocation.getArgument(4);
                 if (task == null || !statuses.contains(task.getStatus())) return 0;
-                task.setStatus(invocation.getArgument(1))
-                        .setAttemptCount((task.getAttemptCount() == null ? 0 : task.getAttemptCount()) + 1)
-                        .setDispatchedAt(null).setCompletedAt(null).setFailureStage(null).setErrorMessage(null)
-                        .setAckCount(0).setFailedCount(0).setIgnoredCount(0).setTimeoutCount(0)
-                        .setUpdatedAt(invocation.getArgument(3));
-                if (invocation.getArgument(2) != null) task.setOperator(invocation.getArgument(2));
                 return 1;
             });
-            Mockito.when(tasks.markRetryLeaseExpired(Mockito.anyString(), Mockito.anyString(), Mockito.any(),
+            Mockito.when(tasks.markRetryLeaseExpired(Mockito.any(DdcPublishTaskBO.class), Mockito.anyString(), Mockito.any(),
                     Mockito.any(), Mockito.any(), Mockito.anyCollection())).thenAnswer(invocation -> {
-                DdcPublishTaskBO task = taskRows.get(invocation.getArgument(0));
+                DdcPublishTaskBO task = invocation.getArgument(0);
                 Collection<String> statuses = invocation.getArgument(5);
                 if (task == null || !statuses.contains(task.getStatus())) return 0;
-                task.setStatus(invocation.getArgument(1)).setCompletedAt(invocation.getArgument(2))
-                        .setFailureStage(invocation.getArgument(3)).setErrorMessage(invocation.getArgument(4))
-                        .setUpdatedAt(invocation.getArgument(2));
                 return 1;
             });
-            Mockito.when(tasks.claimStaleForRecovery(Mockito.anyString(), Mockito.anyCollection(), Mockito.any(),
+            Mockito.when(tasks.claimStaleForRecovery(Mockito.any(DdcPublishTaskBO.class), Mockito.anyCollection(), Mockito.any(),
                     Mockito.any())).thenAnswer(invocation -> {
-                DdcPublishTaskBO task = taskRows.get(invocation.getArgument(0));
+                DdcPublishTaskBO task = invocation.getArgument(0);
                 Collection<String> statuses = invocation.getArgument(1);
                 LocalDateTime cutoff = invocation.getArgument(2);
                 if (task == null || !statuses.contains(task.getStatus()) || task.getUpdatedAt() == null
                         || !task.getUpdatedAt().isBefore(cutoff)) return 0;
-                task.setUpdatedAt(invocation.getArgument(3));
                 return 1;
             });
             Mockito.when(acks.findByChangeId(Mockito.anyString())).thenAnswer(invocation ->
@@ -534,6 +528,12 @@ public class DdcAckServiceTest {
                     ackRows.getOrDefault(invocation.getArgument(0), new CopyOnWriteArrayList<>()).stream()
                             .map(ack -> ack.setCurrentVersion(null).setAckStatus(null).setErrorMessage(null).setAckAt(null))
                             .mapToInt(ignored -> 1).sum());
+            Mockito.when(acks.resetTarget(Mockito.any(DdcPublishAckBO.class))).thenAnswer(invocation -> {
+                DdcPublishAckBO ack = invocation.getArgument(0);
+                ack.setCurrentVersion(null).setAckStatus(null).setErrorMessage(null).setAckAt(null)
+                        .setVersion(Math.addExact(ack.getVersion(), 1L));
+                return true;
+            });
         }
 
         public DdcPublishStateTransitionService stateTransitions(DdcConfigItemRepository configItems) {

@@ -96,7 +96,7 @@ public class PublishTimeoutScanner {
             Instant deadline = instant(task.getCreatedAt())
                     .plusMillis(properties.getPublish().getDispatchTimeoutMs());
             if (!deadline.isAfter(now)) {
-                stateTransitions.fail(task.getChangeId(), "DISPATCH_TIMEOUT", "publish dispatch timed out");
+                stateTransitions.fail(task, "DISPATCH_TIMEOUT", "publish dispatch timed out");
                 return 1;
             }
             return 0;
@@ -105,7 +105,7 @@ public class PublishTimeoutScanner {
         long timeoutMs = task.getTimeoutMs() == null
                 ? properties.getPublish().getDefaultTimeoutMs() : task.getTimeoutMs();
         if (!instant(dispatchedAt).plusMillis(timeoutMs).isAfter(now)) {
-            stateTransitions.timeout(task.getChangeId(), "publish acknowledgement timed out");
+            stateTransitions.timeout(task, "publish acknowledgement timed out");
             return 1;
         }
         return 0;

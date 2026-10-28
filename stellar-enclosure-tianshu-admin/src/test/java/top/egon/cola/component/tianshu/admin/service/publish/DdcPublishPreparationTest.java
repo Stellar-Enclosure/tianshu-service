@@ -320,16 +320,8 @@ class DdcPublishPreparationTest {
             assertThat(outboxMessage).isNotNull();
             assertThat(persistence.deliver(persistence.preparedEvent(outboxMessage))).isTrue();
             assertThat(published.await(2, TimeUnit.SECONDS)).isTrue();
-            new TransactionTemplate(transactionManager).executeWithoutResult(
-                    status -> taskRepository.transitionToTerminal(
-                            request.getChangeId(),
-                            "SUCCESS",
-                            LocalDateTime.now(),
-                            null,
-                            null,
-                            List.of("PENDING", "PUBLISHING")
-                    )
-            );
+            new TransactionTemplate(transactionManager).executeWithoutResult(status ->
+                    taskRepository.findByChangeId(request.getChangeId()).orElseThrow().setStatus("SUCCESS"));
 
             assertThat(result.get(1, TimeUnit.SECONDS).getStatus())
                     .isEqualTo("SUCCESS");

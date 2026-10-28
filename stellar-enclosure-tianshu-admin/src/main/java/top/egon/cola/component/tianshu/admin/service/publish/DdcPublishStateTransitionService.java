@@ -93,48 +93,40 @@ public class DdcPublishStateTransitionService {
 
     @Transactional
     public DdcPublishTaskBO markPublishing(String changeId) {
+        return markPublishing(requiredTask(changeId));
+    }
+
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+    public DdcPublishTaskBO markPublishing(DdcPublishTaskBO task) {
         LocalDateTime now = now();
-        taskRepository.transitionToPublishing(
-                changeId,
+        int changed = taskRepository.transitionToPublishing(
+                task,
                 DISPATCHABLE_STATUSES,
                 PublishStatus.PENDING.name(),
                 PublishStatus.PUBLISHING.name(),
                 now
         );
-        return requiredTask(changeId);
+        if (changed != 1) {
+            throw new org.springframework.dao.OptimisticLockingFailureException("publish task changed before dispatch");
+        }
+        if (!PublishStatus.PENDING.name().equals(task.getStatus())) {
+            task.setAttemptCount(Math.addExact(task.getAttemptCount() == null ? 0 : task.getAttemptCount(), 1));
+        }
+        return task.setStatus(PublishStatus.PUBLISHING.name()).setDispatchedAt(now).setUpdatedAt(now)
+                .setCompletedAt(null).setFailureStage(null).setErrorMessage(null)
+                .setVersion(Math.addExact(task.getVersion(), 1L));
     }
 
     @Transactional
     public DdcPublishTaskBO refreshAfterAck(String changeId) {
-        DdcPublishTaskBO task = taskRepository.findForUpdateByChangeId(changeId)
-                .orElseThrow(() -> new IllegalStateException(
-                        "publish task not found: " + changeId
-                ));
+        DdcPublishTaskBO task = requiredTask(changeId);
         if (isTerminal(task)) {
+            if (!taskRepository.fenceObservedVersion(task)) {
+                throw new org.springframework.dao.OptimisticLockingFailureException("publish task changed");
+            }
             return task;
         }
-        List<DdcPublishAckBO> targets = ackRepository.findByChangeId(changeId);
-        int success = count(targets, DdcAckStatus.SUCCESS.name());
-        int failed = count(targets, DdcAckStatus.FAILED.name());
-        int ignored = count(targets, DdcAckStatus.IGNORED.name());
-        int timeout = count(targets, DdcAckStatus.TIMEOUT.name());
-        taskRepository.updateCounters(changeId, success, failed, ignored, timeout, now());
-        if (failed > 0) {
-            transitionToTerminal(
-                    task,
-                    PublishStatus.FAILED,
-                    "ACK",
-                    "one or more publish targets failed"
-            );
-        } else if (task.getTargetCount() != null
-                && success == targets.size()
-                && success == task.getTargetCount()
-                && isPublished(task)) {
-            transitionToTerminal(task, PublishStatus.SUCCESS, null, null);
-        } else {
-            signalAfterCommit(changeId);
-        }
-        return requiredTask(changeId);
+        return refreshAfterAck(task, null);
     }
 
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
@@ -190,24 +182,47 @@ public class DdcPublishStateTransitionService {
                                      String failureStage,
                                      String errorMessage) {
         DdcPublishTaskBO task = requiredTask(changeId);
+        return fail(task, failureStage, errorMessage);
+    }
+
+    @Transactional
+    public DdcPublishTaskBO fail(DdcPublishTaskBO task, String failureStage, String errorMessage) {
         transitionToTerminal(task, PublishStatus.FAILED, failureStage, errorMessage);
-        return requiredTask(changeId);
+        return task;
     }
 
     @Transactional
     public DdcPublishTaskBO timeout(String changeId,
                                         String errorMessage) {
-        DdcPublishTaskBO task = requiredTask(changeId);
-        if (transitionToTerminal(task, PublishStatus.TIMEOUT, "ACK_TIMEOUT", errorMessage)) {
-            LocalDateTime now = now();
-            ackRepository.markIncompleteTimeout(
-                    changeId,
-                    DdcAckStatus.TIMEOUT.name(),
-                    now
-            );
-            updateCounters(changeId, now);
+        return timeout(requiredTask(changeId), errorMessage);
+    }
+
+    @Transactional
+    public DdcPublishTaskBO timeout(DdcPublishTaskBO task, String errorMessage) {
+        if (!taskRepository.fenceObservedVersion(task)) {
+            throw new org.springframework.dao.OptimisticLockingFailureException("publish task changed before timeout");
         }
-        return requiredTask(changeId);
+        task.setVersion(Math.addExact(task.getVersion(), 1L));
+        if (!ACTIVE_STATUSES.contains(task.getStatus())) return task;
+        LocalDateTime changedAt = now();
+        List<DdcPublishAckBO> targets = new ArrayList<>(ackRepository.findByChangeId(task.getChangeId()));
+        if (task.getTargetCount() == null || targets.size() != task.getTargetCount()) {
+            throw new org.springframework.dao.TransientDataAccessResourceException("publish targets are not yet visible together");
+        }
+        for (DdcPublishAckBO target : targets) {
+            if (target.getAckStatus() == null) {
+                target.setAckStatus(DdcAckStatus.TIMEOUT.name()).setAckAt(changedAt);
+                ackRepository.update(target);
+            }
+        }
+        DdcPublishAckSummaryBO summary = new DdcPublishAckSummaryBO(targets.size(),
+                count(targets, DdcAckStatus.SUCCESS.name()), count(targets, DdcAckStatus.FAILED.name()),
+                count(targets, DdcAckStatus.IGNORED.name()), count(targets, DdcAckStatus.TIMEOUT.name()),
+                PublishStatus.TIMEOUT.name(), "ACK_TIMEOUT", errorMessage, "ANY");
+        if (taskRepository.updateAckSummary(task, summary, changedAt) != 1) {
+            throw new org.springframework.dao.OptimisticLockingFailureException("publish acknowledgements changed before timeout");
+        }
+        return applyAckSummary(task, summary, changedAt);
     }
 
     @Transactional
@@ -222,26 +237,33 @@ public class DdcPublishStateTransitionService {
                                         String errorMessage) {
         DdcPublishTaskBO task = requiredTask(changeId);
         transitionToTerminal(task, PublishStatus.UNKNOWN, failureStage, errorMessage);
-        return requiredTask(changeId);
+        return task;
     }
 
     @Transactional
     public DdcPublishTaskBO markTargetLeaseExpired(
             String changeId,
             List<String> retryableStatuses) {
-        DdcPublishTaskBO task = requiredTask(changeId);
+        return markTargetLeaseExpired(requiredTask(changeId), retryableStatuses);
+    }
+
+    @Transactional
+    public DdcPublishTaskBO markTargetLeaseExpired(DdcPublishTaskBO task, List<String> retryableStatuses) {
+        LocalDateTime changedAt = now();
         int changed = taskRepository.markRetryLeaseExpired(
-                changeId,
+                task,
                 PublishStatus.FAILED.name(),
-                now(),
+                changedAt,
                 "TARGET_VALIDATION",
                 "TIANSHU_TARGET_LEASE_EXPIRED",
                 retryableStatuses
         );
-        if (changed == 1) {
-            notifyTerminalAfterCommit(task);
-        }
-        return requiredTask(changeId);
+        if (changed != 1) throw new org.springframework.dao.OptimisticLockingFailureException("publish task changed before lease validation");
+        task.setStatus(PublishStatus.FAILED.name()).setCompletedAt(changedAt).setUpdatedAt(changedAt)
+                .setFailureStage("TARGET_VALIDATION").setErrorMessage("TIANSHU_TARGET_LEASE_EXPIRED")
+                .setVersion(Math.addExact(task.getVersion(), 1L));
+        notifyTerminalAfterCommit(task);
+        return task;
     }
 
     public boolean isTerminal(DdcPublishTaskBO task) {
@@ -259,8 +281,9 @@ public class DdcPublishStateTransitionService {
                                          String failureStage,
                                          String errorMessage) {
         LocalDateTime now = now();
+        if (!ACTIVE_STATUSES.contains(task.getStatus())) return false;
         int changed = taskRepository.transitionToTerminal(
-                task.getChangeId(),
+                task,
                 status.name(),
                 now,
                 failureStage,
@@ -268,10 +291,13 @@ public class DdcPublishStateTransitionService {
                 ACTIVE_STATUSES
         );
         if (changed == 1) {
+            task.setStatus(status.name()).setCompletedAt(now).setUpdatedAt(now)
+                    .setFailureStage(failureStage).setErrorMessage(errorMessage)
+                    .setVersion(Math.addExact(task.getVersion(), 1L));
             notifyTerminalAfterCommit(task);
             return true;
         }
-        return false;
+        throw new org.springframework.dao.OptimisticLockingFailureException("publish task changed before terminal transition");
     }
 
     private void updateCounters(String changeId, LocalDateTime now) {

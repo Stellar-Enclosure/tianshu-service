@@ -20,6 +20,7 @@ import top.egon.cola.component.tianshu.admin.model.convertor.DdcPublishTaskConve
 import top.egon.cola.component.tianshu.admin.model.po.DdcPublishTaskPO;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcPageResult;
 import top.egon.cola.component.tianshu.admin.repository.DdcPublishTaskRepository;
+import top.egon.cola.component.tianshu.model.config.DdcPublishTarget;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -59,6 +60,10 @@ public class DdcPublishTaskRepositoryImpl extends EgonColaRepository<DdcPublishT
         return mapper.fenceObservedVersion(tenantId(), task.getId(), task.getVersion(), actor(),
                 java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS)) == 1;
     }
+    @Override public boolean fenceDispatchTargets(DdcPublishTaskBO task, List<DdcPublishTarget> targets) {
+        return mapper.fenceDispatchTargets(tenantId(), task, targets, actor(),
+                java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS)) == 1;
+    }
     @Override public int updateAckSummary(DdcPublishTaskBO task, DdcPublishAckSummaryBO summary, LocalDateTime updatedAt) {
         return mapper.updateAckSummary(tenantId(), task, summary, updatedAt, actor(),
                 java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS));
@@ -85,10 +90,10 @@ public class DdcPublishTaskRepositoryImpl extends EgonColaRepository<DdcPublishT
                 .total(mapper.countSearch(tenant, bizCode, env, appCode, status, changeId))
                 .pageNo(page.pageNo()).pageSize(page.pageSize()).build();
     }
-    @Override public int claimStaleForRecovery(String changeId, Collection<String> activeStatuses,
+    @Override public int claimStaleForRecovery(DdcPublishTaskBO task, Collection<String> activeStatuses,
             LocalDateTime staleBefore, LocalDateTime claimedAt) {
         return activeStatuses == null || activeStatuses.isEmpty() ? 0
-                : mapper.claimStaleForRecovery(tenantId(), changeId, activeStatuses, staleBefore, claimedAt, actor());
+                : mapper.claimStaleForRecovery(tenantId(), task, activeStatuses, staleBefore, claimedAt, actor(), auditTime());
     }
     @Override public Optional<DdcPublishTaskBO> findFirstByBizCodeAndEnvAndAppCodeAndResourceNameAndStatusIn(
             String bizCode, String env, String appCode, String resourceName, Collection<String> statuses) {
@@ -96,34 +101,34 @@ public class DdcPublishTaskRepositoryImpl extends EgonColaRepository<DdcPublishT
                 : Optional.ofNullable(mapper.selectFirstByScopeAndResourceAndStatusIn(
                         tenantId(), bizCode, env, appCode, resourceName, statuses)).map(converter::toTarget);
     }
-    @Override public int transitionToPublishing(String changeId, Collection<String> dispatchableStatuses,
+    @Override public int transitionToPublishing(DdcPublishTaskBO task, Collection<String> dispatchableStatuses,
             String pendingStatus, String publishingStatus, LocalDateTime dispatchedAt) {
         return dispatchableStatuses == null || dispatchableStatuses.isEmpty() ? 0
-                : mapper.transitionToPublishing(tenantId(), changeId, dispatchableStatuses,
-                        pendingStatus, publishingStatus, dispatchedAt, actor());
+                : mapper.transitionToPublishing(tenantId(), task, dispatchableStatuses,
+                        pendingStatus, publishingStatus, dispatchedAt, actor(), auditTime());
     }
     @Override public int updateCounters(String changeId, int ackCount, int failedCount, int ignoredCount,
             int timeoutCount, LocalDateTime updatedAt) {
         return mapper.updateCounters(tenantId(), changeId, ackCount, failedCount, ignoredCount,
                 timeoutCount, updatedAt, actor());
     }
-    @Override public int transitionToTerminal(String changeId, String terminalStatus, LocalDateTime completedAt,
+    @Override public int transitionToTerminal(DdcPublishTaskBO task, String terminalStatus, LocalDateTime completedAt,
             String failureStage, String errorMessage, Collection<String> activeStatuses) {
         return activeStatuses == null || activeStatuses.isEmpty() ? 0
-                : mapper.transitionToTerminal(tenantId(), changeId, terminalStatus, completedAt,
-                        failureStage, errorMessage, activeStatuses, actor());
+                : mapper.transitionToTerminal(tenantId(), task, terminalStatus, completedAt,
+                        failureStage, errorMessage, activeStatuses, actor(), auditTime());
     }
-    @Override public int resetForRetry(String changeId, String pendingStatus, String operator,
+    @Override public int resetForRetry(DdcPublishTaskBO task, String pendingStatus, String operator,
             LocalDateTime updatedAt, Collection<String> retryableStatuses) {
         return retryableStatuses == null || retryableStatuses.isEmpty() ? 0
-                : mapper.resetForRetry(tenantId(), changeId, pendingStatus, operator,
-                        updatedAt, retryableStatuses, actor());
+                : mapper.resetForRetry(tenantId(), task, pendingStatus, operator,
+                        updatedAt, retryableStatuses, actor(), auditTime());
     }
-    @Override public int markRetryLeaseExpired(String changeId, String failedStatus, LocalDateTime completedAt,
+    @Override public int markRetryLeaseExpired(DdcPublishTaskBO task, String failedStatus, LocalDateTime completedAt,
             String failureStage, String errorMessage, Collection<String> retryableStatuses) {
         return retryableStatuses == null || retryableStatuses.isEmpty() ? 0
-                : mapper.markRetryLeaseExpired(tenantId(), changeId, failedStatus, completedAt,
-                        failureStage, errorMessage, retryableStatuses, actor());
+                : mapper.markRetryLeaseExpired(tenantId(), task, failedStatus, completedAt,
+                        failureStage, errorMessage, retryableStatuses, actor(), auditTime());
     }
 
     @Override public DdcPublishTaskBO insert(DdcPublishTaskBO command) {
@@ -153,5 +158,9 @@ public class DdcPublishTaskRepositoryImpl extends EgonColaRepository<DdcPublishT
                     || message.contains("uk_publish_task_public"))) return true;
         }
         return false;
+    }
+
+    private java.time.Instant auditTime() {
+        return java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
     }
 }

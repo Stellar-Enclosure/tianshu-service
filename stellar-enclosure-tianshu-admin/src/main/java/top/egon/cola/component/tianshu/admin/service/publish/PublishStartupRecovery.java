@@ -100,14 +100,15 @@ public class PublishStartupRecovery implements ApplicationRunner {
                 clock.instant().minusMillis(staleMs), ZoneId.systemDefault());
         LocalDateTime claimedAt = LocalDateTime.ofInstant(clock.instant(), ZoneId.systemDefault());
         List<DdcPublishTaskBO> tasks = taskRepository.findByStatusInAndUpdatedAtBefore(ACTIVE_STATUSES, staleBefore);
-        return tasks.stream().mapToInt(task -> replay(task.getChangeId(), staleBefore, claimedAt)).sum();
+        return tasks.stream().mapToInt(task -> replay(task, staleBefore, claimedAt)).sum();
     }
 
-    private int replay(String changeId, LocalDateTime staleBefore, LocalDateTime claimedAt) {
-        int claimed = taskRepository.claimStaleForRecovery(changeId, ACTIVE_STATUSES, staleBefore, claimedAt);
+    private int replay(DdcPublishTaskBO task, LocalDateTime staleBefore, LocalDateTime claimedAt) {
+        int claimed = taskRepository.claimStaleForRecovery(task, ACTIVE_STATUSES, staleBefore, claimedAt);
         if (claimed != 1) return 0;
+        task.setUpdatedAt(claimedAt).setVersion(Math.addExact(task.getVersion(), 1L));
         try {
-            dispatcher.dispatch(changeId);
+            dispatcher.dispatch(task);
         } catch (DdcAdminException ignored) {
             // The dispatcher persisted the deterministic rejection on the task.
         }

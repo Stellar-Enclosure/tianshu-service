@@ -129,7 +129,8 @@ class DdcPublishPersistenceContractTest {
                 .getBoundSql(ackParameters).getSql().toLowerCase(java.util.Locale.ROOT);
         Map<String, Object> taskParameters = new HashMap<>();
         taskParameters.put("tenantId", 101L);
-        taskParameters.put("changeId", "123");
+        taskParameters.put("task", top.egon.cola.component.tianshu.admin.model.bo.DdcPublishTaskBO.builder()
+                .id(9L).version(7L).changeId("123").build());
         taskParameters.put("dispatchableStatuses", List.of("PENDING", "PUBLISHING"));
         taskParameters.put("pendingStatus", "PENDING");
         taskParameters.put("publishingStatus", "PUBLISHING");
@@ -140,7 +141,7 @@ class DdcPublishPersistenceContractTest {
 
         assertThat(ackSql).contains("tenant_id = ?", "change_id = ?", "instance_id = ?", "lease_id is null",
                 "deleted_at is null", "for update");
-        assertThat(transitionSql).contains("tenant_id = ?", "change_id = ?", "deleted_at is null",
+        assertThat(transitionSql).contains("tenant_id = ?", "id = ?", "version = ?", "change_id = ?", "deleted_at is null",
                 "status in", "attempt_count = case", "version = version + 1");
     }
 
@@ -178,6 +179,12 @@ class DdcPublishPersistenceContractTest {
                 tenantGuard.beforePrepare(handler, null, null);
                 routeGuard.beforePrepare(handler, null, null);
             }
+            var reset = configuration.getMappedStatement(BASE + "dao.DdcPublishAckMapper.resetTarget");
+            var resetParameters = Map.<String, Object>of("tenantId", 101L, "id", 9L, "expectedVersion", 7L,
+                    "actor", "system:test", "now", java.time.Instant.parse("2026-10-28T00:00:00Z"));
+            var resetHandler = configuration.newStatementHandler(org.mockito.Mockito.mock(org.apache.ibatis.executor.Executor.class),
+                    reset, resetParameters, org.apache.ibatis.session.RowBounds.DEFAULT, null, reset.getBoundSql(resetParameters));
+            routeGuard.beforePrepare(resetHandler, null, null);
         } finally {
             org.slf4j.MDC.remove("tenantId"); org.slf4j.MDC.remove("userId");
         }
@@ -225,6 +232,36 @@ class DdcPublishPersistenceContractTest {
                         .doesNotThrowAnyException();
                 var handler = configuration.newStatementHandler(executor, statement, parameters,
                         org.apache.ibatis.session.RowBounds.DEFAULT, null, statement.getBoundSql(parameters));
+                org.assertj.core.api.Assertions.assertThatCode(() -> routeGuard.beforePrepare(handler, null, null)).doesNotThrowAnyException();
+            }
+            var parameters = new HashMap<String, Object>();
+            parameters.put("tenantId", 101L);
+            parameters.put("task", task);
+            parameters.put("targets", List.of(new top.egon.cola.component.tianshu.model.config.DdcPublishTarget("one", "lease"),
+                    new top.egon.cola.component.tianshu.model.config.DdcPublishTarget("two", null)));
+            parameters.put("activeStatuses", List.of("PENDING", "PUBLISHING"));
+            parameters.put("dispatchableStatuses", List.of("PENDING", "PUBLISHING"));
+            parameters.put("retryableStatuses", List.of("FAILED", "TIMEOUT"));
+            parameters.put("actor", "system:test");
+            parameters.put("now", java.time.Instant.parse("2026-10-28T00:00:00Z"));
+            for (String operation : List.of("fenceDispatchTargets", "claimStaleForRecovery", "transitionToPublishing", "transitionToTerminal", "resetForRetry", "markRetryLeaseExpired")) {
+                var update = configuration.getMappedStatement(BASE + "dao.DdcPublishTaskMapper." + operation);
+                String sql = update.getBoundSql(parameters).getSql();
+                assertThat(parser.parse(sql, false)).isNotNull();
+                assertThat(sql.toLowerCase(java.util.Locale.ROOT)).contains("tenant_id = ?", "id = ?", "version = ?")
+                        .doesNotContain("for update");
+                if (operation.equals("fenceDispatchTargets")) {
+                    assertThat(sql.toLowerCase(java.util.Locale.ROOT)).contains("count(*)", "a.instance_id = ?", "a.lease_id is null");
+                }
+                var executor = mock(org.apache.ibatis.executor.Executor.class);
+                var invocation = new org.apache.ibatis.plugin.Invocation(executor,
+                        org.apache.ibatis.executor.Executor.class.getMethod("update", org.apache.ibatis.mapping.MappedStatement.class, Object.class),
+                        new Object[]{update, parameters});
+                org.assertj.core.api.Assertions.assertThatCode(() ->
+                        new top.egon.cola.component.common.mybatis.interceptor.EgonColaOriginalSqlGuardInterceptor(properties).intercept(invocation))
+                        .doesNotThrowAnyException();
+                var handler = configuration.newStatementHandler(executor, update, parameters,
+                        org.apache.ibatis.session.RowBounds.DEFAULT, null, update.getBoundSql(parameters));
                 org.assertj.core.api.Assertions.assertThatCode(() -> routeGuard.beforePrepare(handler, null, null)).doesNotThrowAnyException();
             }
         } finally {

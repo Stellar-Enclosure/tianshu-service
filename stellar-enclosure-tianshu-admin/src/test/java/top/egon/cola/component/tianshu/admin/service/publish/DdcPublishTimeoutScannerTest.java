@@ -71,7 +71,8 @@ class DdcPublishTimeoutScannerTest {
 
         assertThat(observedTenants).containsExactly("101", "202");
         verify(registry, org.mockito.Mockito.times(2)).requireEnabledTenant(anyLong());
-        verify(transitions).fail("pending", "DISPATCH_TIMEOUT", "publish dispatch timed out");
+        verify(transitions).fail(org.mockito.ArgumentMatchers.argThat((DdcPublishTaskBO task) -> "pending".equals(task.getChangeId())),
+                org.mockito.ArgumentMatchers.eq("DISPATCH_TIMEOUT"), org.mockito.ArgumentMatchers.eq("publish dispatch timed out"));
         assertThat(MDC.get("tenantId")).isNull();
         assertThat(MDC.get("userId")).isNull();
     }

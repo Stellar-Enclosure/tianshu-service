@@ -74,6 +74,11 @@
             version = version + 1, update_user_id = #{actor}, update_time = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
         WHERE tenant_id = #{tenantId} AND change_id = #{changeId} AND deleted_at IS NULL
     </update>
+    <update id="resetTarget">
+        UPDATE ddc_publish_ack SET current_version = NULL, ack_status = NULL, error_message = NULL, ack_at = NULL,
+            version = version + 1, update_user_id = #{actor}, update_time = #{now}
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND version = #{expectedVersion} AND deleted_at IS NULL
+    </update>
     <update id="deleteVersionedById">
         UPDATE ddc_publish_ack SET deleted_at = CURRENT_TIMESTAMP AT TIME ZONE 'UTC', version = version + 1,
             update_user_id = #{et.updateUserId}, update_time = #{et.updateTime}

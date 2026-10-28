@@ -92,10 +92,20 @@ public class DdcPendingPublishDispatcher {
     private final DdcAdminProperties properties;
 
     public DdcPublishTaskBO dispatch(@NotBlank String changeId) {
+        return dispatch(changeId, null);
+    }
+
+    DdcPublishTaskBO dispatch(DdcPublishTaskBO claimedTask) {
+        return dispatch(claimedTask.getChangeId(), claimedTask);
+    }
+
+    private DdcPublishTaskBO dispatch(String changeId, DdcPublishTaskBO claimedTask) {
         try {
-            DdcPublishTaskBO prepared = transactionTemplate.execute(status -> prepareAndEnqueue(changeId));
+            DdcPublishTaskBO prepared = transactionTemplate.execute(status -> prepareAndEnqueue(changeId, claimedTask));
             return prepared == null ? stateTransitions.fail(
                     changeId, "OUTBOX_PREPARE", "publish outbox preparation returned no task") : prepared;
+        } catch (org.springframework.dao.TransientDataAccessException retryable) {
+            throw retryable;
         } catch (DdcAdminException failure) {
             stateTransitions.fail(changeId, "OUTBOX_PREPARE", failure.getMessage());
             throw failure;
@@ -106,14 +116,14 @@ public class DdcPendingPublishDispatcher {
         }
     }
 
-    private DdcPublishTaskBO prepareAndEnqueue(String changeId) {
-        DdcPublishTaskBO task = requiredTask(changeId);
+    private DdcPublishTaskBO prepareAndEnqueue(String changeId, DdcPublishTaskBO claimedTask) {
+        DdcPublishTaskBO task = claimedTask == null ? requiredTask(changeId) : claimedTask;
         if (!DISPATCHABLE_STATUSES.contains(task.getStatus())) {
             return task;
         }
         boolean currentAttemptAlreadyPublishing = PublishStatus.PUBLISHING.name().equals(task.getStatus());
         if (!currentAttemptAlreadyPublishing) {
-            task = stateTransitions.markPublishing(changeId);
+            task = stateTransitions.markPublishing(task);
         }
         if (!PublishStatus.PUBLISHING.name().equals(task.getStatus())) {
             return task;
@@ -122,12 +132,16 @@ public class DdcPendingPublishDispatcher {
             return task;
         }
 
-        DdcAtomicPublishCommand command = command(changeId);
+        DdcAtomicPublishCommand command = command(task);
         DdcConfigDispatchPreparedEvent event = eventConverter.toTarget(command);
         validationUtils.validate(event);
         if (!eventConverter.isValid(event)) {
             throw new DdcAdminException("prepared config event checksum is invalid");
         }
+        if (!taskRepository.fenceDispatchTargets(task, command.message().getTargets())) {
+            throw new org.springframework.dao.TransientDataAccessResourceException("publish targets changed after replica read");
+        }
+        task.setVersion(Math.addExact(task.getVersion(), 1L));
         transactionalOutbox.enqueue(OutboxMessage.builder()
                 .messageId(event.getEventId())
                 .idempotencyKey(event.getEventId())
@@ -139,7 +153,7 @@ public class DdcPendingPublishDispatcher {
                 .header("tenantId", Long.toString(event.getTenantId()))
                 .header("eventType", outboxRoute.eventType())
                 .build());
-        return requiredTask(changeId);
+        return task;
     }
 
     /** Returns false when the attempt is stale, terminal without success, or past its ACK deadline. */
@@ -152,8 +166,7 @@ public class DdcPendingPublishDispatcher {
             if (!eventConverter.isValid(event)) {
                 throw new DdcAdminException("prepared config event checksum is invalid");
             }
-            DdcPublishTaskBO task = taskRepository.findForUpdateByChangeId(event.getMessage().getChangeId())
-                    .orElse(null);
+            DdcPublishTaskBO task = fencedTask(event.getMessage().getChangeId());
             if (!isCurrentAttempt(task, event)) {
                 log.info("Skipping stale Tianshu YAML dispatch event; tenantId={}, eventId={}",
                         event.getTenantId(), event.getEventId());
@@ -176,6 +189,10 @@ public class DdcPendingPublishDispatcher {
             if (!targetsMatch(task, command)) {
                 throw new org.springframework.dao.TransientDataAccessResourceException("publish targets are not yet visible together");
             }
+            if (!taskRepository.fenceDispatchTargets(task, command.message().getTargets())) {
+                throw new org.springframework.dao.TransientDataAccessResourceException("publish targets changed after replica read");
+            }
+            task.setVersion(Math.addExact(task.getVersion(), 1L));
             redisRepository.dispatch(command, event);
             if (!advancePublishedVersion(command)) {
                 throw new IllegalStateException("published pointer update is uncertain after Redis dispatch");
@@ -197,31 +214,30 @@ public class DdcPendingPublishDispatcher {
             if (!eventConverter.isValid(event)) {
                 return;
             }
-            DdcPublishTaskBO task = taskRepository.findForUpdateByChangeId(event.getMessage().getChangeId())
-                    .orElse(null);
+            DdcPublishTaskBO task = fencedTask(event.getMessage().getChangeId());
             if (isCurrentAttempt(task, event) && PublishStatus.PUBLISHING.name().equals(task.getStatus())) {
-                stateTransitions.fail(task.getChangeId(), failureStage, errorMessage);
+                stateTransitions.fail(task, failureStage, errorMessage);
             }
         });
     }
 
-    private DdcAtomicPublishCommand command(String changeId) {
-        DdcPublishTaskBO task = requiredTask(changeId);
+    private DdcAtomicPublishCommand command(DdcPublishTaskBO task) {
+        String changeId = task.getChangeId();
         DdcConfigItemBO config = configItemRepository.findByPublicId(task.getConfigId())
-                .orElseThrow(() -> new DdcAdminException("config item not found"));
+                .orElseThrow(() -> new org.springframework.dao.TransientDataAccessResourceException("config item is not yet visible"));
         if (config.getPublishedVersion() != null
                 && config.getPublishedVersion() > task.getTargetVersion()) {
             throw new DdcAdminException("published config version is newer than task");
         }
         DdcConfigVersionBO version = versionRepository.findByConfigIdAndVersion(
                         task.getConfigId(), task.getTargetVersion())
-                .orElseThrow(() -> new DdcAdminException("published config version not found"));
+                .orElseThrow(() -> new org.springframework.dao.TransientDataAccessResourceException("config version is not yet visible"));
         List<DdcPublishAckBO> targets = ackRepository.findByChangeId(changeId).stream()
                 .sorted(Comparator.comparing(DdcPublishAckBO::getInstanceId)
                         .thenComparing(DdcPublishAckBO::getLeaseId))
                 .toList();
-        if (targets.isEmpty()) {
-            throw new DdcAdminException("publish targets not found");
+        if (targets.isEmpty() || task.getTargetCount() == null || targets.size() != task.getTargetCount()) {
+            throw new org.springframework.dao.TransientDataAccessResourceException("publish targets are not yet visible together");
         }
         if (!Objects.equals(task.getResourceChecksum(), DdcChecksum.resource(
                 task.getResourceName(), version.getFormat(), version.getNewContent()))) {
@@ -346,7 +362,15 @@ public class DdcPendingPublishDispatcher {
 
     private DdcPublishTaskBO requiredTask(String changeId) {
         return taskRepository.findByChangeId(changeId)
-                .orElseThrow(() -> new DdcAdminException("publish task not found"));
+                .orElseThrow(() -> new org.springframework.dao.TransientDataAccessResourceException("publish task is not yet visible"));
+    }
+
+    private DdcPublishTaskBO fencedTask(String changeId) {
+        DdcPublishTaskBO task = requiredTask(changeId);
+        if (!taskRepository.fenceObservedVersion(task)) {
+            throw new org.springframework.dao.OptimisticLockingFailureException("publish task changed after replica read");
+        }
+        return task.setVersion(Math.addExact(task.getVersion(), 1L));
     }
 
     private LocalDateTime now() {

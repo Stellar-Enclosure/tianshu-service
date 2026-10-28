@@ -32,6 +32,8 @@ public interface DdcPublishAckRepository {
     @Validated(EgonColaModelValidationGroups.Update.class)
     int resetTargets(String changeId);
 
+    boolean resetTarget(DdcPublishAckBO target);
+
     @Validated(EgonColaModelValidationGroups.Insert.class)
     DdcPublishAckBO insert(@Valid @NotNull(groups = EgonColaModelValidationGroups.Insert.class) DdcPublishAckBO command);
 

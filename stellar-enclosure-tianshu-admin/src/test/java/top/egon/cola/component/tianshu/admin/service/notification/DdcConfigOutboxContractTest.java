@@ -127,7 +127,8 @@ class DdcConfigOutboxContractTest {
                 .resourceName("application.yml").targetVersion(2L)
                 .build();
         when(tasks.findByChangeId(CHANGE_ID)).thenAnswer(ignored -> Optional.of(task));
-        when(tasks.findForUpdateByChangeId(CHANGE_ID)).thenAnswer(ignored -> Optional.of(task));
+        when(tasks.fenceObservedVersion(any())).thenReturn(true);
+        when(tasks.fenceDispatchTargets(any(), any())).thenReturn(true);
         when(configItems.findByPublicId(CONFIG_ID)).thenAnswer(ignored -> Optional.of(config));
         when(versions.findByConfigIdAndVersion(CONFIG_ID, 2L)).thenAnswer(ignored -> Optional.of(version));
         when(acks.findByChangeId(CHANGE_ID)).thenAnswer(ignored -> new CopyOnWriteArrayList<>(List.of(target)));
@@ -135,7 +136,7 @@ class DdcConfigOutboxContractTest {
             config.setPublishedVersion(invocation.getArgument(2));
             return 1;
         });
-        when(transitions.markPublishing(CHANGE_ID)).thenAnswer(ignored -> {
+        when(transitions.markPublishing(task)).thenAnswer(ignored -> {
             task.setStatus(PublishStatus.PUBLISHING.name())
                     .setDispatchedAt(now)
                     .setUpdatedAt(now);
@@ -149,7 +150,11 @@ class DdcConfigOutboxContractTest {
                 task.setStatus(PublishStatus.FAILED.name())
                         .setFailureStage(invocation.getArgument(1))
                         .setErrorMessage(invocation.getArgument(2)));
-        when(transitions.refreshAfterAck(CHANGE_ID)).thenAnswer(ignored -> task);
+        when(transitions.fail(any(DdcPublishTaskBO.class), anyString(), anyString())).thenAnswer(invocation ->
+                task.setStatus(PublishStatus.FAILED.name())
+                        .setFailureStage(invocation.getArgument(1))
+                        .setErrorMessage(invocation.getArgument(2)));
+        when(transitions.refreshAfterAck(task, null)).thenAnswer(ignored -> task);
         when(outbox.enqueue(any())).thenAnswer(invocation -> {
             OutboxMessage message = invocation.getArgument(0);
             assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
@@ -179,7 +184,7 @@ class DdcConfigOutboxContractTest {
         assertThat(replay.getEventId()).isEqualTo(first.getEventId());
         assertThat(replay.getEventChecksum()).isEqualTo(first.getEventChecksum());
         assertThat(replay.getMessage().getTimestamp()).isEqualTo(first.getMessage().getTimestamp());
-        verify(transitions, times(1)).markPublishing(CHANGE_ID);
+        verify(transitions, times(1)).markPublishing(task);
         verify(outbox, times(2)).enqueue(any());
     }
 
@@ -215,7 +220,7 @@ class DdcConfigOutboxContractTest {
 
         assertThat(delivered.kind()).isEqualTo(DeliveryResult.Kind.SUCCESS);
         assertThat(task.getStatus()).isEqualTo(PublishStatus.PUBLISHING.name());
-        verify(transitions, times(1)).refreshAfterAck(CHANGE_ID);
+        verify(transitions, times(1)).refreshAfterAck(task, null);
         assertThat(dispatcher.dispatch(CHANGE_ID).getStatus()).isEqualTo(PublishStatus.PUBLISHING.name());
         verify(outbox, times(1)).enqueue(any());
     }
@@ -233,7 +238,7 @@ class DdcConfigOutboxContractTest {
         assertThat(result.kind()).isEqualTo(DeliveryResult.Kind.RETRYABLE_FAILURE);
         assertThat(config.getPublishedVersion()).isEqualTo(1L);
         assertThat(task.getStatus()).isEqualTo(PublishStatus.PUBLISHING.name());
-        verify(transitions, never()).refreshAfterAck(CHANGE_ID);
+        verify(transitions, never()).refreshAfterAck(task, null);
     }
 
     @Test
@@ -250,7 +255,7 @@ class DdcConfigOutboxContractTest {
         assertThat(task.getStatus()).isEqualTo(PublishStatus.FAILED.name());
         assertThat(task.getFailureStage()).isEqualTo("REDIS_DISPATCH");
         assertThat(config.getPublishedVersion()).isEqualTo(1L);
-        verify(transitions, never()).refreshAfterAck(CHANGE_ID);
+        verify(transitions, never()).refreshAfterAck(task, null);
     }
 
     private DeliveryContext context(DdcConfigDispatchPreparedEvent event) throws Exception {

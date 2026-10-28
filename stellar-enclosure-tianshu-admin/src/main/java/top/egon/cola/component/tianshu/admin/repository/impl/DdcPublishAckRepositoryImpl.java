@@ -65,6 +65,10 @@ public class DdcPublishAckRepositoryImpl extends EgonColaRepository<DdcPublishAc
     @Override public int resetTargets(String changeId) {
         return mapper.resetTargets(tenantId(), changeId, actor());
     }
+    @Override public boolean resetTarget(DdcPublishAckBO target) {
+        return mapper.resetTarget(tenantId(), target.getId(), target.getVersion(), actor(),
+                java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS)) == 1;
+    }
     @Override public DdcPublishAckBO insert(DdcPublishAckBO command) {
         DdcPublishAckPO row = converter.toSource(command);
         long id = identifierGenerator.nextId(row);
