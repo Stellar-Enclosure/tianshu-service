@@ -144,6 +144,70 @@ class DdcPublishPersistenceContractTest {
                 "status in", "attempt_count = case", "version = version + 1");
     }
 
+    @Test
+    void replicaAckLookupAndObservedVersionFencesPassTheStarterGuards() throws Exception {
+        var configuration = operationalMappers();
+        configuration.setEnvironment(new org.apache.ibatis.mapping.Environment("test",
+                new org.mybatis.spring.transaction.SpringManagedTransactionFactory(), org.mockito.Mockito.mock(javax.sql.DataSource.class)));
+        var properties = new top.egon.cola.component.common.mybatis.autoconfigure.EgonColaMybatisPlusProperties();
+        var tenantGuard = new top.egon.cola.component.common.mybatis.interceptor.EgonColaTenantIdGuardInnerInterceptor(
+                () -> "system:test", properties);
+        new org.springframework.context.annotation.CommonAnnotationBeanPostProcessor()
+                .postProcessBeforeInitialization(tenantGuard, "sqlGuard");
+        var routeGuard = new top.egon.cola.component.common.mybatis.interceptor.EgonColaLocalWriteGuardInnerInterceptor(
+                query -> new top.egon.cola.component.common.mybatis.routing.EgonColaRouteResult(
+                        List.of(new top.egon.cola.component.common.mybatis.routing.EgonColaPhysicalTargetBO(
+                                "primary", "public", query.logicalTable())), "a".repeat(64)),
+                tenantGuard, org.mockito.Mockito.mock(top.egon.cola.component.common.mybatis.routing.EgonColaTwoLevelRouteStrategy.class), Map.of());
+        var readParameters = Map.<String, Object>of("tenantId", 101L, "changeId", "change", "instanceId", "instance", "leaseId", "lease");
+        var read = configuration.getMappedStatement(BASE + "dao.DdcPublishAckMapper.selectByChangeIdAndInstanceIdAndLeaseId");
+        assertThat(read.getBoundSql(readParameters).getSql().toLowerCase(java.util.Locale.ROOT))
+                .doesNotContain("for update", "for share");
+        org.slf4j.MDC.put("tenantId", "101"); org.slf4j.MDC.put("userId", "system:test");
+        try {
+            tenantGuard.beforeQuery(org.mockito.Mockito.mock(org.apache.ibatis.executor.Executor.class), read,
+                    readParameters, org.apache.ibatis.session.RowBounds.DEFAULT, null, read.getBoundSql(readParameters));
+            for (String mapper : List.of("DdcPublishTaskMapper", "DdcPublishAckMapper")) {
+                var statement = configuration.getMappedStatement(BASE + "dao." + mapper + ".fenceObservedVersion");
+                var parameters = Map.<String, Object>of("tenantId", 101L, "id", 9L, "expectedVersion", 7L,
+                        "actor", "system:test", "now", java.time.Instant.parse("2026-10-28T00:00:00Z"));
+                String sql = statement.getBoundSql(parameters).getSql().toLowerCase(java.util.Locale.ROOT);
+                assertThat(sql).contains("tenant_id = ?", "id = ?", "version = ?", "version = version + 1", "deleted_at is null");
+                var handler = configuration.newStatementHandler(org.mockito.Mockito.mock(org.apache.ibatis.executor.Executor.class),
+                        statement, parameters, org.apache.ibatis.session.RowBounds.DEFAULT, null, statement.getBoundSql(parameters));
+                tenantGuard.beforePrepare(handler, null, null);
+                routeGuard.beforePrepare(handler, null, null);
+            }
+        } finally {
+            org.slf4j.MDC.remove("tenantId"); org.slf4j.MDC.remove("userId");
+        }
+    }
+
+    @Test
+    void twoWritersCannotFenceTheSameObservedAcknowledgementVersion() throws Exception {
+        var mapper = org.mockito.Mockito.mock(top.egon.cola.component.tianshu.admin.dao.DdcPublishAckMapper.class);
+        var won = new java.util.concurrent.atomic.AtomicBoolean();
+        org.mockito.Mockito.when(mapper.fenceObservedVersion(org.mockito.ArgumentMatchers.eq(101L),
+                org.mockito.ArgumentMatchers.eq(9L), org.mockito.ArgumentMatchers.eq(7L),
+                org.mockito.ArgumentMatchers.eq("system:test"), org.mockito.ArgumentMatchers.any()))
+                .thenAnswer(call -> won.compareAndSet(false, true) ? 1 : 0);
+        var repository = new top.egon.cola.component.tianshu.admin.repository.impl.DdcPublishAckRepositoryImpl(mapper,
+                org.mockito.Mockito.mock(top.egon.cola.component.tianshu.admin.model.convertor.DdcPublishAckConverter.class),
+                new top.egon.cola.component.common.mybatis.autoconfigure.EgonColaMybatisPlusProperties(),
+                org.mockito.Mockito.mock(top.egon.cola.component.common.mybatis.model.EgonColaIdentifierGenerator.class));
+        var ack = top.egon.cola.component.tianshu.admin.model.bo.DdcPublishAckBO.builder().id(9L).version(7L).build();
+        try (var workers = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+            java.util.concurrent.Callable<Boolean> fence = () -> {
+                org.slf4j.MDC.put("tenantId", "101"); org.slf4j.MDC.put("userId", "system:test");
+                try { return repository.fenceObservedVersion(ack); }
+                finally { org.slf4j.MDC.remove("tenantId"); org.slf4j.MDC.remove("userId"); }
+            };
+            var first = workers.submit(fence); var second = workers.submit(fence);
+            assertThat(List.of(first.get(10, java.util.concurrent.TimeUnit.SECONDS),
+                    second.get(10, java.util.concurrent.TimeUnit.SECONDS))).containsExactlyInAnyOrder(true, false);
+        }
+    }
+
     private Configuration operationalMappers() throws Exception {
         Configuration configuration = new Configuration();
         for (String name : TABLES) {

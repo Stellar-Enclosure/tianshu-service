@@ -54,6 +54,10 @@ public class DdcPublishTaskRepositoryImpl extends EgonColaRepository<DdcPublishT
     @Override public Optional<DdcPublishTaskBO> findForUpdateByChangeId(String changeId) {
         return Optional.ofNullable(mapper.selectForUpdateByChangeId(tenantId(), changeId)).map(converter::toTarget);
     }
+    @Override public boolean fenceObservedVersion(DdcPublishTaskBO task) {
+        return mapper.fenceObservedVersion(tenantId(), task.getId(), task.getVersion(), actor(),
+                java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS)) == 1;
+    }
     @Override public List<DdcPublishTaskBO> findAll() {
         return converter.toTargetList(mapper.selectAll(tenantId()));
     }

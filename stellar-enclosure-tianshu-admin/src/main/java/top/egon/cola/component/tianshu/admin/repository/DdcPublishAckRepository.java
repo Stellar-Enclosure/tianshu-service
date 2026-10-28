@@ -20,6 +20,9 @@ public interface DdcPublishAckRepository {
     Optional<DdcPublishAckBO> findForUpdateByChangeIdAndInstanceIdAndLeaseId(
             String changeId, String instanceId, String leaseId);
 
+    @Validated(EgonColaModelValidationGroups.Update.class)
+    boolean fenceObservedVersion(@NotNull DdcPublishAckBO ack);
+
     @Validated(EgonColaModelValidationGroups.Query.class)
     List<DdcPublishAckBO> findByChangeId(String changeId);
 

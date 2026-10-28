@@ -205,18 +205,21 @@ public class DdcPublishService {
     public DdcPublishResultVO ack(DdcAckRequest request) {
         validateAckRequest(request);
         DdcPublishTaskBO task = publishTaskRepository.findByChangeId(request.getChangeId())
-                .orElseThrow(() -> new DdcAdminException("publish task not found"));
+                .orElseThrow(() -> new org.springframework.dao.TransientDataAccessResourceException("publish task is not yet visible"));
         if (stateTransitions.isTerminal(task)) {
+            if (!publishTaskRepository.fenceObservedVersion(task)) {
+                throw new org.springframework.dao.TransientDataAccessResourceException("publish task version changed");
+            }
             return DdcPublishResultVO.from(task);
         }
         DdcPublishAckBO target =
-                publishAckRepository.findForUpdateByChangeIdAndInstanceIdAndLeaseId(
+                publishAckRepository.findByChangeIdAndInstanceIdAndLeaseId(
                                 request.getChangeId(),
                                 request.getInstanceId(),
                                 request.getLeaseId()
                         )
-                        .orElseThrow(() ->
-                                new DdcAdminException(DdcErrorStatus.LEASE_MISMATCH));
+                        .orElseThrow(() -> new org.springframework.dao.TransientDataAccessResourceException(
+                                "publish acknowledgement target is not yet visible"));
         if (!Objects.equals(task.getTargetVersion(), request.getTargetVersion())
                 || !Objects.equals(task.getResourceChecksum(), request.getResourceChecksum())
                 || !Objects.equals(target.getTargetVersion(), request.getTargetVersion())
@@ -224,6 +227,9 @@ public class DdcPublishService {
             throw new DdcAdminException("ACK version or resource checksum does not match target");
         }
         if (target.getAckStatus() != null) {
+            if (!publishAckRepository.fenceObservedVersion(target)) {
+                throw new org.springframework.dao.TransientDataAccessResourceException("publish acknowledgement version changed");
+            }
             return DdcPublishResultVO.from(
                     stateTransitions.refreshAfterAck(request.getChangeId())
             );

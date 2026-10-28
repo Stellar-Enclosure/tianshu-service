@@ -70,6 +70,10 @@
         SELECT <include refid="Columns"/> <include refid="TaskJoin"/>
         WHERE t.tenant_id = #{tenantId} AND t.change_id = #{changeId} AND t.deleted_at IS NULL FOR UPDATE OF t
     </select>
+    <update id="fenceObservedVersion">
+        UPDATE ddc_publish_task SET version = version + 1, update_user_id = #{actor}, update_time = #{now}
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND version = #{expectedVersion} AND deleted_at IS NULL
+    </update>
     <select id="selectAll" resultMap="DdcPublishTaskPOResultMap">
         SELECT <include refid="Columns"/> <include refid="TaskJoin"/>
         WHERE t.tenant_id = #{tenantId} AND t.deleted_at IS NULL ORDER BY t.id

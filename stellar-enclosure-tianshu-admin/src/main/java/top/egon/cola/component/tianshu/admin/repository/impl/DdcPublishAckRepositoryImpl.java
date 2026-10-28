@@ -52,6 +52,10 @@ public class DdcPublishAckRepositoryImpl extends EgonColaRepository<DdcPublishAc
         return Optional.ofNullable(mapper.selectForUpdateByChangeIdAndInstanceIdAndLeaseId(
                 tenantId(), changeId, instanceId, leaseId)).map(converter::toTarget);
     }
+    @Override public boolean fenceObservedVersion(DdcPublishAckBO ack) {
+        return mapper.fenceObservedVersion(tenantId(), ack.getId(), ack.getVersion(), actor(),
+                java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS)) == 1;
+    }
     @Override public List<DdcPublishAckBO> findByChangeId(String changeId) {
         return converter.toTargetList(mapper.selectByChangeId(tenantId(), changeId));
     }
@@ -85,7 +89,7 @@ public class DdcPublishAckRepositoryImpl extends EgonColaRepository<DdcPublishAc
     }
     @Override public DdcPublishAckBO update(DdcPublishAckBO command) {
         DdcPublishAckPO row = converter.toSource(command);
-        if (!updateById(row)) throw new IllegalStateException("TIANSHU_PUBLISH_ACK_VERSION_CHANGED");
+        if (!updateById(row)) throw new org.springframework.dao.OptimisticLockingFailureException("TIANSHU_PUBLISH_ACK_VERSION_CHANGED");
         return converter.toTarget(row);
     }
 }

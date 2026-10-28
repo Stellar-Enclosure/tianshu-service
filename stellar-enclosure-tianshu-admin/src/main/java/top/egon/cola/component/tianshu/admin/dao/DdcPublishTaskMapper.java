@@ -12,6 +12,7 @@ import top.egon.cola.component.tianshu.admin.model.po.DdcPublishTaskPO;
 
 import java.io.Serializable;
 import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 
@@ -43,6 +44,8 @@ public interface DdcPublishTaskMapper extends EgonColaMapper<DdcPublishTaskPO> {
     List<DdcPublishTaskPO> selectActiveByIds(@Param("tenantId") Long tenantId, @Param("ids") List<Long> ids);
     DdcPublishTaskPO selectByChangeId(@Param("tenantId") Long tenantId, @Param("changeId") String changeId);
     DdcPublishTaskPO selectForUpdateByChangeId(@Param("tenantId") Long tenantId, @Param("changeId") String changeId);
+    int fenceObservedVersion(@Param("tenantId") Long tenantId, @Param("id") Long id,
+            @Param("expectedVersion") Long expectedVersion, @Param("actor") String actor, @Param("now") Instant now);
     List<DdcPublishTaskPO> selectAll(@Param("tenantId") Long tenantId);
     List<DdcPublishTaskPO> selectByStatusIn(@Param("tenantId") Long tenantId, @Param("statuses") Collection<String> statuses);
     List<DdcPublishTaskPO> selectByStatusInAndUpdatedAtBefore(@Param("tenantId") Long tenantId,

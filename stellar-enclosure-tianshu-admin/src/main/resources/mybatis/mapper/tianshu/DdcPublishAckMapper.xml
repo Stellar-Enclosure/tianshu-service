@@ -60,6 +60,10 @@
         WHERE tenant_id = #{tenantId} AND change_id = #{changeId} AND deleted_at IS NULL
         ORDER BY instance_id, lease_id, id
     </select>
+    <update id="fenceObservedVersion">
+        UPDATE ddc_publish_ack SET version = version + 1, update_user_id = #{actor}, update_time = #{now}
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND version = #{expectedVersion} AND deleted_at IS NULL
+    </update>
     <update id="markIncompleteTimeout">
         UPDATE ddc_publish_ack SET ack_status = #{timeoutStatus}, ack_at = #{ackAt}, version = version + 1,
             update_user_id = #{actor}, update_time = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'

@@ -177,13 +177,31 @@ public class DdcAckServiceTest {
     }
 
     @Test
+    void staleDuplicateAckAndStaleTerminalTaskAreRetryable() {
+        DdcPublishTaskBO task = savePublishingTask("ack-stale");
+        saveTarget(task, "instance-1", "lease-1");
+        DdcPublishAckBO target = ackRepository.findByChangeId(task.getChangeId()).getFirst();
+        target.setAckStatus(DdcAckStatus.SUCCESS.name());
+        Mockito.when(ackRepository.fenceObservedVersion(Mockito.any())).thenReturn(false);
+
+        assertThatThrownBy(() -> publishService.ack(ackRequest(task.getChangeId(), "instance-1", "lease-1", CHECKSUM)))
+                .isInstanceOf(org.springframework.dao.TransientDataAccessResourceException.class);
+        assertThat(task.getAckCount()).isZero();
+
+        task.setStatus(PublishStatus.SUCCESS.name());
+        Mockito.when(taskRepository.fenceObservedVersion(Mockito.any())).thenReturn(false);
+        assertThatThrownBy(() -> publishService.ack(ackRequest(task.getChangeId(), "instance-1", "lease-1", CHECKSUM)))
+                .isInstanceOf(org.springframework.dao.TransientDataAccessResourceException.class);
+    }
+
+    @Test
     void rejectsUnknownIdentityVersionAndChecksumWithoutCreatingTarget() {
         DdcPublishTaskBO task = savePublishingTask("ack-reject");
         saveTarget(task, "instance-1", "lease-1");
 
         assertThatThrownBy(() -> publishService.ack(
                 ackRequest(task.getChangeId(), "instance-1", "stale-lease", CHECKSUM)
-        )).isInstanceOf(DdcAdminException.class);
+        )).isInstanceOf(org.springframework.dao.TransientDataAccessResourceException.class);
         DdcAckRequest wrongVersion =
                 ackRequest(task.getChangeId(), "instance-1", "lease-1", CHECKSUM);
         wrongVersion.setTargetVersion(3L);
@@ -355,6 +373,7 @@ public class DdcAckServiceTest {
                     .thenAnswer(invocation -> Optional.ofNullable(taskRows.get(invocation.getArgument(0))));
             Mockito.when(tasks.findForUpdateByChangeId(Mockito.anyString()))
                     .thenAnswer(invocation -> Optional.ofNullable(taskRows.get(invocation.getArgument(0))));
+            Mockito.when(tasks.fenceObservedVersion(Mockito.any())).thenReturn(true);
             Mockito.when(tasks.findByStatusIn(Mockito.anyCollection())).thenAnswer(invocation -> {
                 Collection<String> statuses = invocation.getArgument(0);
                 return taskRows.values().stream().filter(task -> statuses.contains(task.getStatus())).toList();
@@ -456,6 +475,7 @@ public class DdcAckServiceTest {
                     .thenAnswer(invocation -> findAck(invocation.getArgument(0), invocation.getArgument(1), invocation.getArgument(2)));
             Mockito.when(acks.findForUpdateByChangeIdAndInstanceIdAndLeaseId(Mockito.anyString(), Mockito.anyString(), Mockito.any()))
                     .thenAnswer(invocation -> findAck(invocation.getArgument(0), invocation.getArgument(1), invocation.getArgument(2)));
+            Mockito.when(acks.fenceObservedVersion(Mockito.any())).thenReturn(true);
             Mockito.when(acks.insert(Mockito.any(DdcPublishAckBO.class))).thenAnswer(invocation -> {
                 DdcPublishAckBO ack = invocation.getArgument(0);
                 long id = ids.getAndIncrement();

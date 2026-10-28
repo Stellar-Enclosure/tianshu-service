@@ -54,6 +54,11 @@ import static org.mockito.Mockito.when;
 
 class DdcPublishRetryTest {
 
+    @org.junit.jupiter.api.BeforeAll
+    static void bindSnowflakeGenerator() {
+        SnowflakeIdGenerator.initialize(0L, java.time.Duration.ofMillis(5));
+    }
+
     private static final String CONFIG_VALUE =
             "feature:\n  enabled: true\n";
 

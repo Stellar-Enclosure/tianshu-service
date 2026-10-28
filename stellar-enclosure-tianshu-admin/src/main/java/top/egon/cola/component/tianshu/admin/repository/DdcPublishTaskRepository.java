@@ -25,6 +25,9 @@ public interface DdcPublishTaskRepository {
     Optional<DdcPublishTaskBO> findForUpdateByChangeId(@NotNull(groups = EgonColaModelValidationGroups.Query.class)
             @Size(max = 64, groups = EgonColaModelValidationGroups.Query.class) String changeId);
 
+    @Validated(EgonColaModelValidationGroups.Update.class)
+    boolean fenceObservedVersion(@NotNull DdcPublishTaskBO task);
+
     @Validated(EgonColaModelValidationGroups.Query.class)
     List<DdcPublishTaskBO> findAll();
 

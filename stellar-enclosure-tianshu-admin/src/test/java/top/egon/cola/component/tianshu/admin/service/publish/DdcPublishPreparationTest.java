@@ -57,6 +57,11 @@ import static org.mockito.Mockito.when;
 
 class DdcPublishPreparationTest {
 
+    @org.junit.jupiter.api.BeforeAll
+    static void bindSnowflakeGenerator() {
+        SnowflakeIdGenerator.initialize(0L, java.time.Duration.ofMillis(5));
+    }
+
     private DdcPublishService publishService;
 
     private DdcConfigItemRepository configItemRepository;

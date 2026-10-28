@@ -9,6 +9,7 @@ import top.egon.cola.component.tianshu.admin.model.po.DdcPublishAckPO;
 
 import java.io.Serializable;
 import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 
@@ -38,6 +39,8 @@ public interface DdcPublishAckMapper extends EgonColaMapper<DdcPublishAckPO> {
             @Param("changeId") String changeId, @Param("instanceId") String instanceId, @Param("leaseId") String leaseId);
     DdcPublishAckPO selectForUpdateByChangeIdAndInstanceIdAndLeaseId(@Param("tenantId") Long tenantId,
             @Param("changeId") String changeId, @Param("instanceId") String instanceId, @Param("leaseId") String leaseId);
+    int fenceObservedVersion(@Param("tenantId") Long tenantId, @Param("id") Long id,
+            @Param("expectedVersion") Long expectedVersion, @Param("actor") String actor, @Param("now") Instant now);
     List<DdcPublishAckPO> selectByChangeId(@Param("tenantId") Long tenantId, @Param("changeId") String changeId);
     int markIncompleteTimeout(@Param("tenantId") Long tenantId, @Param("changeId") String changeId,
             @Param("timeoutStatus") String timeoutStatus, @Param("ackAt") LocalDateTime ackAt, @Param("actor") String actor);
