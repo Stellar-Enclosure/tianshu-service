@@ -50,7 +50,8 @@ public interface DdcPublishTaskMapper extends EgonColaMapper<DdcPublishTaskPO> {
     int fenceObservedVersion(@Param("tenantId") Long tenantId, @Param("id") Long id,
             @Param("expectedVersion") Long expectedVersion, @Param("actor") String actor, @Param("now") Instant now);
     int fenceDispatchTargets(@Param("tenantId") Long tenantId, @Param("task") DdcPublishTaskBO task,
-            @Param("targets") List<DdcPublishTarget> targets, @Param("actor") String actor, @Param("now") Instant now);
+            @Param("targets") List<DdcPublishTarget> targets, @Param("targetCount") int targetCount,
+            @Param("actor") String actor, @Param("now") Instant now);
     int updateAckSummary(@Param("tenantId") Long tenantId, @Param("task") DdcPublishTaskBO task,
             @Param("summary") DdcPublishAckSummaryBO summary, @Param("updatedAt") LocalDateTime updatedAt,
             @Param("actor") String actor, @Param("now") Instant now);

@@ -239,6 +239,7 @@ class DdcPublishPersistenceContractTest {
             parameters.put("task", task);
             parameters.put("targets", List.of(new top.egon.cola.component.tianshu.model.config.DdcPublishTarget("one", "lease"),
                     new top.egon.cola.component.tianshu.model.config.DdcPublishTarget("two", null)));
+            parameters.put("targetCount", 2);
             parameters.put("activeStatuses", List.of("PENDING", "PUBLISHING"));
             parameters.put("dispatchableStatuses", List.of("PENDING", "PUBLISHING"));
             parameters.put("retryableStatuses", List.of("FAILED", "TIMEOUT"));

@@ -61,7 +61,7 @@ public class DdcPublishTaskRepositoryImpl extends EgonColaRepository<DdcPublishT
                 java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS)) == 1;
     }
     @Override public boolean fenceDispatchTargets(DdcPublishTaskBO task, List<DdcPublishTarget> targets) {
-        return mapper.fenceDispatchTargets(tenantId(), task, targets, actor(),
+        return mapper.fenceDispatchTargets(tenantId(), task, targets, targets.size(), actor(),
                 java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS)) == 1;
     }
     @Override public int updateAckSummary(DdcPublishTaskBO task, DdcPublishAckSummaryBO summary, LocalDateTime updatedAt) {

@@ -78,9 +78,9 @@
         UPDATE ddc_publish_task SET version = version + 1, update_user_id = #{actor}, update_time = #{now}
         WHERE tenant_id = #{tenantId} AND id = #{task.id} AND version = #{task.version}
           AND change_id = #{task.changeId} AND deleted_at IS NULL
-          AND target_count = #{targets.size}
+          AND target_count = #{targetCount}
           AND (SELECT count(*) FROM ddc_publish_ack a WHERE a.tenant_id = #{tenantId}
-               AND a.change_id = #{task.changeId} AND a.deleted_at IS NULL) = #{targets.size}
+               AND a.change_id = #{task.changeId} AND a.deleted_at IS NULL) = #{targetCount}
         <foreach collection="targets" item="target">
           AND EXISTS (SELECT 1 FROM ddc_publish_ack a WHERE a.tenant_id = #{tenantId}
               AND a.change_id = #{task.changeId} AND a.instance_id = #{target.instanceId}
