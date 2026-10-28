@@ -23,10 +23,9 @@
         WHERE tenant_id=#{tenantId} AND catalog_scope_id=#{catalogScopeId} AND producer_id=#{producerId}
             AND principal_binding_digest=#{bindingDigest} AND enabled=true AND deleted_at IS NULL
     </select>
-    <select id="lockEnabled" resultMap="Row" timeout="2">
-        SELECT * FROM ddc_source_import_grant
-        WHERE tenant_id=#{tenantId} AND catalog_scope_id=#{catalogScopeId} AND producer_id=#{producerId}
-            AND principal_binding_digest=#{bindingDigest} AND enabled=true AND deleted_at IS NULL
-        FOR SHARE
-    </select>
+    <update id="fenceEnabled" timeout="2">
+        UPDATE ddc_source_import_grant SET version = version + 1, update_user_id = #{actor}, update_time = #{now}
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND version = #{expectedVersion}
+          AND enabled = true AND deleted_at IS NULL
+    </update>
 </mapper>

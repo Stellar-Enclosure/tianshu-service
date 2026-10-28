@@ -31,8 +31,20 @@ public class DdcSourceImportGrantRepositoryImpl extends EgonColaRepository<DdcSo
         return Optional.ofNullable(mapper.findEnabled(EgonColaTenantIdProvider.currentTenantId(), catalogScopeId, producerId, bindingDigest)).map(converter::toTarget);
     }
 
-    @Override public Optional<DdcSourceImportGrantBO> lockEnabled(Long catalogScopeId, String producerId, String bindingDigest) {
-        return Optional.ofNullable(mapper.lockEnabled(EgonColaTenantIdProvider.currentTenantId(), catalogScopeId, producerId, bindingDigest)).map(converter::toTarget);
+    @Override
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+    public Optional<DdcSourceImportGrantBO> lockEnabled(Long catalogScopeId, String producerId, String bindingDigest) {
+        Long tenantId = EgonColaTenantIdProvider.currentTenantId();
+        DdcSourceImportGrantPO candidate = mapper.findEnabled(tenantId, catalogScopeId, producerId, bindingDigest);
+        if (candidate == null) return Optional.empty();
+        String actor = org.slf4j.MDC.get("userId");
+        if (actor == null || actor.isBlank()) throw new IllegalStateException("TIANSHU_AUDIT_ACTOR_REQUIRED");
+        if (mapper.fenceEnabled(tenantId, candidate.getId(), candidate.getVersion(), actor,
+                java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS)) != 1) {
+            throw new org.springframework.dao.OptimisticLockingFailureException("metadata source grant changed after the replica read");
+        }
+        // Receipts identify the grant version whose permissions were checked, before the technical fence.
+        return Optional.of(converter.toTarget(candidate));
     }
 
     @Override public DdcSourceImportGrantBO insert(DdcSourceImportGrantBO command) {

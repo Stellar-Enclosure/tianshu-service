@@ -23,13 +23,19 @@
         SELECT s.* FROM ddc_metadata_scope s
         WHERE s.tenant_id=#{tenantId} AND s.catalog_scope_id=#{catalogScopeId} AND s.deleted_at IS NULL
     </select>
-    <select id="lockByCatalogScopeId" resultMap="Row" timeout="2">
-        SELECT * FROM ddc_metadata_scope
-        WHERE tenant_id=#{tenantId} AND catalog_scope_id=#{catalogScopeId} AND deleted_at IS NULL
-        FOR UPDATE
-    </select>
-    <select id="lockEnabledTarget" resultMap="Row" timeout="2">
-        SELECT s.* FROM ddc_metadata_scope s
+    <resultMap id="FenceSnapshot" type="top.egon.cola.component.tianshu.admin.model.bo.DdcMetadataFenceSnapshotBO">
+        <result property="scopeId" column="scope_id"/>
+        <result property="bizId" column="biz_id"/><result property="bizVersion" column="biz_version"/>
+        <result property="namespaceId" column="namespace_id"/><result property="namespaceVersion" column="namespace_version"/>
+        <result property="envId" column="env_id"/><result property="envVersion" column="env_version"/>
+        <result property="appId" column="app_id"/><result property="appVersion" column="app_version"/>
+        <result property="bindingId" column="binding_id"/><result property="bindingVersion" column="binding_version"/>
+    </resultMap>
+    <select id="selectEnabledFence" resultMap="FenceSnapshot" timeout="2">
+        SELECT s.id AS scope_id, b.id AS biz_id, b.version AS biz_version,
+            n.id AS namespace_id, n.version AS namespace_version, e.id AS env_id, e.version AS env_version,
+            a.id AS app_id, a.version AS app_version, nb.id AS binding_id, nb.version AS binding_version
+        FROM ddc_metadata_scope s
         JOIN ddc_biz b ON b.tenant_id=s.tenant_id AND b.biz_code=s.biz_code AND b.deleted_at IS NULL
         JOIN ddc_env e ON e.tenant_id=s.tenant_id AND e.env_code=s.env_code AND e.deleted_at IS NULL
         JOIN ddc_app a ON a.tenant_id=s.tenant_id AND a.id=s.app_id AND a.app_code=s.app_code
@@ -40,6 +46,13 @@
             AND nb.namespace_id=s.namespace_id AND nb.app_id=s.app_id AND nb.env_code=s.env_code AND nb.deleted_at IS NULL
         WHERE s.tenant_id=#{tenantId} AND s.catalog_scope_id=#{catalogScopeId} AND s.deleted_at IS NULL
         AND b.enabled=true AND e.enabled=true AND a.enabled=true AND n.enabled=true AND nb.enabled=true
-        FOR SHARE
     </select>
+    <sql id="FenceSet">SET version = version + 1, update_user_id = #{actor}, update_time = #{now}</sql>
+    <sql id="FenceWhere">WHERE tenant_id = #{tenantId} AND id = #{id} AND version = #{expectedVersion}
+        AND enabled = true AND deleted_at IS NULL</sql>
+    <update id="fenceBiz" timeout="2">UPDATE ddc_biz <include refid="FenceSet"/> <include refid="FenceWhere"/></update>
+    <update id="fenceNamespace" timeout="2">UPDATE ddc_namespace <include refid="FenceSet"/> <include refid="FenceWhere"/></update>
+    <update id="fenceEnv" timeout="2">UPDATE ddc_env <include refid="FenceSet"/> <include refid="FenceWhere"/></update>
+    <update id="fenceApp" timeout="2">UPDATE ddc_app <include refid="FenceSet"/> <include refid="FenceWhere"/></update>
+    <update id="fenceBinding" timeout="2">UPDATE ddc_namespace_env_app <include refid="FenceSet"/> <include refid="FenceWhere"/></update>
 </mapper>
