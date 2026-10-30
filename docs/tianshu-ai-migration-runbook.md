@@ -26,6 +26,8 @@ egon:
 
 SDK 仅需某一类资源时，可分别设置 `egon.cola.component.tianshu.prompt.enabled=true` 或 `skill.enabled=true`；未配置时两者均关闭。相应 RPC runtime 凭据需有只读 `AI_READ` 权限，管理页面则继续使用平台身份与既有 Tianshu AI namespace 权限。不要为客户端授予管理写权限来读取 Prompt/Skill。
 
+`DdcPromptClient.scope()` 与 `DdcSkillClient.scope()` 返回传输固定的 `DdcAiClientScope`（tenantId、bizCode、env、appCode），供下游在读取前核对客户端范围。该描述不授予资源权限，服务端仍检查当前租户、namespace 和 `AI_READ`。旧适配器保留 `get` 合同，但默认 `scope()` 明确失败；需要范围证明的治理入口应拒绝此类适配器。Components RPC 工厂创建的新客户端固定范围与签名使用同一个 tenantId，后续修改配置对象不会让已有 Prompt/Skill 客户端切换范围；切换范围应重新创建并关闭相应客户端句柄。
+
 ## 管理与跨 namespace 发布
 
 Admin Web 的 AI 资源页面提供 Prompt 文本编辑和 Skill 树形文件编辑。Skill 节点内容作为 UTF-8 文本保存；不会按 Markdown、图片或其他文件类型提供专用渲染。发布后版本是不可变快照，消费者固定读取时同时保存 `resourceId` 与 `versionNo`。
