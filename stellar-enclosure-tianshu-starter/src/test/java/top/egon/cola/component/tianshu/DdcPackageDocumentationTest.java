@@ -38,6 +38,7 @@ class DdcPackageDocumentationTest {
             "model.lease",
             "model.management",
             "model.registry",
+            "model.si",
             "model.tenant",
             "service",
             "service.binding",

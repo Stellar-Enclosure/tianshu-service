@@ -1,6 +1,7 @@
 package top.egon.cola.component.tianshu.redis;
 
 import top.egon.cola.component.common.crypto.digest.Digests;
+import top.egon.cola.component.tianshu.model.si.DdcSiKindEnum;
 import top.egon.cola.component.tianshu.model.registry.DdcServiceKind;
 import top.egon.cola.component.tianshu.model.registry.DdcServiceKey;
 
@@ -21,6 +22,21 @@ public final class DdcRedisKeys {
      * 当前 Tianshu Redis 键格式版本。 Current Tianshu Redis key format version.
      */
     private static final String KEY_VERSION = "v4";
+
+    /**
+     * SI 目录版本号 Redis 键租户前缀。 Tenant prefix for SI catalog-version Redis keys.
+     */
+    public static final String SI_CATALOG_VERSION_PREFIX = PREFIX + ":" + KEY_VERSION + ":tenant:";
+
+    /**
+     * SI 单资源快照缓存 Redis 键租户前缀。 Tenant prefix for SI catalog-entry Redis keys.
+     */
+    public static final String SI_CATALOG_ENTRY_PREFIX = PREFIX + ":" + KEY_VERSION + ":tenant:";
+
+    /**
+     * SI 语义向量重建互斥锁 Redis 键租户前缀。 Tenant prefix for SI embedding-lock Redis keys.
+     */
+    public static final String SI_EMBEDDING_LOCK_PREFIX = PREFIX + ":" + KEY_VERSION + ":tenant:";
 
     /**
      * 禁止实例化键生成工具类。 Prevents instantiation of the key-generation utility.
@@ -344,6 +360,62 @@ public final class DdcRedisKeys {
     private static String buildKey(Long tenantId, String scopeTag, String... parts) {
         return PREFIX + ":" + KEY_VERSION + ":tenant:" + tenantId(tenantId)
                 + ":" + scopeTag + ":" + String.join(":", parts);
+    }
+
+    /**
+     * 生成 SI 作用域目录修订指针 Redis 键。 Generates the SI scope catalog-version pointer key.
+     */
+    public static String siCatalogVersionKey(Long tenantId, String bizCode, String namespaceCode, String envCode) {
+        return buildKey(tenantId, siScopeTag(tenantId, bizCode, namespaceCode, envCode), "si", "catalog-version");
+    }
+
+    /**
+     * 生成 SI 单资源热缓存 Redis 键。 Generates the SI catalog-entry Redis key.
+     */
+    public static String siCatalogEntryKey(
+            Long tenantId,
+            String bizCode,
+            String namespaceCode,
+            String envCode,
+            DdcSiKindEnum kind,
+            String resourceKey) {
+        if (kind == null) {
+            throw new IllegalArgumentException("SI resource kind must not be null");
+        }
+        String validatedKey = validateSegment("resourceKey", resourceKey);
+        return buildKey(tenantId, siScopeTag(tenantId, bizCode, namespaceCode, envCode),
+                "si", "entry", kind.getCode(), validatedKey);
+    }
+
+    /**
+     * 生成 SI 版本异步向量重建防重入锁键。 Generates the SI embedding-reindex lock key for a version.
+     */
+    public static String siEmbeddingLockKey(Long tenantId, Long versionId) {
+        if (versionId == null || versionId <= 0) {
+            throw new IllegalArgumentException("versionId must be a positive Long");
+        }
+        String lockTag = tag(tenantId(tenantId) + "\nsi-embedding\n" + versionId);
+        return buildKey(tenantId, lockTag, "si", "embedding-lock", String.valueOf(versionId));
+    }
+
+    private static String siScopeTag(Long tenantId, String bizCode, String namespaceCode, String envCode) {
+        String biz = validateSegment("bizCode", bizCode);
+        String ns = validateSegment("namespaceCode", namespaceCode);
+        String env = validateSegment("envCode", envCode);
+        return tag(tenantId(tenantId) + "\nsi\n" + biz + "\n" + ns + "\n" + env);
+    }
+
+    private static String validateSegment(String name, String value) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(name + " must not be blank");
+        }
+        for (int i = 0; i < value.length(); i++) {
+            char ch = value.charAt(i);
+            if (ch == ':' || Character.isWhitespace(ch) || Character.isISOControl(ch)) {
+                throw new IllegalArgumentException(name + " contains forbidden separator/control character");
+            }
+        }
+        return value;
     }
 
     private static long tenantId(Long tenantId) {
