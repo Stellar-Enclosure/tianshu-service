@@ -5,7 +5,9 @@ import top.egon.cola.component.common.core.enums.EgonEnum;
 
 public enum DdcAiKindPersistenceEnum implements EgonEnum {
     PROMPT("PROMPT", 201, "Prompt"),
-    SKILL("SKILL", 202, "Skill");
+    SKILL("SKILL", 202, "Skill"),
+    AGENT("AGENT", 203, "Agent"),
+    MCP("MCP", 204, "Mcp");
 
     @EnumValue
     private final String value;

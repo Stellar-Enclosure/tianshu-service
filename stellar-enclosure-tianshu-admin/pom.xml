@@ -18,9 +18,28 @@
 
     <properties>
         <stellar-enclosure.yuheng.version>0.0.1</stellar-enclosure.yuheng.version>
+        <spring-ai.version>2.0.2</spring-ai.version>
+        <transactional-outbox.version>0.0.2-SNAPSHOT</transactional-outbox.version>
         <maven.deploy.skip>true</maven.deploy.skip>
         <gpg.skip>true</gpg.skip>
     </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.ai</groupId>
+                <artifactId>spring-ai-bom</artifactId>
+                <version>${spring-ai.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>top.egon</groupId>
+                <artifactId>stellar-enclosure-component-transactional-outbox-starter</artifactId>
+                <version>${transactional-outbox.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <dependencies>
         <dependency>
@@ -122,6 +141,14 @@
         <dependency>
             <groupId>org.redisson</groupId>
             <artifactId>redisson-spring-boot-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>top.egon</groupId>
+            <artifactId>stellar-enclosure-component-rag-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-model</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -409,6 +436,7 @@
                                 </goals>
                                 <configuration>
                                     <includes>
+                                        <include>**/DdcSiPersistenceIT.java</include>
                                         <include>**/DdcAiPersistenceIT.java</include>
                                         <include>**/DdcAiConcurrencyIT.java</include>
                                         <include>**/DdcAiPromotionIT.java</include>

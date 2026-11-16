@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="top.egon.cola.component.tianshu.admin.dao.DdcSiReferenceMapper">
+    <resultMap id="DdcSiReferencePOResultMap"
+               type="top.egon.cola.component.tianshu.admin.model.po.DdcSiReferencePO">
+        <id property="id" column="id"/>
+        <result property="tenantId" column="tenant_id"/>
+        <result property="createUserId" column="create_user_id"/>
+        <result property="createTime" column="create_time"/>
+        <result property="updateUserId" column="update_user_id"/>
+        <result property="updateTime" column="update_time"/>
+        <result property="deletedAt" column="deleted_at"/>
+        <result property="version" column="version"/>
+        <result property="sourceResourceId" column="source_resource_id"/>
+        <result property="sourceVersionNo" column="source_version_no"/>
+        <result property="sourceType" column="source_type"/>
+        <result property="sourceKey" column="source_key"/>
+        <result property="targetKind" column="target_kind"/>
+        <result property="targetKey" column="target_key"/>
+        <result property="targetVersionNo" column="target_version_no"/>
+        <result property="envCode" column="env_code"/>
+        <result property="namespaceId" column="namespace_id"/>
+    </resultMap>
+
+    <sql id="ReferenceColumns">
+        ref.id, ref.tenant_id, ref.create_user_id, ref.create_time, ref.update_user_id, ref.update_time,
+        ref.deleted_at, ref.version, ref.source_resource_id, ref.source_version_no, ref.source_type,
+        ref.source_key, ref.target_kind, ref.target_key, ref.target_version_no, ref.env_code, ref.namespace_id
+    </sql>
+
+    <select id="selectActiveById" resultMap="DdcSiReferencePOResultMap">
+        SELECT <include refid="ReferenceColumns"/>
+        FROM ddc_si_reference ref
+        WHERE ref.tenant_id = #{tenantId} AND ref.id = #{id} AND ref.deleted_at IS NULL
+    </select>
+
+    <select id="selectActiveByIds" resultMap="DdcSiReferencePOResultMap">
+        SELECT <include refid="ReferenceColumns"/>
+        FROM ddc_si_reference ref
+        WHERE ref.tenant_id = #{tenantId} AND ref.deleted_at IS NULL AND ref.id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+        ORDER BY ref.id
+    </select>
+
+    <select id="selectBlockingInboundReferences" resultMap="DdcSiReferencePOResultMap">
+        SELECT <include refid="ReferenceColumns"/>
+        FROM ddc_si_reference ref
+        LEFT JOIN ddc_si_resource sr ON sr.tenant_id = ref.tenant_id AND sr.id = ref.source_resource_id
+        WHERE ref.tenant_id = #{tenantId}
+          AND ref.env_code = #{envCode}
+          AND ref.target_kind = #{targetKind}
+          AND ref.target_key = #{targetKey}
+          AND ref.deleted_at IS NULL
+          AND (
+              ref.source_type = 'TIANJI_PROCESS'
+              OR (sr.id IS NOT NULL AND sr.deleted_at IS NULL AND sr.lifecycle_status &lt;&gt; 'ARCHIVED')
+          )
+        ORDER BY ref.source_type ASC, ref.source_key ASC
+    </select>
+
+    <select id="selectAgentGraphEdges" resultMap="DdcSiReferencePOResultMap">
+        SELECT <include refid="ReferenceColumns"/>
+        FROM ddc_si_reference ref
+        WHERE ref.tenant_id = #{tenantId}
+          AND ref.env_code = #{envCode}
+          AND ref.source_type = 'AGENT'
+          AND ref.target_kind = 'AGENT'
+          AND ref.deleted_at IS NULL
+        ORDER BY ref.source_key ASC, ref.target_key ASC
+    </select>
+
+    <select id="selectBySource" resultMap="DdcSiReferencePOResultMap">
+        SELECT <include refid="ReferenceColumns"/>
+        FROM ddc_si_reference ref
+        WHERE ref.tenant_id = #{tenantId}
+          AND ref.env_code = #{envCode}
+          AND ref.source_type = #{sourceType}
+          AND ref.source_key = #{sourceKey}
+          AND ref.deleted_at IS NULL
+        ORDER BY ref.target_kind ASC, ref.target_key ASC
+    </select>
+
+    <update id="deleteBySource">
+        UPDATE ddc_si_reference
+        SET deleted_at = CURRENT_TIMESTAMP AT TIME ZONE 'UTC',
+            version = version + 1,
+            update_user_id = #{updateUserId},
+            update_time = #{updateTime}
+        WHERE tenant_id = #{tenantId}
+          AND env_code = #{envCode}
+          AND source_type = #{sourceType}
+          AND source_key = #{sourceKey}
+          AND deleted_at IS NULL
+    </update>
+
+    <update id="deleteProcessReferences">
+        UPDATE ddc_si_reference
+        SET deleted_at = CURRENT_TIMESTAMP AT TIME ZONE 'UTC',
+            version = version + 1,
+            update_user_id = #{updateUserId},
+            update_time = #{updateTime}
+        WHERE tenant_id = #{tenantId}
+          AND env_code = #{envCode}
+          AND source_type = 'TIANJI_PROCESS'
+          AND source_key = #{processKey}
+          AND deleted_at IS NULL
+    </update>
+</mapper>

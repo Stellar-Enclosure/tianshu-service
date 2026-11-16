@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="top.egon.cola.component.tianshu.admin.dao.DdcSiEmbeddingChunkMapper">
+    <resultMap id="DdcSiEmbeddingChunkPOResultMap"
+               type="top.egon.cola.component.tianshu.admin.model.po.DdcSiEmbeddingChunkPO">
+        <id property="id" column="id"/>
+        <result property="tenantId" column="tenant_id"/>
+        <result property="createUserId" column="create_user_id"/>
+        <result property="createTime" column="create_time"/>
+        <result property="updateUserId" column="update_user_id"/>
+        <result property="updateTime" column="update_time"/>
+        <result property="deletedAt" column="deleted_at"/>
+        <result property="version" column="version"/>
+        <result property="resourceId" column="resource_id"/>
+        <result property="versionId" column="version_id"/>
+        <result property="envCode" column="env_code"/>
+        <result property="namespaceId" column="namespace_id"/>
+        <result property="kind" column="kind"/>
+        <result property="chunkIndex" column="chunk_index"/>
+        <result property="chunkText" column="chunk_text"/>
+        <result property="chunkSha256" column="chunk_sha256"/>
+        <result property="embedding" column="embedding"
+                typeHandler="top.egon.cola.component.tianshu.admin.dao.typehandler.DdcSiVectorTypeHandler"/>
+        <result property="indexedTime" column="indexed_time"/>
+        <result property="resourceKey" column="resource_key"/>
+        <result property="displayName" column="display_name"/>
+        <result property="description" column="description"/>
+        <result property="rrfScore" column="rrf_score"/>
+        <result property="appCode" column="app_code"/>
+    </resultMap>
+
+    <sql id="ChunkColumns">
+        id, tenant_id, create_user_id, create_time, update_user_id, update_time, deleted_at, version,
+        resource_id, version_id, env_code, namespace_id, kind, chunk_index, chunk_text, chunk_sha256,
+        embedding, indexed_time
+    </sql>
+
+    <select id="selectActiveById" resultMap="DdcSiEmbeddingChunkPOResultMap">
+        SELECT <include refid="ChunkColumns"/>
+        FROM ddc_si_embedding_chunk
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND deleted_at IS NULL
+    </select>
+
+    <select id="selectActiveByIds" resultMap="DdcSiEmbeddingChunkPOResultMap">
+        SELECT <include refid="ChunkColumns"/>
+        FROM ddc_si_embedding_chunk
+        WHERE tenant_id = #{tenantId} AND deleted_at IS NULL AND id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+        ORDER BY id
+    </select>
+
+    <insert id="insertChunk">
+        INSERT INTO ddc_si_embedding_chunk (
+            id, tenant_id, create_user_id, create_time, update_user_id, update_time, deleted_at, version,
+            resource_id, version_id, env_code, namespace_id, kind, chunk_index, chunk_text, chunk_sha256,
+            embedding, search_tsv, indexed_time
+        ) VALUES (
+            #{chunk.id}, #{chunk.tenantId}, #{chunk.createUserId}, #{chunk.createTime}, #{chunk.updateUserId},
+            #{chunk.updateTime}, #{chunk.deletedAt}, #{chunk.version}, #{chunk.resourceId}, #{chunk.versionId},
+            #{chunk.envCode}, #{chunk.namespaceId}, #{chunk.kind}, #{chunk.chunkIndex}, #{chunk.chunkText},
+            #{chunk.chunkSha256}, CAST(#{embeddingLiteral} AS vector),
+            to_tsvector('simple', coalesce(#{chunk.chunkText}, '')), #{chunk.indexedTime}
+        )
+    </insert>
+
+    <delete id="deleteByVersionId">
+        DELETE FROM ddc_si_embedding_chunk
+        WHERE tenant_id = #{tenantId} AND version_id = #{versionId}
+    </delete>
+
+    <select id="hybridSearchRrf" resultMap="DdcSiEmbeddingChunkPOResultMap">
+        WITH vec_ranked AS (
+            SELECT c.resource_id,
+                   c.version_id,
+                   c.chunk_text,
+                   ROW_NUMBER() OVER (ORDER BY (c.embedding &lt;=&gt; CAST(#{queryVectorLiteral} AS vector)) ASC) AS r_vec
+            FROM ddc_si_embedding_chunk c
+            JOIN ddc_si_resource r ON r.tenant_id = c.tenant_id AND r.id = c.resource_id
+            WHERE c.tenant_id = #{tenantId}
+              AND c.env_code = #{envCode}
+              AND c.deleted_at IS NULL
+              AND r.deleted_at IS NULL
+              AND r.lifecycle_status = 'PUBLISHED'
+              AND r.current_version_id = c.version_id
+            <if test="namespaceId != null">AND c.namespace_id = #{namespaceId}</if>
+            <if test="kind != null">AND c.kind = #{kind}</if>
+            ORDER BY (c.embedding &lt;=&gt; CAST(#{queryVectorLiteral} AS vector)) ASC
+            LIMIT #{candidateLimit}
+        ),
+        vec_hits AS (
+            SELECT DISTINCT ON (resource_id) resource_id, version_id, chunk_text, r_vec
+            FROM vec_ranked
+            ORDER BY resource_id, r_vec ASC
+        ),
+        fts_ranked AS (
+            SELECT r.id AS resource_id,
+                   r.current_version_id AS version_id,
+                   r.description AS chunk_text,
+                   ROW_NUMBER() OVER (
+                       ORDER BY ts_rank(r.search_tsv, plainto_tsquery('simple', #{queryText})) DESC, r.id DESC
+                   ) AS r_fts
+            FROM ddc_si_resource r
+            WHERE r.tenant_id = #{tenantId}
+              AND r.env_code = #{envCode}
+              AND r.deleted_at IS NULL
+              AND r.lifecycle_status = 'PUBLISHED'
+              AND r.search_tsv @@ plainto_tsquery('simple', #{queryText})
+            <if test="namespaceId != null">AND r.namespace_id = #{namespaceId}</if>
+            <if test="kind != null">AND r.kind = #{kind}</if>
+            ORDER BY ts_rank(r.search_tsv, plainto_tsquery('simple', #{queryText})) DESC, r.id DESC
+            LIMIT #{candidateLimit}
+        )
+        SELECT r.id AS resource_id,
+               r.tenant_id,
+               r.namespace_id,
+               r.env_code,
+               r.app_code,
+               r.kind,
+               r.resource_key,
+               r.display_name,
+               r.description,
+               COALESCE(vh.version_id, fh.version_id, r.current_version_id) AS version_id,
+               COALESCE(vh.chunk_text, fh.chunk_text, r.description) AS chunk_text,
+               (COALESCE(1.0 / (#{rrfK} + vh.r_vec), 0.0) + COALESCE(1.0 / (#{rrfK} + fh.r_fts), 0.0)) AS rrf_score
+        FROM vec_hits vh
+        FULL OUTER JOIN fts_ranked fh ON fh.resource_id = vh.resource_id
+        JOIN ddc_si_resource r ON r.tenant_id = #{tenantId} AND r.id = COALESCE(vh.resource_id, fh.resource_id)
+        WHERE r.deleted_at IS NULL
+        ORDER BY rrf_score DESC, r.id DESC
+        LIMIT #{topK}
+    </select>
+
+    <select id="ftsFallbackSearch" resultMap="DdcSiEmbeddingChunkPOResultMap">
+        SELECT r.id AS resource_id,
+               r.tenant_id,
+               r.namespace_id,
+               r.env_code,
+               r.app_code,
+               r.kind,
+               r.resource_key,
+               r.display_name,
+               r.description,
+               r.current_version_id AS version_id,
+               r.description AS chunk_text,
+               ts_rank(r.search_tsv, plainto_tsquery('simple', #{queryText}))::float8 AS rrf_score
+        FROM ddc_si_resource r
+        WHERE r.tenant_id = #{tenantId}
+          AND r.env_code = #{envCode}
+          AND r.deleted_at IS NULL
+          AND r.lifecycle_status = 'PUBLISHED'
+          AND (
+              r.search_tsv @@ plainto_tsquery('simple', #{queryText})
+              OR r.resource_key ILIKE CONCAT('%', #{queryText}, '%')
+              OR r.display_name ILIKE CONCAT('%', #{queryText}, '%')
+              OR r.description ILIKE CONCAT('%', #{queryText}, '%')
+          )
+        <if test="namespaceId != null">AND r.namespace_id = #{namespaceId}</if>
+        <if test="kind != null">AND r.kind = #{kind}</if>
+        ORDER BY rrf_score DESC, r.id DESC
+        LIMIT #{topK}
+    </select>
+</mapper>
