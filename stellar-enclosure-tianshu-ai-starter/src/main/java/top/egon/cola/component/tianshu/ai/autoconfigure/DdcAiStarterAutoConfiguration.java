@@ -28,13 +28,21 @@ import top.egon.cola.component.tianshu.ai.properties.DdcAiAuthoringProperties;
 import top.egon.cola.component.tianshu.ai.properties.DdcAiStarterProperties;
 import top.egon.cola.component.tianshu.ai.properties.DdcAiWatchedResourceDTO;
 import top.egon.cola.component.tianshu.ai.properties.DdcAiWorkspaceProperties;
+import top.egon.cola.component.tianshu.ai.si.DdcSiCatalogCache;
+import top.egon.cola.component.tianshu.ai.si.DdcSiCatalogSyncCoordinator;
+import top.egon.cola.component.tianshu.ai.si.DdcSiClientProperties;
+import top.egon.cola.component.tianshu.ai.si.DdcSiLocalResourceContributor;
+import top.egon.cola.component.tianshu.ai.si.DdcSiPublicationListener;
+import top.egon.cola.component.tianshu.ai.si.DdcSiSelfRegistrationRunner;
 import top.egon.cola.component.tianshu.ai.workspace.DdcAiPublicationListener;
 import top.egon.cola.component.tianshu.ai.workspace.DdcAiSkillMaterializer;
 import top.egon.cola.component.tianshu.ai.workspace.DdcAiSkillWorkspaceService;
 import top.egon.cola.component.tianshu.ai.workspace.DdcAiWorkspaceReconcileScheduler;
 import top.egon.cola.component.tianshu.api.client.DdcAiFeedbackClient;
 import top.egon.cola.component.tianshu.api.client.DdcAiSyncClient;
+import top.egon.cola.component.tianshu.api.client.DdcSiCatalogClient;
 import top.egon.cola.component.tianshu.api.client.DdcSkillClient;
+import org.springframework.context.annotation.Primary;
 import top.egon.cola.component.tianshu.autoconfigure.properties.DdcAiResourceProperties;
 import top.egon.cola.component.tianshu.autoconfigure.properties.DdcProperties;
 import top.egon.cola.component.tianshu.autoconfigure.properties.DdcTenantProperties;
@@ -62,7 +70,7 @@ import java.util.concurrent.ScheduledExecutorService;
         "top.egon.cola.component.tianshu.autoconfigure.DdcRedisAutoConfiguration"
 })
 @EnableConfigurationProperties({DdcAiStarterProperties.class, DdcAiResourceProperties.class, DdcProperties.class,
-        DdcTenantProperties.class})
+        DdcTenantProperties.class, DdcSiClientProperties.class})
 public class DdcAiStarterAutoConfiguration {
 
     static final String FEEDBACK_PREFIX = DdcAiStarterProperties.PREFIX + ".feedback";
@@ -87,6 +95,53 @@ public class DdcAiStarterAutoConfiguration {
     @ConditionalOnMissingBean(DdcAiStarterMetrics.class)
     public DdcAiStarterMetrics ddcAiStarterMetrics() {
         return DdcAiStarterMetrics.NOOP;
+    }
+
+    @Bean("ddcSiCatalogCache")
+    @ConditionalOnProperty(prefix = DdcSiClientProperties.PREFIX, name = "enabled", havingValue = "true")
+    @ConditionalOnMissingBean
+    public DdcSiCatalogCache ddcSiCatalogCache() {
+        return new DdcSiCatalogCache(Clock.systemUTC());
+    }
+
+    @Bean(name = "ddcSiSyncScheduler", destroyMethod = "shutdownNow")
+    @ConditionalOnProperty(prefix = DdcSiClientProperties.PREFIX, name = "enabled", havingValue = "true")
+    @ConditionalOnMissingBean(name = "ddcSiSyncScheduler")
+    public ScheduledExecutorService ddcSiSyncScheduler() {
+        return Executors.newSingleThreadScheduledExecutor(new CustomizableThreadFactory("tianshu-si-sync-"));
+    }
+
+    @Bean("ddcSiCatalogSyncCoordinator")
+    @Primary
+    @ConditionalOnProperty(prefix = DdcSiClientProperties.PREFIX, name = "enabled", havingValue = "true")
+    public DdcSiCatalogSyncCoordinator ddcSiCatalogSyncCoordinator(
+            @Qualifier("ddcSiCatalogRpcClient") DdcSiCatalogClient delegate,
+            @Qualifier("ddcSiCatalogCache") DdcSiCatalogCache cache,
+            ObjectProvider<RedissonClient> redissonClient,
+            DdcSiClientProperties properties,
+            @Qualifier("ddcSiSyncScheduler") ScheduledExecutorService scheduler) {
+        return new DdcSiCatalogSyncCoordinator(
+                delegate, cache, redissonClient.getIfAvailable(), properties, Clock.systemUTC(), scheduler);
+    }
+
+    @Bean("ddcSiPublicationListener")
+    @ConditionalOnProperty(prefix = DdcSiClientProperties.PREFIX, name = "enabled", havingValue = "true")
+    @ConditionalOnMissingBean
+    public DdcSiPublicationListener ddcSiPublicationListener(
+            ObjectProvider<ObjectMapper> objectMapper,
+            @Qualifier("ddcSiCatalogSyncCoordinator") DdcSiCatalogSyncCoordinator coordinator,
+            DdcSiClientProperties properties) {
+        return new DdcSiPublicationListener(stateMapper(objectMapper), coordinator, properties);
+    }
+
+    @Bean("ddcSiSelfRegistrationRunner")
+    @ConditionalOnProperty(prefix = DdcSiClientProperties.PREFIX, name = "enabled", havingValue = "true")
+    @ConditionalOnMissingBean
+    public DdcSiSelfRegistrationRunner ddcSiSelfRegistrationRunner(
+            @Qualifier("ddcSiCatalogRpcClient") DdcSiCatalogClient delegate,
+            DdcSiClientProperties properties,
+            ObjectProvider<DdcSiLocalResourceContributor> contributors) {
+        return new DdcSiSelfRegistrationRunner(delegate, properties, contributors.orderedStream().toList());
     }
 
     @Bean(name = "ddcAiFeedbackScheduler", destroyMethod = "shutdownNow")
