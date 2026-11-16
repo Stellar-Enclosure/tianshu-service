@@ -50,6 +50,40 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.P
         defaults = @LocalizedText(locale = "en-US", text = "aiResource: rollback"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "api.aiResource.triggerOptimizationRun", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "aiResource: triggerOptimizationRun"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "api.siResource.page", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "siResource: page"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "api.siResource.envMatrix", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "siResource: envMatrix"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "api.siResource.get", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "siResource: get"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "api.siResource.create", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "siResource: create"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "api.siResource.replaceDraft", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "siResource: replaceDraft"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "api.siResource.publish", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "siResource: publish"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "api.siResource.promote", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "siResource: promote"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "api.siResource.rollback", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "siResource: rollback"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "api.siResource.changeLifecycle", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "siResource: changeLifecycle"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "api.siResource.delete", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "siResource: delete"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "api.siResource.pageVersions", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "siResource: pageVersions"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "api.siResource.getVersion", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "siResource: getVersion"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "api.siResource.listVersionReferences", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "siResource: listVersionReferences"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "api.siResource.semanticSearch", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "siResource: semanticSearch"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "api.siResource.upsertBinding", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "siResource: upsertBinding"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "api.siResource.unbindBinding", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "siResource: unbindBinding"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "api.siResource.reindex", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "siResource: reindex"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "api.app.delete", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "app: delete"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "api.app.detail", defaultLocale = "en-US",

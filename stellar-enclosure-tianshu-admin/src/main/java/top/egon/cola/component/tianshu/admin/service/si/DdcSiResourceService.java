@@ -2,6 +2,7 @@ package top.egon.cola.component.tianshu.admin.service.si;
 
 import top.egon.cola.component.common.core.pojo.PageQuery;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcSiBindingBO;
+import top.egon.cola.component.tianshu.admin.model.bo.DdcSiReferenceBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcSiResourceBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcSiVersionBO;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcPageResult;
@@ -48,6 +49,10 @@ public interface DdcSiResourceService {
     void archive(Long tenantId, Long resourceId, Long expectedVersion, String actor);
 
     DdcPageResult<DdcSiVersionBO> pageVersions(Long tenantId, Long resourceId, PageQuery pageQuery);
+
+    DdcSiVersionBO getVersion(Long tenantId, Long resourceId, Long versionNo);
+
+    List<DdcSiReferenceBO> listReferences(Long tenantId, Long resourceId, String direction);
 
     List<DdcSiVersionBO> getEnvMatrix(Long tenantId, String bizCode, String namespaceCode, DdcSiKindEnum kind, String resourceKey);
 

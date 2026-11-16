@@ -17,11 +17,15 @@ import top.egon.cola.component.rpc.tianshu.contract.proto.v1.GetServiceKeysReque
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.GetServicesRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.HeartbeatConfigClientRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.HeartbeatServiceRequest;
+import top.egon.cola.component.rpc.tianshu.contract.proto.v1.ListSiCatalogRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.OfflineConfigClientRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.PublishConfigRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.PullConfigRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.RegisterConfigClientRequest;
+import top.egon.cola.component.rpc.tianshu.contract.proto.v1.RegisterManagedSiRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.RegisterServiceRequest;
+import top.egon.cola.component.rpc.tianshu.contract.proto.v1.ResolveSiResourceRequest;
+import top.egon.cola.component.rpc.tianshu.contract.proto.v1.SemanticSearchSiRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.UpsertConfigRequest;
 
 /**
@@ -38,6 +42,8 @@ public final class DdcRpcScopeExtractor {
             "egon.tianshu.v1.DdcManagementService/";
     private static final String AI_RESOURCE =
             "egon.tianshu.v1.DdcAiResourceService/";
+    private static final String SI_RESOURCE =
+            "egon.tianshu.v1.DdcSiResourceGrpcService/";
 
     /** 严格提取方法对应的客户端类型和作用域。 / Strictly extracts client type and scope. */
     public Scope extract(String fullMethodName, Message request) {
@@ -107,6 +113,26 @@ public final class DdcRpcScopeExtractor {
                     type(request, AiSkillPublishRequest.class).getNamespaceCode(),
                     type(request, AiSkillPublishRequest.class).getResourceKey(),
                     type(request, AiSkillPublishRequest.class).getResourceId());
+            case SI_RESOURCE + "ListSiCatalog" -> siScope(
+                    type(request, ListSiCatalogRequest.class).getAppCode(),
+                    type(request, ListSiCatalogRequest.class).getEnvCode(),
+                    type(request, ListSiCatalogRequest.class).getBizCode(),
+                    type(request, ListSiCatalogRequest.class).getNamespaceCode());
+            case SI_RESOURCE + "ResolveSiResource" -> siScope(
+                    type(request, ResolveSiResourceRequest.class).getAppCode(),
+                    type(request, ResolveSiResourceRequest.class).getEnvCode(),
+                    type(request, ResolveSiResourceRequest.class).getBizCode(),
+                    type(request, ResolveSiResourceRequest.class).getNamespaceCode());
+            case SI_RESOURCE + "SemanticSearchSiResources" -> siScope(
+                    null,
+                    type(request, SemanticSearchSiRequest.class).getEnvCode(),
+                    type(request, SemanticSearchSiRequest.class).getBizCode(),
+                    type(request, SemanticSearchSiRequest.class).getNamespaceCode());
+            case SI_RESOURCE + "RegisterManagedSiResource" -> siScope(
+                    type(request, RegisterManagedSiRequest.class).getServiceName(),
+                    type(request, RegisterManagedSiRequest.class).getEnvCode(),
+                    type(request, RegisterManagedSiRequest.class).getBizCode(),
+                    type(request, RegisterManagedSiRequest.class).getNamespaceCode());
             default -> throw new IllegalArgumentException(
                     "Unknown Tianshu RPC method");
         };
@@ -254,6 +280,16 @@ public final class DdcRpcScopeExtractor {
 
     private boolean text(String value) {
         return value != null && !value.isBlank();
+    }
+
+    private Scope siScope(String appCode, String envCode, String bizCode, String namespaceCode) {
+        return new Scope(
+                "SDK",
+                text(appCode) ? appCode : null,
+                text(envCode) ? envCode : null,
+                text(bizCode) ? bizCode : null,
+                text(namespaceCode) ? namespaceCode : null
+        );
     }
 
     /** 鉴权使用的传输无关作用域。 / Transport-neutral scope used for authorization. */

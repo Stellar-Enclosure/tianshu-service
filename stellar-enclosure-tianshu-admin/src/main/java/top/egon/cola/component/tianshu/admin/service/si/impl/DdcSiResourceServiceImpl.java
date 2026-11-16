@@ -439,6 +439,31 @@ public class DdcSiResourceServiceImpl implements DdcSiResourceService {
     }
 
     @Override
+    public DdcSiVersionBO getVersion(Long tenantId, Long resourceId, Long versionNo) {
+        get(tenantId, resourceId);
+        return repository.findVersionByResourceAndNo(tenantId, resourceId, versionNo)
+                .orElseThrow(() -> new CommonException(CODE_NOT_FOUND, "TIANSHU_SI_VERSION_NOT_FOUND",
+                        "SI version not found: " + resourceId + "@" + versionNo));
+    }
+
+    @Override
+    public List<DdcSiReferenceBO> listReferences(Long tenantId, Long resourceId, String direction) {
+        DdcSiResourceBO resource = get(tenantId, resourceId);
+        if ("INBOUND".equalsIgnoreCase(direction)) {
+            return repository.findBlockingInboundReferences(
+                    tenantId, resource.getEnvCode(), resource.getKind(), resource.getResourceKey());
+        }
+        DdcSiReferenceTargetTypeEnum sourceType = switch (resource.getKind()) {
+            case AGENT -> DdcSiReferenceTargetTypeEnum.AGENT;
+            case SKILL -> DdcSiReferenceTargetTypeEnum.SKILL;
+            case PROMPT -> DdcSiReferenceTargetTypeEnum.PROMPT;
+            case MCP -> DdcSiReferenceTargetTypeEnum.MCP;
+        };
+        return repository.findReferencesBySource(
+                tenantId, resource.getEnvCode(), sourceType, resource.getResourceKey());
+    }
+
+    @Override
     public void triggerReindex(Long tenantId, Long resourceId, Long versionId) {
         DdcSiResourceBO resource = get(tenantId, resourceId);
         Long targetVerId = versionId != null ? versionId : resource.getCurrentVersionId();

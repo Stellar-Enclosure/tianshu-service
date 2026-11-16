@@ -104,11 +104,11 @@ class DdcSiPersistenceIT {
         Configuration mybatisConfig = new Configuration();
         mybatisConfig.getTypeHandlerRegistry().register(DdcSiVectorTypeHandler.class);
         for (String xmlPath : List.of(
-                "mybatis/mapper/tianshu/si/DdcSiResourceMapper.xml",
-                "mybatis/mapper/tianshu/si/DdcSiVersionMapper.xml",
-                "mybatis/mapper/tianshu/si/DdcSiBindingMapper.xml",
-                "mybatis/mapper/tianshu/si/DdcSiReferenceMapper.xml",
-                "mybatis/mapper/tianshu/si/DdcSiEmbeddingChunkMapper.xml")) {
+                "mybatis/mapper/tianshu/DdcSiResourceMapper.xml",
+                "mybatis/mapper/tianshu/DdcSiVersionMapper.xml",
+                "mybatis/mapper/tianshu/DdcSiBindingMapper.xml",
+                "mybatis/mapper/tianshu/DdcSiReferenceMapper.xml",
+                "mybatis/mapper/tianshu/DdcSiEmbeddingChunkMapper.xml")) {
             ClassPathResource res = new ClassPathResource(xmlPath);
             assertThat(res.exists()).as("Mapper XML must exist: " + xmlPath).isTrue();
             try (InputStream xmlIn = res.getInputStream()) {
