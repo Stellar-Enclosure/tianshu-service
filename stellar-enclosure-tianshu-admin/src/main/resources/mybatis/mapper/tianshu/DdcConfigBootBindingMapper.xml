@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="top.egon.cola.component.tianshu.admin.dao.DdcConfigBootBindingMapper">
+    <resultMap id="DdcConfigBootBindingPOResultMap" type="top.egon.cola.component.tianshu.admin.model.po.DdcConfigBootBindingPO">
+        <id property="id" column="id"/>
+        <result property="tenantId" column="tenant_id"/>
+        <result property="createUserId" column="create_user_id"/>
+        <result property="createTime" column="create_time"/>
+        <result property="updateUserId" column="update_user_id"/>
+        <result property="updateTime" column="update_time"/>
+        <result property="deletedAt" column="deleted_at"/>
+        <result property="version" column="version"/>
+        <result property="clusterId" column="cluster_id"/>
+        <result property="podUid" column="pod_uid"/>
+        <result property="containerName" column="container_name"/>
+        <result property="containerId" column="container_id"/>
+        <result property="bootId" column="boot_id"/>
+        <result property="workloadUid" column="workload_uid"/>
+        <result property="k8sNamespace" column="k8s_namespace"/>
+    </resultMap>
+
+    <insert id="insertIfAbsent">
+        INSERT INTO ddc_config_boot_binding_t0 (
+            id, tenant_id, create_user_id, create_time, update_user_id, update_time, deleted_at, version,
+            cluster_id, pod_uid, container_name, container_id, boot_id, workload_uid, k8s_namespace
+        ) VALUES (
+            #{record.id}, 0, #{record.createUserId}, #{record.createTime}, #{record.updateUserId},
+            #{record.updateTime}, NULL, 0, #{record.clusterId}, #{record.podUid}, #{record.containerName},
+            #{record.containerId}, #{record.bootId}, #{record.workloadUid}, #{record.k8sNamespace}
+        ) ON CONFLICT (cluster_id, pod_uid, container_name, container_id) DO NOTHING
+    </insert>
+
+    <select id="findByIncarnation" resultMap="DdcConfigBootBindingPOResultMap">
+        SELECT id, tenant_id, create_user_id, create_time, update_user_id, update_time, deleted_at, version,
+               cluster_id, pod_uid, container_name, container_id, boot_id, workload_uid, k8s_namespace
+        FROM ddc_config_boot_binding_t0
+        WHERE tenant_id = 0 AND deleted_at IS NULL
+          AND cluster_id = #{clusterId} AND pod_uid = #{podUid}
+          AND container_name = #{containerName} AND container_id = #{containerId}
+    </select>
+</mapper>

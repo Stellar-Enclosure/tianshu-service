@@ -87,6 +87,28 @@ class DdcTenantIsolationTest {
     }
 
     @Test
+    void bootBindingTechnicalScopeIsFixedAndRestoresTheTrustedPositiveTenant() throws Exception {
+        var context = new DdcTenantContextDTO(101L, "tenant-a", "user:admin-a");
+        executor.run(context, () -> {
+            assertThatThrownBy(() -> executor.withinConfigBootBinding(context, () -> {
+                assertThat(MDC.get("tenantId")).isEqualTo("0");
+                assertThat(MDC.get("userId")).isEqualTo("user:admin-a");
+                throw new IllegalStateException("controlled technical failure");
+            })).isInstanceOf(IllegalStateException.class).hasMessage("controlled technical failure");
+            assertThat(MDC.get("tenantId")).isEqualTo("101");
+            assertThat(MDC.get("userId")).isEqualTo("user:admin-a");
+        });
+        assertThat(MDC.get("tenantId")).isNull();
+        assertThat(MDC.get("userId")).isNull();
+        assertThatThrownBy(() -> executor.withinConfigBootBinding(context, () -> "unexpected"))
+                .isInstanceOf(IllegalStateException.class).hasMessage("TENANT_CONTEXT_MISMATCH");
+        MDC.put("tenantId", "0");
+        MDC.put("userId", "user:admin-a");
+        assertThatThrownBy(() -> executor.withinConfigBootBinding(context, () -> "unexpected"))
+                .isInstanceOf(IllegalStateException.class).hasMessage("TENANT_CONTEXT_MISMATCH");
+    }
+
+    @Test
     void expectedTenantHeaderConfirmsButNeverSelectsTheAuthenticatedTenant() throws Exception {
         DdcTenantContextFilter filter = filter();
         SecurityContextHolder.getContext().setAuthentication(authentication("tenant-a", "admin-a"));

@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="top.egon.cola.component.tianshu.admin.dao.DdcConfigProcessReceiptMapper">
+    <resultMap id="Receipt" type="top.egon.cola.component.tianshu.admin.model.po.DdcConfigProcessReceiptPO">
+        <id property="id" column="id"/>
+        <result property="tenantId" column="tenant_id"/>
+        <result property="createUserId" column="create_user_id"/>
+        <result property="createTime" column="create_time"/>
+        <result property="updateUserId" column="update_user_id"/>
+        <result property="updateTime" column="update_time"/>
+        <result property="deletedAt" column="deleted_at"/>
+        <result property="version" column="version"/>
+        <result property="configId" column="config_id"/>
+        <result property="configRevision" column="config_revision"/>
+        <result property="scopeJson" column="scope_json" jdbcType="OTHER" typeHandler="top.egon.cola.component.tianshu.admin.dao.typehandler.DdcJsonbTypeHandler"/>
+        <result property="targetBindingId" column="target_binding_id"/>
+        <result property="targetRevision" column="target_revision"/>
+        <result property="clusterId" column="cluster_id"/>
+        <result property="k8sNamespace" column="k8s_namespace"/>
+        <result property="workloadUid" column="workload_uid"/>
+        <result property="podUid" column="pod_uid"/>
+        <result property="containerName" column="container_name"/>
+        <result property="containerId" column="container_id"/>
+        <result property="bootId" column="boot_id"/>
+        <result property="contentDigest" column="content_digest"/>
+        <result property="appliedRevision" column="applied_revision"/>
+        <result property="appliedDigest" column="applied_digest"/>
+        <result property="restartDigest" column="restart_digest"/>
+        <result property="result" column="result"/>
+        <result property="reasonCode" column="reason_code"/>
+        <result property="reasonMessage" column="reason_message"/>
+        <result property="reportSeq" column="report_seq"/>
+        <result property="receiptDigest" column="receipt_digest"/>
+        <result property="reportedAt" column="reported_at"/>
+        <result property="appliedAt" column="applied_at"/>
+        <result property="lastReceivedAt" column="last_received_at"/>
+    </resultMap>
+    <sql id="Columns">id, tenant_id, create_user_id, create_time, update_user_id, update_time, deleted_at, version, config_id, config_revision, scope_json, target_binding_id, target_revision, cluster_id, k8s_namespace, workload_uid, pod_uid, container_name, container_id, boot_id, content_digest, applied_revision, applied_digest, restart_digest, result, reason_code, reason_message, report_seq, receipt_digest, reported_at, applied_at, last_received_at</sql>
+    <sql id="ExactKey">
+        tenant_id = #{key.tenantId}
+        AND config_id = #{key.configId}
+        AND config_revision = #{key.configRevision}
+        AND target_binding_id = #{key.targetBindingId}
+        AND target_revision = #{key.targetRevision}
+        AND cluster_id = #{key.clusterId}
+        AND pod_uid = #{key.podUid}
+        AND container_id = #{key.containerId}
+        AND boot_id = #{key.bootId}
+        AND deleted_at IS NULL
+    </sql>
+    <select id="selectExact" resultMap="Receipt">
+        SELECT <include refid="Columns"/> FROM ddc_config_process_receipt WHERE <include refid="ExactKey"/>
+    </select>
+    <select id="selectExactForUpdate" resultMap="Receipt">
+        SELECT <include refid="Columns"/> FROM ddc_config_process_receipt WHERE <include refid="ExactKey"/> FOR UPDATE
+    </select>
+    <select id="selectManifest" resultType="java.lang.String">
+        SELECT manifest_json::text FROM ddc_config_version
+        WHERE tenant_id = #{tenantId} AND config_id = #{configId} AND config_revision = #{configRevision}
+          AND deleted_at IS NULL AND manifest_json IS NOT NULL
+    </select>
+    <insert id="insertIfAbsent">
+        INSERT INTO ddc_config_process_receipt (<include refid="Columns"/>) VALUES (#{row.id}, #{row.tenantId}, #{row.createUserId}, #{row.createTime}, #{row.updateUserId}, #{row.updateTime}, #{row.deletedAt}, #{row.version}, #{row.configId}, #{row.configRevision}, #{row.scopeJson,jdbcType=OTHER,typeHandler=top.egon.cola.component.tianshu.admin.dao.typehandler.DdcJsonbTypeHandler}, #{row.targetBindingId}, #{row.targetRevision}, #{row.clusterId}, #{row.k8sNamespace}, #{row.workloadUid}, #{row.podUid}, #{row.containerName}, #{row.containerId}, #{row.bootId}, #{row.contentDigest}, #{row.appliedRevision}, #{row.appliedDigest}, #{row.restartDigest}, #{row.result}, #{row.reasonCode}, NULL, #{row.reportSeq}, #{row.receiptDigest}, #{row.reportedAt}, #{row.appliedAt}, #{row.createTime})
+        ON CONFLICT (tenant_id, config_id, config_revision, target_binding_id, target_revision, cluster_id, pod_uid, container_id, boot_id)
+        DO NOTHING
+    </insert>
+    <update id="advance">
+        UPDATE ddc_config_process_receipt
+        SET applied_revision = #{row.appliedRevision}, applied_digest = #{row.appliedDigest},
+            result = #{row.result}, reason_code = #{row.reasonCode}, reason_message = NULL,
+            report_seq = #{row.reportSeq}, receipt_digest = #{row.receiptDigest}, reported_at = #{row.reportedAt},
+            applied_at = #{row.appliedAt},
+            last_received_at = GREATEST(last_received_at, update_time, create_time, #{row.lastReceivedAt}, #{row.updateTime}),
+            update_user_id = #{row.updateUserId},
+            update_time = #{row.updateTime}, version = version + 1
+        WHERE tenant_id = #{row.tenantId} AND id = #{row.id} AND version = #{expectedVersion}
+          AND report_seq = #{expectedSeq} AND report_seq &lt; #{row.reportSeq} AND deleted_at IS NULL
+          AND config_id = #{row.configId} AND config_revision = #{row.configRevision}
+          AND target_binding_id = #{row.targetBindingId} AND target_revision = #{row.targetRevision}
+          AND cluster_id = #{row.clusterId} AND pod_uid = #{row.podUid} AND container_id = #{row.containerId} AND boot_id = #{row.bootId}
+          AND workload_uid = #{row.workloadUid} AND k8s_namespace = #{row.k8sNamespace} AND container_name = #{row.containerName}
+          AND content_digest = #{row.contentDigest} AND restart_digest = #{row.restartDigest}
+          AND (result NOT IN ('APPLIED', 'DISABLED_APPLIED') OR result = #{row.result})
+          AND (result &lt;&gt; 'RESTART_REQUIRED' OR #{row.result} = 'RESTART_REQUIRED')
+    </update>
+    <select id="selectCurrentByTarget" resultMap="Receipt">
+        SELECT <include refid="Columns"/> FROM ddc_config_process_receipt
+        WHERE tenant_id = #{tenantId} AND deleted_at IS NULL
+          AND config_id = #{target.configId} AND config_revision = #{target.configRevision}
+          AND target_binding_id = #{target.targetBindingId} AND target_revision = #{target.targetRevision}
+          AND cluster_id = #{target.clusterId} AND k8s_namespace = #{target.k8sNamespace} AND workload_uid = #{target.workloadUid}
+          AND <choose><when test="incarnations != null and incarnations.size() > 0">
+            <foreach collection="incarnations" item="incarnation" open="(" separator=" OR " close=")">
+              (pod_uid = #{incarnation.podUid} AND container_name = #{incarnation.containerName}
+               AND container_id = #{incarnation.containerId} AND boot_id = #{incarnation.bootId})
+            </foreach>
+          </when><otherwise>FALSE</otherwise></choose>
+        ORDER BY pod_uid, container_id, boot_id, id LIMIT #{limit}
+    </select>
+    <select id="selectHistory" resultMap="Receipt">
+        SELECT <include refid="Columns"/> FROM ddc_config_process_receipt
+        WHERE tenant_id = #{tenantId} AND deleted_at IS NULL
+          AND (last_received_at &gt; #{afterReceivedAt} OR (last_received_at = #{afterReceivedAt} AND id &gt; #{afterId}))
+        ORDER BY last_received_at, id LIMIT #{limit}
+    </select>
+</mapper>
