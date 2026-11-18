@@ -26,6 +26,7 @@ class DdcPackageDocumentationTest {
             "api",
             "api.client",
             "api.extension",
+            "api.list",
             "api.refresh",
             "api.registry",
             "model",
