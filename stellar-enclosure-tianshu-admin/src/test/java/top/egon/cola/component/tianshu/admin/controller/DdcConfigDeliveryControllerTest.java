@@ -89,10 +89,12 @@ class DdcConfigDeliveryControllerTest {
         var content = snapshot();
         String etag = DdcConfigCanonicalJson.etag(content);
         when(snapshots.snapshot(any(), isNull())).thenReturn(new DdcConfigSnapshotService.Snapshot(content, etag, "signed-delivery-1", false));
-        mvc.perform(get("/internal/v1/config/snapshot").requestAttr(ATTRIBUTE, workload()))
+        mvc.perform(get("/internal/v1/config/snapshot").requestAttr(ATTRIBUTE, workload())
+                        .header("X-Config-Container-Id", "untrusted-container-claim"))
                 .andExpect(status().isOk()).andExpect(header().string(HttpHeaders.ETAG, etag))
                 .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "private, no-cache"))
                 .andExpect(header().string("X-Config-Delivery-Token", "signed-delivery-1"))
+                .andExpect(header().string("X-Config-Container-Id", "containerd://a1"))
                 .andExpect(header().string("X-Config-Valid-Until", content.getValidUntil().toString()))
                 .andExpect(jsonPath("$.releaseRevision").value("43"))
                 .andExpect(jsonPath("$.scope.resourceName").value("application.yml"))
@@ -110,13 +112,27 @@ class DdcConfigDeliveryControllerTest {
                 .andExpect(status().isNotModified()).andExpect(content().string(""))
                 .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "private, no-cache"))
                 .andExpect(header().string("X-Config-Delivery-Token", "fresh-signed-delivery"))
+                .andExpect(header().string("X-Config-Container-Id", "containerd://a1"))
                 .andExpect(header().string("X-Config-Valid-Until", content.getValidUntil().toString()));
+    }
+
+    @Test
+    void bothSnapshotSuccessResponsesDocumentTheVerifiedContainerHeader() throws Exception {
+        var mapping = DdcConfigDeliveryController.class.getMethod("configSnapshot", ServiceIdentityPrincipal.class,
+                DdcConfigWorkloadIdentityVO.class, String.class, jakarta.servlet.http.HttpServletRequest.class);
+        var responses = mapping.getAnnotation(io.swagger.v3.oas.annotations.responses.ApiResponses.class);
+        for (String code : new String[]{"200", "304"}) {
+            var response = java.util.Arrays.stream(responses.value()).filter(value -> value.responseCode().equals(code)).findFirst().orElseThrow();
+            assertThat(java.util.Arrays.stream(response.headers()).map(value -> value.name()).toList())
+                    .as("snapshot %s response headers", code).contains("X-Config-Container-Id");
+        }
     }
 
     @Test
     void matchingEtagCannotSkipMissingWorkloadProof() throws Exception {
         mvc.perform(get("/internal/v1/config/snapshot").header(HttpHeaders.IF_NONE_MATCH, "\"known\""))
                 .andExpect(status().isUnauthorized()).andExpect(header().string(HttpHeaders.WWW_AUTHENTICATE, "Bearer"))
+                .andExpect(header().doesNotExist("X-Config-Container-Id"))
                 .andExpect(jsonPath("$.errorCode").value("TOKEN_INVALID")).andExpect(jsonPath("$.requestId").isNotEmpty());
         verifyNoInteractions(snapshots, receipts);
     }
@@ -198,7 +214,8 @@ class DdcConfigDeliveryControllerTest {
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.errorCode").value("STALE_RECEIPT"));
         when(snapshots.snapshot(any(), any())).thenThrow(new DdcConfigSnapshotService.Rejected(HttpStatus.SERVICE_UNAVAILABLE, "CONFIG_AUTHORITY_UNAVAILABLE"));
         mvc.perform(get("/internal/v1/config/snapshot").requestAttr(ATTRIBUTE, workload()))
-                .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.errorCode").value("CONFIG_AUTHORITY_UNAVAILABLE"));
+                .andExpect(status().isServiceUnavailable()).andExpect(header().doesNotExist("X-Config-Container-Id"))
+                .andExpect(jsonPath("$.errorCode").value("CONFIG_AUTHORITY_UNAVAILABLE"));
     }
 
     @Test

@@ -67,6 +67,7 @@ public class DdcConfigDeliveryController {
     public static final String VERIFIED_WORKLOAD_ATTRIBUTE = "top.egon.cola.component.tianshu.admin.controller.config.DdcConfigDeliveryController.verifiedWorkload";
     private static final String DELIVERY_TOKEN_HEADER = "X-Config-Delivery-Token";
     private static final String VALID_UNTIL_HEADER = "X-Config-Valid-Until";
+    private static final String CONTAINER_ID_HEADER = "X-Config-Container-Id";
     @Qualifier("ddcConfigSnapshotService") private final DdcConfigSnapshotService snapshots;
     @Qualifier("ddcConfigReceiptService") private final DdcConfigReceiptService receipts;
 
@@ -79,9 +80,11 @@ public class DdcConfigDeliveryController {
                     combine = @SecurityRequirementEntry(name = "tianshuConfigWorkloadToken")))
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Complete snapshot and fresh delivery credential", content = @Content(schema = @Schema(implementation = DdcConfigSnapshotDTO.class)),
-                    headers = {@Header(name = "ETag"), @Header(name = DELIVERY_TOKEN_HEADER), @Header(name = VALID_UNTIL_HEADER)}),
+                    headers = {@Header(name = "ETag"), @Header(name = DELIVERY_TOKEN_HEADER), @Header(name = VALID_UNTIL_HEADER),
+                            @Header(name = CONTAINER_ID_HEADER, description = "Verified opaque container incarnation including its runtime prefix", schema = @Schema(type = "string"))}),
             @ApiResponse(responseCode = "304", description = "Reauthorized existing boot and unchanged content", content = @Content,
-                    headers = {@Header(name = "ETag"), @Header(name = DELIVERY_TOKEN_HEADER), @Header(name = VALID_UNTIL_HEADER)}),
+                    headers = {@Header(name = "ETag"), @Header(name = DELIVERY_TOKEN_HEADER), @Header(name = VALID_UNTIL_HEADER),
+                            @Header(name = CONTAINER_ID_HEADER, description = "Verified opaque container incarnation including its runtime prefix", schema = @Schema(type = "string"))}),
             @ApiResponse(responseCode = "404", description = "No authorized published configuration", content = @Content(schema = @Schema(implementation = DeliveryErrorVO.class)))})
     public ResponseEntity<DdcConfigSnapshotDTO> configSnapshot(
             @Parameter(hidden = true) @AuthenticationPrincipal ServiceIdentityPrincipal principal,
@@ -94,6 +97,7 @@ public class DdcConfigDeliveryController {
         headers.setETag(snapshot.etag());
         headers.set(DELIVERY_TOKEN_HEADER, snapshot.deliveryToken());
         headers.set(VALID_UNTIL_HEADER, snapshot.content().getValidUntil().toString());
+        headers.set(CONTAINER_ID_HEADER, workload.containerId());
         return new ResponseEntity<>(snapshot.notModified() ? null : snapshot.content(), headers,
                 snapshot.notModified() ? HttpStatus.NOT_MODIFIED : HttpStatus.OK);
     }
