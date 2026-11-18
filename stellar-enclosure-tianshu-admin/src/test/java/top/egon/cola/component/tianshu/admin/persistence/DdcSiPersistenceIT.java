@@ -1,10 +1,13 @@
 package top.egon.cola.component.tianshu.admin.persistence;
 
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.Validation;
 import jakarta.validation.ValidatorFactory;
 import org.apache.ibatis.builder.xml.XMLMapperBuilder;
 import org.apache.ibatis.session.Configuration;
+import org.apache.ibatis.type.JdbcType;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -18,17 +21,20 @@ import top.egon.cola.component.common.mybatis.ddl.EgonColaDdlTargetBO;
 import top.egon.cola.component.common.mybatis.ddl.EgonColaPostgreDdlRunner;
 import top.egon.cola.component.common.mybatis.model.EgonColaModelValidationGroups;
 import top.egon.cola.component.common.mybatis.model.EgonModel;
+import top.egon.cola.component.tianshu.admin.dao.DdcConfigVersionMapper;
 import top.egon.cola.component.tianshu.admin.dao.DdcSiBindingMapper;
 import top.egon.cola.component.tianshu.admin.dao.DdcSiEmbeddingChunkMapper;
 import top.egon.cola.component.tianshu.admin.dao.DdcSiReferenceMapper;
 import top.egon.cola.component.tianshu.admin.dao.DdcSiResourceMapper;
 import top.egon.cola.component.tianshu.admin.dao.DdcSiVersionMapper;
+import top.egon.cola.component.tianshu.admin.dao.typehandler.DdcJsonbTypeHandler;
 import top.egon.cola.component.tianshu.admin.dao.typehandler.DdcSiVectorTypeHandler;
 import top.egon.cola.component.tianshu.admin.model.enums.DdcAiKindPersistenceEnum;
 import top.egon.cola.component.tianshu.admin.model.enums.DdcSiBindingStatusPersistenceEnum;
 import top.egon.cola.component.tianshu.admin.model.enums.DdcSiLifecycleStatusPersistenceEnum;
 import top.egon.cola.component.tianshu.admin.model.enums.DdcSiReferenceTargetTypePersistenceEnum;
 import top.egon.cola.component.tianshu.admin.model.enums.DdcSiSourceTypePersistenceEnum;
+import top.egon.cola.component.tianshu.admin.model.po.DdcConfigVersionPO;
 import top.egon.cola.component.tianshu.admin.model.po.DdcSiBindingPO;
 import top.egon.cola.component.tianshu.admin.model.po.DdcSiEmbeddingChunkPO;
 import top.egon.cola.component.tianshu.admin.model.po.DdcSiReferencePO;
@@ -82,9 +88,11 @@ class DdcSiPersistenceIT {
         try (InputStream in = getClass().getClassLoader().getResourceAsStream(MANIFEST_PATH)) {
             manifest = new ObjectMapper().readValue(in, EgonColaDdlManifestBO.class);
         }
-        assertThat(manifest.scripts().getLast().version()).isEqualTo("20261116_001");
-        assertThat(manifest.scripts().getLast().path()).isEqualTo(SI_SCRIPT_PATH);
-        assertThat(manifest.scripts().getLast().sha256()).isEqualTo(actualSha256);
+        assertThat(manifest.scripts()).filteredOn(script -> "20261116_001".equals(script.version()))
+                .singleElement().satisfies(script -> {
+                    assertThat(script.path()).isEqualTo(SI_SCRIPT_PATH);
+                    assertThat(script.sha256()).isEqualTo(actualSha256);
+                });
 
         var yamlSources = new YamlPropertySourceLoader()
                 .load("persistence", new ClassPathResource("egon-tianshu-persistence.yml"));
@@ -172,6 +180,47 @@ class DdcSiPersistenceIT {
     }
 
     @Test
+    void configAndSiVersionMappersBindTheManifestOnGeneratedInsertAndExplicitRead() throws Exception {
+        var mapper = new ObjectMapper();
+        var config = new MybatisConfiguration();
+        assertManifestMapping(config, DdcConfigVersionMapper.class,
+                new DdcConfigVersionPO().setManifestJson(mapper.createObjectNode().put("schemaVersion", "1")),
+                "manifestJson", "manifest_json");
+        assertManifestMapping(config, DdcSiVersionMapper.class,
+                new DdcSiVersionPO().setDependencyManifestJson(mapper.createObjectNode().put("schemaVersion", "1")),
+                "dependencyManifestJson", "dependency_manifest_json");
+    }
+
+    private static void assertManifestMapping(MybatisConfiguration config, Class<?> mapperType, EgonModel po,
+                                              String property, String column) throws Exception {
+        String xml = "mybatis/mapper/tianshu/" + mapperType.getSimpleName() + ".xml";
+        try (InputStream input = new ClassPathResource(xml).getInputStream()) {
+            new XMLMapperBuilder(input, config, xml, config.getSqlFragments()).parse();
+        }
+        assertThat(TableInfoHelper.getTableInfo(po.getClass()).getFieldList()).filteredOn(f -> f.getProperty().equals(property))
+                .singleElement().satisfies(field -> {
+                    assertThat(field.getColumn()).isEqualTo(column);
+                    assertThat(field.getJdbcType()).isSameAs(JdbcType.OTHER);
+                    assertThat(field.getUpdateStrategy().name()).isEqualTo("NEVER");
+                });
+        String namespace = mapperType.getName();
+        var insert = config.getMappedStatement(namespace + ".insert").getBoundSql(po);
+        assertThat(insert.getSql()).contains(column);
+        assertThat(insert.getParameterMappings()).filteredOn(m -> m.getProperty().equals(property))
+                .singleElement().satisfies(mapping -> {
+                    assertThat(mapping.getJdbcType()).isSameAs(JdbcType.OTHER);
+                    assertThat(mapping.getTypeHandler()).isInstanceOf(DdcJsonbTypeHandler.class);
+                });
+        var lookup = config.getMappedStatement(namespace + ".selectActiveById");
+        assertThat(lookup.getBoundSql(Map.of("tenantId", 42L, "id", 52L)).getSql()).contains("v." + column);
+        assertThat(lookup.getResultMaps().getFirst().getResultMappings()).filteredOn(m -> m.getProperty().equals(property))
+                .singleElement().satisfies(mapping -> {
+                    assertThat(mapping.getJdbcType()).isSameAs(JdbcType.OTHER);
+                    assertThat(mapping.getTypeHandler()).isInstanceOf(DdcJsonbTypeHandler.class);
+                });
+    }
+
+    @Test
     void postgresPgvectorSupportsSiMigrationBackfillConstraintsAndHybridRrfSearch() throws Exception {
         Assumptions.assumeTrue("true".equalsIgnoreCase(System.getenv("TIANSHU_AI_PERSISTENCE_IT_ENABLED")),
                 "requires live PostgreSQL with pgvector extension");
@@ -203,6 +252,7 @@ class DdcSiPersistenceIT {
             List<EgonColaDdlResult> results = ddlRunner.run(List.of(new EgonColaDdlTargetBO(
                     "tianshu-si-it", schema, EgonColaDdlTargetBO.RoleEnum.MASTER_DATA, ds, manifest, "b".repeat(64))));
             assertThat(results).isNotEmpty();
+            assertJsonbRoundTrip(conn);
 
             conn.setAutoCommit(false);
             try {
@@ -211,8 +261,9 @@ class DdcSiPersistenceIT {
                 try (PreparedStatement badRef = conn.prepareStatement(
                         "INSERT INTO ddc_si_version_t0 (id, tenant_id, create_user_id, create_time, update_user_id, "
                                 + "update_time, deleted_at, version, resource_id, version_no, kind, spec_json, digest_sha256, "
-                                + "index_status, published_time) VALUES (?, ?, 'it', CURRENT_TIMESTAMP, 'it', "
-                                + "CURRENT_TIMESTAMP, NULL, 0, ?, 1, 'AGENT', '{}', ?, 'PENDING', ?)")) {
+                                + "index_status, published_time, dependency_manifest_json) "
+                                + "VALUES (?, ?, 'it', CURRENT_TIMESTAMP, 'it', CURRENT_TIMESTAMP, NULL, 0, "
+                                + "?, 1, 'AGENT', '{}', ?, 'PENDING', ?, '{\"schemaVersion\":\"1\"}'::jsonb)")) {
                     badRef.setLong(1, 9001L);
                     badRef.setLong(2, tenantId);
                     badRef.setLong(3, 999999L);
@@ -241,6 +292,21 @@ class DdcSiPersistenceIT {
             try (Connection owner = DriverManager.getConnection(url, user, password);
                  var stmt = owner.createStatement()) {
                 stmt.execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");
+            }
+        }
+    }
+
+    private static void assertJsonbRoundTrip(Connection connection) throws Exception {
+        var handler = new DdcJsonbTypeHandler();
+        var value = new ObjectMapper().readTree("{\"schemaVersion\":\"1\",\"label\":\"配置\",\"nodes\":[]}");
+        try (var statement = connection.prepareStatement("SELECT ? AS manifest, pg_typeof(?)::text, NULL::jsonb")) {
+            handler.setNonNullParameter(statement, 1, value, JdbcType.OTHER);
+            handler.setNonNullParameter(statement, 2, value, JdbcType.OTHER);
+            try (var rows = statement.executeQuery()) {
+                assertThat(rows.next()).isTrue();
+                assertThat(rows.getString(2)).isEqualTo("jsonb");
+                assertThat(handler.getNullableResult(rows, "manifest")).isEqualTo(value);
+                assertThat(handler.getNullableResult(rows, 3)).isNull();
             }
         }
     }

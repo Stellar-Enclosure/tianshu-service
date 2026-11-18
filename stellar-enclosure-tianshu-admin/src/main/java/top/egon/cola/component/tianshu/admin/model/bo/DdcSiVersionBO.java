@@ -1,5 +1,7 @@
 package top.egon.cola.component.tianshu.admin.model.bo;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -31,6 +33,8 @@ public class DdcSiVersionBO {
     private Long versionNo;
     private DdcSiKindEnum kind;
     private String specJson;
+    /** Fixed publication metadata; historical absence remains NULL rather than an empty object. */
+    private JsonNode dependencyManifestJson;
     private String digestSha256;
     private String sourceEnvCode;
     private Long sourceVersionNo;

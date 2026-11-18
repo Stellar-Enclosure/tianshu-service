@@ -1,5 +1,7 @@
 package top.egon.cola.component.tianshu.admin.model.bo;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.constraints.NotNull;
@@ -58,6 +60,8 @@ public class DdcConfigVersionBO {
 
     private String oldContent;
     private String newContent;
+    /** Fixed publication metadata; historical absence remains NULL rather than an empty object. */
+    private JsonNode manifestJson;
     private String format;
     private String changeType;
     private String changeReason;

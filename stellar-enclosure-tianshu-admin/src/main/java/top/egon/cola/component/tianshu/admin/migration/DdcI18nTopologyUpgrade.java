@@ -50,6 +50,11 @@ final class DdcI18nTopologyUpgrade {
         return this;
     }
 
+    DdcI18nTopologyUpgrade cloudDelivery() {
+        plan = UpgradePlan.CLOUD_DELIVERY;
+        return this;
+    }
+
     void upgrade() {
         validateManifests();
         try {
@@ -95,6 +100,7 @@ final class DdcI18nTopologyUpgrade {
                 || statementTimeout == null || statementTimeout.isZero() || statementTimeout.isNegative()) {
             throw new IllegalStateException("TIANSHU_I18N_UPGRADE_PLAN_INVALID");
         }
+        if (plan == UpgradePlan.CLOUD_DELIVERY) validateCloudDeliveryPrefix();
         for (var manifest : List.of(tianshuManifest, outboxManifest)) {
             for (var script : manifest.scripts()) {
                 try {
@@ -110,6 +116,24 @@ final class DdcI18nTopologyUpgrade {
                 } catch (IOException failure) {
                     throw new IllegalStateException("TIANSHU_I18N_UPGRADE_RESOURCE_UNREADABLE", failure);
                 }
+            }
+        }
+    }
+
+    private void validateCloudDeliveryPrefix() {
+        // Applied SQL is immutable. Do not accept a newly packaged rewrite of the predecessor history.
+        List<String> checksums = List.of(
+                "c2fdefad7c3ed1244757f9b6e4d78df82ad51d9e4870e9e47eda5f57e9370678",
+                "3700ddc8c7653c275cd0dd8d53ff6d7ae449d99f95da13e2ca34b52da80a1a9b",
+                "ea388ac5115c1e6e35604cf52da16599c17e8be43fbe41d0e8cddb3d3a2ecac6",
+                "acdf95ef39c35ce673558b6027b4641bbc7f0cad674e7e902c7c695f81b3a6b1",
+                "7fa986be12478e6c5df90ad17328409b969616f5f9ff5d7897a858d4ba3421c9",
+                "5772a82da5f28e3e2a188737fce57aa4d8ade2c9c8a53f205fad6dde6690280a",
+                "5d8dae6b95cd51b22407802c80583e788819300079942e7726d2798cffdde04e",
+                "06a0b00da3064d97c85f88be37377a742d03c8203791129ed04906b6dcae2df1");
+        for (int index = 0; index < checksums.size(); index++) {
+            if (!checksums.get(index).equals(tianshuManifest.scripts().get(index).sha256())) {
+                throw new IllegalStateException("TIANSHU_CLOUD_UPGRADE_PREDECESSOR_MANIFEST_MISMATCH");
             }
         }
     }
@@ -145,7 +169,7 @@ final class DdcI18nTopologyUpgrade {
             throw new IllegalStateException("TIANSHU_I18N_UPGRADE_FINGERPRINT_MISMATCH");
         }
         String tableCheck = "SELECT " + plan.tables.stream()
-                .map(table -> "to_regclass('public." + table + "_t0') IS NOT NULL")
+                .map(table -> "to_regclass('public." + table + "') IS NOT NULL")
                 .collect(java.util.stream.Collectors.joining(", "));
         try (PreparedStatement statement = statement(connection, tableCheck);
              ResultSet row = statement.executeQuery()) {
@@ -311,12 +335,16 @@ final class DdcI18nTopologyUpgrade {
 
     private enum State { PREVIOUS, CURRENT }
     private enum UpgradePlan {
-        I18N(VERSIONS, SCRIPT, List.of(TABLE), "upgrade-i18n"),
+        I18N(VERSIONS, SCRIPT, List.of(TABLE + "_t0"), "upgrade-i18n"),
         LIST_TEMPLATES(List.of("20260922_001", "20260928_001", "20261017_001", "20261018_001",
                 "20261022_001", "20261023_001", "20261028_001"),
                 "db/egon-mp/V20261028_001__tianshu_list_templates.sql",
-                List.of("ddc_list_definition", "ddc_list_template", "ddc_list_template_column", "ddc_list_selection"),
-                "upgrade-list-templates");
+                List.of("ddc_list_definition_t0", "ddc_list_template_t0", "ddc_list_template_column_t0", "ddc_list_selection_t0"),
+                "upgrade-list-templates"),
+        CLOUD_DELIVERY(List.of("20260922_001", "20260928_001", "20261017_001", "20261018_001",
+                "20261022_001", "20261023_001", "20261028_001", "20261116_001", "20261117_001"),
+                "db/egon-mp/V20261117_001__tianshu_cloud_delivery_manifests.sql",
+                List.of("ddc_config_process_receipt_t0", "ddc_config_boot_binding_t0"), "upgrade-cloud-delivery");
         private final List<String> versions;
         private final String script;
         private final List<String> tables;

@@ -40,6 +40,11 @@
       "version": "20261116_001",
       "path": "db/egon-mp/V20261116_001__tianshu_si_resource_governance.sql",
       "sha256": "06a0b00da3064d97c85f88be37377a742d03c8203791129ed04906b6dcae2df1"
+    },
+    {
+      "version": "20261117_001",
+      "path": "db/egon-mp/V20261117_001__tianshu_cloud_delivery_manifests.sql",
+      "sha256": "ec2deb49cfa03eaf3258818f79af9c9f7bba8e14dbb21c34231ca31763fa61c0"
     }
   ],
   "freshBaselineVersion": "20261018_001"

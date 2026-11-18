@@ -1,5 +1,8 @@
 package top.egon.cola.component.tianshu.admin.model.po;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import org.apache.ibatis.type.JdbcType;
+import top.egon.cola.component.tianshu.admin.dao.typehandler.DdcJsonbTypeHandler;
 import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
@@ -46,6 +49,11 @@ public class DdcSiVersionPO extends EgonModel<DdcSiVersionPO> {
     @TableField(value = "spec_json", updateStrategy = FieldStrategy.NEVER)
     @NotNull(groups = {EgonColaModelValidationGroups.Insert.class, EgonColaModelValidationGroups.Persisted.class})
     private String specJson;
+
+    /** NULL identifies an archived version without executable publication metadata. */
+    @TableField(value = "dependency_manifest_json", jdbcType = JdbcType.OTHER, typeHandler = DdcJsonbTypeHandler.class,
+            updateStrategy = FieldStrategy.NEVER)
+    private JsonNode dependencyManifestJson;
 
     @TableField(value = "digest_sha256", updateStrategy = FieldStrategy.NEVER)
     @NotNull(groups = {EgonColaModelValidationGroups.Insert.class, EgonColaModelValidationGroups.Persisted.class})

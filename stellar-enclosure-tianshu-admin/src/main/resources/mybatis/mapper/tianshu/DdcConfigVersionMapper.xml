@@ -20,6 +20,8 @@
         <result property="configRevision" column="config_revision"/>
         <result property="oldContent" column="old_value"/>
         <result property="newContent" column="new_value"/>
+        <result property="manifestJson" column="manifest_json" jdbcType="OTHER"
+                typeHandler="top.egon.cola.component.tianshu.admin.dao.typehandler.DdcJsonbTypeHandler"/>
         <result property="format" column="value_type"/>
         <result property="changeType" column="change_type"/>
         <result property="changeReason" column="change_reason"/>
@@ -33,7 +35,7 @@
     <sql id="VersionColumns">
         v.id, v.tenant_id, v.create_user_id, v.create_time, v.update_user_id, v.update_time, v.deleted_at, v.version,
         v.public_id, v.config_id, v.app_code, v.env, v.namespace, v.config_key, v.config_revision, v.old_value,
-        v.new_value, v.value_type, v.change_type, v.change_reason, v.operator, v.operator_ip, v.created_at, v.biz_code,
+        v.new_value, v.manifest_json, v.value_type, v.change_type, v.change_reason, v.operator, v.operator_ip, v.created_at, v.biz_code,
         c.public_id AS config_public_id
     </sql>
 

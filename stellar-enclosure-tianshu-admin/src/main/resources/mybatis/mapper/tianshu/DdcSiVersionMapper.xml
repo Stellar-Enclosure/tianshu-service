@@ -16,6 +16,8 @@
         <result property="versionNo" column="version_no"/>
         <result property="kind" column="kind"/>
         <result property="specJson" column="spec_json"/>
+        <result property="dependencyManifestJson" column="dependency_manifest_json" jdbcType="OTHER"
+                typeHandler="top.egon.cola.component.tianshu.admin.dao.typehandler.DdcJsonbTypeHandler"/>
         <result property="digestSha256" column="digest_sha256"/>
         <result property="sourceEnvCode" column="source_env_code"/>
         <result property="sourceVersionNo" column="source_version_no"/>
@@ -28,7 +30,7 @@
 
     <sql id="VersionColumns">
         v.id, v.tenant_id, v.create_user_id, v.create_time, v.update_user_id, v.update_time, v.deleted_at, v.version,
-        v.resource_id, v.version_no, v.kind, v.spec_json, v.digest_sha256, v.source_env_code, v.source_version_no,
+        v.resource_id, v.version_no, v.kind, v.spec_json, v.dependency_manifest_json, v.digest_sha256, v.source_env_code, v.source_version_no,
         v.change_note, v.index_status, v.published_time, v.indexed_time, r.env_code AS env_code
     </sql>
 
@@ -87,5 +89,6 @@
             version = version + 1,
             update_time = COALESCE(#{indexedTime}, CURRENT_TIMESTAMP)
         WHERE tenant_id = #{tenantId} AND id = #{versionId} AND deleted_at IS NULL
+          AND dependency_manifest_json IS NOT NULL
     </update>
 </mapper>

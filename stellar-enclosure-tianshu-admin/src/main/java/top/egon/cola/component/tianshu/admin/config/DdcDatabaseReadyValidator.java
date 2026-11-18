@@ -229,6 +229,7 @@ public class DdcDatabaseReadyValidator implements SmartInitializingSingleton {
             throw new IllegalArgumentException("TIANSHU_DDL_MANIFEST_INVALID");
         }
         validateManifestResourceChecksum(manifest);
+        boolean cloudDelivery = DdcCloudDeliveryReadyValidator.isIncludedIn(manifest);
 
         try (Connection connection = primary.getConnection()) {
             connection.setSchema("public");
@@ -239,12 +240,15 @@ public class DdcDatabaseReadyValidator implements SmartInitializingSingleton {
             }
             validatePrimaryAndSchema(connection);
             validateTables(metadata);
-            validateColumns(metadata);
+            validateColumns(metadata, cloudDelivery);
             validateLifecycleIndexes(metadata);
             validateLifecycleIndexPredicates(connection);
             validateNamedConstraints(connection);
             DdcPermissionMetadataReadyValidator.validate(connection);
             DdcListTemplateReadyValidator.validate(connection);
+            if (cloudDelivery) {
+                DdcCloudDeliveryReadyValidator.validate(connection);
+            }
             validateHistory(connection, manifest, routeFingerprint);
         } catch (SQLException failure) {
             throw new IllegalStateException("TIANSHU_DATABASE_SCHEMA_NOT_READY", failure);
@@ -292,7 +296,7 @@ public class DdcDatabaseReadyValidator implements SmartInitializingSingleton {
         }
     }
 
-    private static void validateColumns(DatabaseMetaData metadata) throws SQLException {
+    private static void validateColumns(DatabaseMetaData metadata, boolean cloudDelivery) throws SQLException {
         for (String table : TIANSHU_TABLES) {
             Set<String> actual = new LinkedHashSet<>();
             try (ResultSet columns = metadata.getColumns(null, "public", table, null)) {
@@ -300,7 +304,12 @@ public class DdcDatabaseReadyValidator implements SmartInitializingSingleton {
                     actual.add(columns.getString("COLUMN_NAME").toLowerCase(java.util.Locale.ROOT));
                 }
             }
-            if (!TABLE_COLUMNS.get(table).equals(actual)) {
+            Set<String> expected = TABLE_COLUMNS.get(table);
+            if (cloudDelivery && "ddc_config_version_t0".equals(table)) {
+                expected = new LinkedHashSet<>(expected);
+                expected.add("manifest_json");
+            }
+            if (!expected.equals(actual)) {
                 throw new IllegalStateException("TIANSHU_SCHEMA_COLUMN_SET_MISMATCH: " + table);
             }
         }

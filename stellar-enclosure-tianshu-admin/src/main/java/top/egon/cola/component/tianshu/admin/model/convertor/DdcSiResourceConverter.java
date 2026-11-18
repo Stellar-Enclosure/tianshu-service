@@ -2,6 +2,7 @@ package top.egon.cola.component.tianshu.admin.model.convertor;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.mapstruct.BeanMapping;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
@@ -42,9 +43,14 @@ public interface DdcSiResourceConverter extends BaseConverter<DdcSiResourcePO, D
     @Mapping(target = "tagsJson", source = "tags", qualifiedByName = "tagsListToJson")
     DdcSiResourcePO toSource(DdcSiResourceBO target);
 
+    @Mapping(target = "dependencyManifestJson", source = "dependencyManifestJson", qualifiedByName = "copySiDependencyManifestJson")
     DdcSiVersionBO toVersionBo(DdcSiVersionPO source);
 
+    @Mapping(target = "dependencyManifestJson", source = "dependencyManifestJson", qualifiedByName = "copySiDependencyManifestJson")
     DdcSiVersionPO toVersionPo(DdcSiVersionBO target);
+
+    @Named("copySiDependencyManifestJson")
+    default JsonNode copySiDependencyManifestJson(JsonNode value) { return value == null ? null : value.deepCopy(); }
 
     @Mapping(target = "status", source = "bindingStatus")
     DdcSiBindingBO toBindingBo(DdcSiBindingPO source);

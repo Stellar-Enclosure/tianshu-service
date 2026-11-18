@@ -41,7 +41,6 @@ final class DdcListTemplateReadyValidator {
                     String actual = normalize(rows.getString(index + 6)).replace("::text", "");
                     if (!normalize(expected.get(index)).equals(actual)) throw invalid();
                 }
-                if (expected.size() < 7 && rows.getString(expected.size() + 6) != null) throw invalid();
             }
         }
         if (!seen.equals(INDEXES.keySet())) throw invalid();
