@@ -43,6 +43,7 @@ class DdcPackageDocumentationTest {
             "model.tenant",
             "service",
             "service.binding",
+            "service.config",
             "service.lifecycle",
             "service.refresh",
             "service.registry",

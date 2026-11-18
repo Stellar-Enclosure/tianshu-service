@@ -1,6 +1,8 @@
 package top.egon.cola.component.tianshu.configdata;
 
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import org.springframework.boot.context.config.ConfigDataLocation;
 import org.springframework.boot.context.config.ConfigDataLocationResolver;
@@ -12,6 +14,7 @@ public final class DdcConfigDataLocationResolver implements ConfigDataLocationRe
 
     public static final String PREFIX = "tianshu-baseline:";
     public static final String SETTINGS_PREFIX = "egon.cola.component.tianshu.baseline";
+    public static final String DELIVERY_SETTINGS_PREFIX = "egon.cola.component.tianshu.delivery";
     private static final String DEFAULT_FILE = "/var/run/tianshu/config/baseline.json";
 
     @Override
@@ -44,7 +47,30 @@ public final class DdcConfigDataLocationResolver implements ConfigDataLocationRe
         var target = new DdcConfigDataResource.ExpectedTargetVO(required(context, "target.binding-id"), bindingRevision,
                 required(context, "target.cluster-id"), required(context, "target.kubernetes-namespace"),
                 required(context, "target.workload-uid"), required(context, "target.container-name"));
-        return List.of(new DdcConfigDataResource(path, scope, target));
+        return List.of(new DdcConfigDataResource(path, scope, target, recoverySettings(context)));
+    }
+
+    private static DdcConfigDataResource.RecoverySettingsVO recoverySettings(ConfigDataLocationResolverContext context) {
+        if (!context.getBinder().bind(DELIVERY_SETTINGS_PREFIX + ".enabled", Boolean.class).orElse(false)) {
+            return DdcConfigDataResource.RecoverySettingsVO.disabled();
+        }
+        String stateDirectory = context.getBinder().bind(DELIVERY_SETTINGS_PREFIX + ".state-directory", String.class)
+                .orElseThrow(() -> new IllegalArgumentException("CONFIG_RECOVERY_STATE_DIRECTORY_REQUIRED"));
+        String podUid = context.getBinder().bind(DELIVERY_SETTINGS_PREFIX + ".pod-uid", String.class)
+                .orElseThrow(() -> new IllegalArgumentException("CONFIG_RECOVERY_POD_UID_REQUIRED"));
+        Duration maxStale = context.getBinder().bind(DELIVERY_SETTINGS_PREFIX + ".max-stale", Duration.class).orElse(Duration.ofMinutes(5));
+        boolean allowOfflineStart = context.getBinder().bind(DELIVERY_SETTINGS_PREFIX + ".allow-offline-start", Boolean.class).orElse(false);
+        Instant baselineValidUntil = null;
+        String validity = context.getBinder().bind(DELIVERY_SETTINGS_PREFIX + ".baseline-valid-until", String.class).orElse(null);
+        if (validity != null) {
+            if (!validity.endsWith("Z")) { throw new IllegalArgumentException("CONFIG_RECOVERY_BASELINE_VALIDITY_INVALID"); }
+            try {
+                baselineValidUntil = Instant.parse(validity);
+            } catch (java.time.DateTimeException invalid) {
+                throw new IllegalArgumentException("CONFIG_RECOVERY_BASELINE_VALIDITY_INVALID");
+            }
+        }
+        return new DdcConfigDataResource.RecoverySettingsVO(true, Path.of(stateDirectory), podUid, maxStale, allowOfflineStart, baselineValidUntil);
     }
 
     private static String required(ConfigDataLocationResolverContext context, String suffix) {

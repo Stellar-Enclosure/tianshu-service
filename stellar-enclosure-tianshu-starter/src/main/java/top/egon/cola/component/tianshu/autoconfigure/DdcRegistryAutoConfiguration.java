@@ -23,6 +23,7 @@ import top.egon.cola.component.tianshu.api.client.DdcServiceRegistryClient;
         havingValue = "true",
         matchIfMissing = false
 )
+@ConditionalOnProperty(prefix = DdcAutoConfiguration.DELIVERY_PREFIX, name = "enabled", havingValue = "false", matchIfMissing = true)
 public class DdcRegistryAutoConfiguration {
 
     /**

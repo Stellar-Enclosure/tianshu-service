@@ -3,6 +3,9 @@ package top.egon.cola.component.tianshu.autoconfigure.properties;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.net.URI;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -11,6 +14,36 @@ import java.util.List;
  */
 @ConfigurationProperties(prefix = "egon.cola.component.tianshu", ignoreInvalidFields = true)
 public class DdcProperties {
+
+    @jakarta.validation.Valid
+    private Delivery delivery = new Delivery();
+
+    public Delivery getDelivery() { return delivery; }
+
+    public void setDelivery(Delivery delivery) { this.delivery = delivery; }
+
+    /** Fixed native delivery path. These properties come from local deployment configuration. */
+    @lombok.Data
+    @lombok.NoArgsConstructor
+    @lombok.AllArgsConstructor
+    @lombok.experimental.Accessors(chain = true)
+    public static class Delivery {
+        private boolean enabled;
+        private URI serviceOrigin = URI.create("http://tianshu-config.platform-system.svc.cluster.local");
+        private Path workloadTokenFile = Path.of("/var/run/tianshu/identity/workload-token");
+        private Path stateDirectory;
+        private String podUid;
+        private String registrationId;
+        private String appId;
+        private String identityTenantId;
+        private URI expectedIssuer;
+        private URI canonicalAudience;
+        private Duration requestTimeout = Duration.ofSeconds(15);
+        private Duration pollInterval = Duration.ofSeconds(30);
+        private Duration maxStale = Duration.ofMinutes(5);
+        private boolean allowOfflineStart;
+        private Instant baselineValidUntil;
+    }
 
     /**
      * 是否启用 Tianshu Starter。 Whether the Tianshu starter is enabled.

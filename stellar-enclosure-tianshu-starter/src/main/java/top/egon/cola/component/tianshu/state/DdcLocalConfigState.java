@@ -2,10 +2,11 @@ package top.egon.cola.component.tianshu.state;
 
 import org.springframework.lang.Nullable;
 
+import java.time.Instant;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.Objects;
 import java.util.function.Supplier;
 
 /**
@@ -15,6 +16,27 @@ import java.util.function.Supplier;
 public class DdcLocalConfigState {
 
     private final Long tenantId;
+
+    private volatile DeliveryObservationVO deliveryObservation =
+            new DeliveryObservationVO(DeliveryStatusEnum.WAITING_FOR_AUTHORITY, null, null, null, null, false, null);
+
+    public DeliveryObservationVO deliveryObservation() {
+        return deliveryObservation;
+    }
+
+    public void updateDeliveryObservation(DeliveryObservationVO observation) {
+        deliveryObservation = Objects.requireNonNull(observation, "observation");
+    }
+
+    public enum DeliveryStatusEnum {
+        BASELINE, WAITING_FOR_AUTHORITY, READY, STALE, ISOLATED, RESTART_REQUIRED, INVALID, STORAGE_UNAVAILABLE
+    }
+
+    /** Local readiness/evidence only. The content and credentials never enter this observation. */
+    public record DeliveryObservationVO(DeliveryStatusEnum status, @Nullable String appliedRevision,
+            @Nullable String targetRevision, @Nullable Instant verifiedAt, @Nullable Instant validUntil,
+            boolean ready, @Nullable String code) { }
+
 
     /**
      * 按配置资源名索引的本地版本。 Local versions indexed by configuration resource name.

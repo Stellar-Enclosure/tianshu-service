@@ -4,6 +4,7 @@ import org.redisson.api.RedissonClient;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
@@ -17,6 +18,7 @@ import top.egon.cola.component.tianshu.redis.DdcRedisClientFactory;
  */
 @AutoConfiguration(before = {DdcAutoConfiguration.class, DdcRegistryAutoConfiguration.class})
 @EnableConfigurationProperties({DdcProperties.class, DdcTenantProperties.class})
+@ConditionalOnProperty(prefix = DdcAutoConfiguration.DELIVERY_PREFIX, name = "enabled", havingValue = "false", matchIfMissing = true)
 public class DdcRedisAutoConfiguration {
 
     /**

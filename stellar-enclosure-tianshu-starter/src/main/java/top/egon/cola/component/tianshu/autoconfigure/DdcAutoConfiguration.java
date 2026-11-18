@@ -11,6 +11,10 @@ import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.beans.factory.config.BeanFactoryPostProcessor;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.availability.ApplicationAvailabilityAutoConfiguration;
+import org.springframework.boot.availability.ApplicationAvailabilityBean;
+import org.springframework.boot.availability.AvailabilityState;
+import org.springframework.boot.availability.ReadinessState;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -19,11 +23,17 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 import org.springframework.context.annotation.Role;
 import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 import top.egon.cola.component.tianshu.service.binding.DdcBeanPostProcessor;
+import top.egon.cola.component.tianshu.configdata.DdcConfigDataLoader;
+import top.egon.cola.component.tianshu.configdata.DdcConfigDataResource.BaselineMetadataVO;
+import top.egon.cola.component.tianshu.service.config.DdcConfigSnapshotCoordinator;
+import top.egon.cola.component.tianshu.service.config.DdcConfigSnapshotHttpClient;
+import top.egon.cola.component.tianshu.state.DdcConfigLkgStore;
 import top.egon.cola.component.tianshu.api.client.DdcConfigClient;
 import top.egon.cola.component.tianshu.redis.DdcRedisKeys;
 import top.egon.cola.component.tianshu.format.DdcConfigFormatStrategyRegistry;
@@ -52,13 +62,18 @@ import top.egon.cola.component.tianshu.redis.DdcRedisTopicSubscription;
 import top.egon.cola.component.common.core.validation.ValidationUtils;
 import top.egon.cola.platform.tianquan.shoubing.starter.autoconfigure.IdpStarterProperties;
 import top.egon.cola.platform.tianquan.shoubing.starter.client.IdpServiceOAuth2Client;
+import top.egon.cola.platform.tianquan.shoubing.starter.client.IdpServiceTokenRequest;
+import top.egon.cola.platform.tianquan.shoubing.contract.ServiceTokenContext;
 
+import java.time.Clock;
 import java.util.List;
+import java.util.Objects;
+import java.util.Set;
 
 /**
  * 在 Tianshu 启用时装配配置注入、远程租约、Redis 订阅和刷新运行时。 Configures value injection, remote leases, Redis subscription, and refresh runtime when Tianshu is enabled.
  */
-@AutoConfiguration
+@AutoConfiguration(before = ApplicationAvailabilityAutoConfiguration.class)
 @EnableScheduling
 @EnableConfigurationProperties({
         DdcProperties.class,
@@ -68,6 +83,8 @@ import java.util.List;
 })
 @ConditionalOnProperty(prefix = "egon.cola.component.tianshu", name = "enabled", havingValue = "true", matchIfMissing = false)
 public class DdcAutoConfiguration {
+    public static final String DELIVERY_PREFIX = "egon.cola.component.tianshu.delivery";
+    private static final String PROPERTIES_BEAN = "egon.cola.component.tianshu-top.egon.cola.component.tianshu.autoconfigure.properties.DdcProperties";
 
     /**
      * 用于报告显式离线模式的日志记录器。 Logger used to report explicit offline mode.
@@ -130,6 +147,7 @@ public class DdcAutoConfiguration {
     @Bean
     @Role(BeanDefinition.ROLE_INFRASTRUCTURE)
     @ConditionalOnMissingBean(DdcConfigClient.class)
+    @ConditionalOnProperty(prefix = DELIVERY_PREFIX, name = "enabled", havingValue = "false", matchIfMissing = true)
     public static BeanFactoryPostProcessor ddcConfigClientRequirement() {
         return beanFactory -> {
             throw new IllegalStateException(
@@ -204,6 +222,7 @@ public class DdcAutoConfiguration {
             havingValue = "true",
             matchIfMissing = true
     )
+    @ConditionalOnProperty(prefix = DELIVERY_PREFIX, name = "enabled", havingValue = "false", matchIfMissing = true)
     public DdcYamlConfigApplier ddcYamlConfigApplier(
             ConfigurableEnvironment environment,
             DdcConfigApplierRegistry applierRegistry,
@@ -223,6 +242,81 @@ public class DdcAutoConfiguration {
         );
     }
 
+    @Bean(name = "ddcConfigDeliveryBaseline")
+    @ConditionalOnProperty(prefix = DELIVERY_PREFIX, name = "enabled", havingValue = "true")
+    BaselineMetadataVO ddcConfigDeliveryBaseline(ConfigurableEnvironment environment) {
+        var baseline = DdcConfigDataLoader.baselineMetadataOrNull(environment);
+        if (baseline == null) {
+            throw new IllegalStateException("CONFIG_DELIVERY_BASELINE_REQUIRED");
+        }
+        return baseline;
+    }
+
+    @Bean(name = "ddcConfigDeliveryApplier")
+    @ConditionalOnProperty(prefix = DELIVERY_PREFIX, name = "enabled", havingValue = "true")
+    DdcYamlConfigApplier ddcConfigDeliveryApplier(ConfigurableEnvironment environment,
+            @Qualifier("ddcConfigApplierRegistry") DdcConfigApplierRegistry registry,
+            @Qualifier("ddcFieldBindingService") DdcFieldBindingService fields,
+            @Qualifier("ddcConfigurationPropertiesRebinder") DdcConfigurationPropertiesRebinder rebinder,
+            ApplicationEventPublisher publisher, @Qualifier(PROPERTIES_BEAN) DdcProperties properties,
+            @Qualifier("ddcConfigFormatStrategyRegistry") DdcConfigFormatStrategyRegistry strategies) {
+        return new DdcYamlConfigApplier(environment, registry, fields, rebinder, publisher, properties.getMaxConfigBytes(), strategies);
+    }
+
+    @Bean(name = "ddcConfigDeliveryLkgStore")
+    @ConditionalOnProperty(prefix = DELIVERY_PREFIX, name = "enabled", havingValue = "true")
+    DdcConfigLkgStore ddcConfigDeliveryLkgStore(@Qualifier(PROPERTIES_BEAN) DdcProperties properties) {
+        return new DdcConfigLkgStore(Objects.requireNonNull(properties.getDelivery().getStateDirectory(), "CONFIG_STATE_DIRECTORY_REQUIRED"));
+    }
+
+    @Bean(name = "ddcConfigSnapshotHttpClient", destroyMethod = "close")
+    @ConditionalOnProperty(prefix = DELIVERY_PREFIX, name = "enabled", havingValue = "true")
+    DdcConfigSnapshotHttpClient ddcConfigSnapshotHttpClient(@Qualifier(PROPERTIES_BEAN) DdcProperties properties,
+            @Qualifier("idpServiceOAuth2Client") IdpServiceOAuth2Client oauth) {
+        var delivery = properties.getDelivery();
+        String issuer = Objects.requireNonNull(delivery.getExpectedIssuer(), "CONFIG_DELIVERY_ISSUER_REQUIRED").toASCIIString();
+        var read = configTokenRequest(delivery, "tianshu:config:read");
+        var receipt = configTokenRequest(delivery, "tianshu:config:receipt:write");
+        return new DdcConfigSnapshotHttpClient(delivery.getServiceOrigin(), delivery.getWorkloadTokenFile(),
+                oauth, read, receipt, issuer, delivery.getRequestTimeout());
+    }
+
+    private static IdpServiceTokenRequest configTokenRequest(DdcProperties.Delivery delivery, String scope) {
+        return new IdpServiceTokenRequest(delivery.getRegistrationId(), delivery.getAppId(), delivery.getCanonicalAudience(),
+                ServiceTokenContext.TENANT, delivery.getIdentityTenantId(), Set.of(scope));
+    }
+
+    @Bean(name = "ddcConfigSnapshotCoordinator", destroyMethod = "close")
+    @ConditionalOnProperty(prefix = DELIVERY_PREFIX, name = "enabled", havingValue = "true")
+    DdcConfigSnapshotCoordinator ddcConfigSnapshotCoordinator(
+            @Qualifier("ddcConfigDeliveryBaseline") BaselineMetadataVO baseline,
+            @Qualifier("ddcConfigSnapshotHttpClient") DdcConfigSnapshotHttpClient client,
+            @Qualifier("ddcConfigDeliveryLkgStore") DdcConfigLkgStore store,
+            @Qualifier("ddcConfigDeliveryApplier") DdcYamlConfigApplier applier,
+            @Qualifier("ddcLocalConfigState") DdcLocalConfigState local, ApplicationEventPublisher publisher,
+            @Qualifier(PROPERTIES_BEAN) DdcProperties properties) {
+        var delivery = properties.getDelivery();
+        var policy = new DdcConfigSnapshotCoordinator.PolicyVO(delivery.getPodUid(), delivery.getMaxStale(),
+                delivery.getPollInterval(), delivery.isAllowOfflineStart(), delivery.getBaselineValidUntil());
+        return new DdcConfigSnapshotCoordinator(baseline, policy, client, store, applier, local, publisher, Clock.systemUTC());
+    }
+
+    @Bean(name = "ddcDeliveryApplicationAvailability")
+    @Primary
+    @ConditionalOnProperty(prefix = DELIVERY_PREFIX, name = "enabled", havingValue = "true")
+    ApplicationAvailabilityBean ddcDeliveryApplicationAvailability(
+            @Qualifier("ddcConfigSnapshotCoordinator") DdcConfigSnapshotCoordinator coordinator) {
+        return new ApplicationAvailabilityBean() {
+            @Override
+            public <S extends AvailabilityState> S getState(Class<S> stateType) {
+                if (stateType == ReadinessState.class && !coordinator.ready()) {
+                    return stateType.cast(ReadinessState.REFUSING_TRAFFIC);
+                }
+                return super.getState(stateType);
+            }
+        };
+    }
+
     /**
      * 在 Redis 被显式禁用时创建启动告警回调，说明远程生命周期不会运行。 Creates a startup warning callback explaining that remote lifecycle will not run when Redis is explicitly disabled.
      *
@@ -234,6 +328,7 @@ public class DdcAutoConfiguration {
             name = "enabled",
             havingValue = "false"
     )
+    @ConditionalOnProperty(prefix = DELIVERY_PREFIX, name = "enabled", havingValue = "false", matchIfMissing = true)
     public SmartInitializingSingleton ddcOfflineModeWarning() {
         return () -> LOGGER.warn(
                 "Tianshu remote lifecycle is disabled because "
@@ -251,6 +346,7 @@ public class DdcAutoConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = DELIVERY_PREFIX, name = "enabled", havingValue = "false", matchIfMissing = true)
     public DdcAckDelivery ddcAckDelivery(
             DdcConfigClient adminClient,
             DdcAckDeliveryProperties properties) {
@@ -274,6 +370,7 @@ public class DdcAutoConfiguration {
             havingValue = "true",
             matchIfMissing = true
     )
+    @ConditionalOnProperty(prefix = DELIVERY_PREFIX, name = "enabled", havingValue = "false", matchIfMissing = true)
     public DdcRefreshService ddcRefreshService(DdcLocalConfigState repository,
                                                DdcYamlConfigApplier yamlConfigApplier,
                                                DdcAckDelivery ackDelivery,
@@ -314,6 +411,7 @@ public class DdcAutoConfiguration {
             havingValue = "true",
             matchIfMissing = true
     )
+    @ConditionalOnProperty(prefix = DELIVERY_PREFIX, name = "enabled", havingValue = "false", matchIfMissing = true)
     public DdcConfigChangeListener ddcConfigChangeListener(
             @Qualifier("egon.cola.component.tianshu-top.egon.cola.component.tianshu.autoconfigure.properties.DdcProperties")
             DdcProperties properties,
@@ -341,6 +439,7 @@ public class DdcAutoConfiguration {
             havingValue = "true",
             matchIfMissing = true
     )
+    @ConditionalOnProperty(prefix = DELIVERY_PREFIX, name = "enabled", havingValue = "false", matchIfMissing = true)
     public RTopic ddcRedisTopic(
             @Qualifier("ddcRedissonClient") RedissonClient redissonClient,
             @Qualifier("egon.cola.component.tianshu-top.egon.cola.component.tianshu.autoconfigure.properties.DdcProperties")
@@ -367,6 +466,7 @@ public class DdcAutoConfiguration {
     @Bean(name = "ddcRedisChangeSubscription")
     @ConditionalOnBean(name = "ddcRedisTopic")
     @SuppressWarnings("unchecked")
+    @ConditionalOnProperty(prefix = DELIVERY_PREFIX, name = "enabled", havingValue = "false", matchIfMissing = true)
     public DdcRedisTopicSubscription<DdcTenantMessageDTO<?>> ddcRedisChangeSubscription(
             @Qualifier("ddcRedisTopic") RTopic topic,
             @Qualifier("ddcConfigChangeListener") DdcConfigChangeListener listener) {
@@ -385,6 +485,7 @@ public class DdcAutoConfiguration {
      * @return 租约会话持有器。 lease-session holder
      */
     @Bean(name = "ddcLeaseSessionHolder")
+    @ConditionalOnProperty(prefix = DELIVERY_PREFIX, name = "enabled", havingValue = "false", matchIfMissing = true)
     public DdcLeaseSessionHolder ddcLeaseSessionHolder(
             @Qualifier("egon.cola.component.tianshu-top.egon.cola.component.tianshu.autoconfigure.properties.DdcTenantProperties")
             DdcTenantProperties tenantProperties) {
@@ -399,6 +500,7 @@ public class DdcAutoConfiguration {
      * @return 当前 Tianshu 实例身份。 current Tianshu instance identity
      */
     @Bean
+    @ConditionalOnProperty(prefix = DELIVERY_PREFIX, name = "enabled", havingValue = "false", matchIfMissing = true)
     public DdcInstanceIdentity ddcInstanceIdentity(
             DdcProperties properties,
             ObjectProvider<DdcInstanceIdProvider> instanceIdProvider) {
@@ -427,6 +529,7 @@ public class DdcAutoConfiguration {
             havingValue = "true",
             matchIfMissing = true
     )
+    @ConditionalOnProperty(prefix = DELIVERY_PREFIX, name = "enabled", havingValue = "false", matchIfMissing = true)
     public DdcInstanceService ddcInstanceService(DdcProperties properties,
                                                  DdcConfigClient adminClient,
                                                  DdcInstanceIdentity identity,
@@ -460,6 +563,7 @@ public class DdcAutoConfiguration {
      */
     @Bean(name = "ddcRuntimeCoordinator")
     @ConditionalOnBean(DdcRedisTopicSubscription.class)
+    @ConditionalOnProperty(prefix = DELIVERY_PREFIX, name = "enabled", havingValue = "false", matchIfMissing = true)
     public DdcRuntimeCoordinator ddcRuntimeCoordinator(
             @Qualifier("egon.cola.component.tianshu-top.egon.cola.component.tianshu.autoconfigure.properties.DdcProperties")
             DdcProperties properties,

@@ -3,6 +3,7 @@ package top.egon.cola.component.tianshu.autoconfigure;
 import jakarta.validation.Validation;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.MockedStatic;
 import org.redisson.Redisson;
@@ -10,6 +11,13 @@ import org.redisson.api.RTopic;
 import org.redisson.api.RedissonClient;
 import org.redisson.config.Config;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.autoconfigure.availability.ApplicationAvailabilityAutoConfiguration;
+import org.springframework.boot.availability.ApplicationAvailability;
+import org.springframework.boot.availability.AvailabilityChangeEvent;
+import org.springframework.boot.availability.LivenessState;
+import org.springframework.boot.availability.ReadinessState;
+import org.springframework.boot.context.config.ConfigDataLoaderContext;
+import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
@@ -18,6 +26,13 @@ import org.springframework.context.annotation.ComponentScan;
 import top.egon.cola.component.common.core.validation.ValidationUtils;
 import top.egon.cola.component.common.id.snowflake.SnowflakeIdGenerator;
 import top.egon.cola.component.tianshu.api.client.DdcConfigClient;
+import top.egon.cola.component.tianshu.api.client.DdcServiceRegistryClient;
+import top.egon.cola.component.tianshu.configdata.DdcConfigDataLoader;
+import top.egon.cola.component.tianshu.configdata.DdcConfigDataResource;
+import top.egon.cola.component.tianshu.format.DdcConfigCanonicalJson;
+import top.egon.cola.component.tianshu.model.config.DdcConfigBaselineVO;
+import top.egon.cola.component.tianshu.model.config.DdcConfigScopeVO;
+import top.egon.cola.component.tianshu.service.config.DdcConfigSnapshotCoordinator;
 import top.egon.cola.component.tianshu.autoconfigure.properties.DdcProperties;
 import top.egon.cola.component.tianshu.autoconfigure.properties.DdcTenantProperties;
 import top.egon.cola.component.tianshu.redis.DdcRedisKeys;
@@ -30,7 +45,10 @@ import top.egon.cola.component.tianshu.service.refresh.DefaultDdcConfigApplierRe
 import top.egon.cola.component.tianshu.service.binding.DdcFieldBindingService;
 import top.egon.cola.platform.tianquan.shoubing.starter.client.IdpServiceOAuth2Client;
 
+import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -70,6 +88,52 @@ class DdcAutoConfigurationTest {
         assertThatThrownBy(() -> Class.forName(
                 "top.egon.cola.component.tianshu.autoconfigure.DdcRegistryAutoConfig"
         )).isInstanceOf(ClassNotFoundException.class);
+    }
+
+    @Test
+    void nativeDeliveryWiresOnlyNativeTransportAndBootCannotOverrideItsReadinessGate(@TempDir Path temp) throws Exception {
+        var path = temp.resolve("baseline.json");
+        var scope = new DdcConfigScopeVO("19", "orders", "test", "invoice", "application.yml");
+        var target = new DdcConfigBaselineVO.TargetBindingVO("target", "1", "test-cluster", "runtime",
+                "Deployment", "invoice", "workload-uid", "invoice");
+        String placeholder = "sha256:" + "a".repeat(64);
+        var builder = DdcConfigBaselineVO.builder().schemaVersion("1").scope(scope)
+                .source(new DdcConfigBaselineVO.SourceVO("81", "1")).enabled(true).restartValues(Map.of())
+                .hotSeed(Map.of()).startupDependencies(Map.of()).secretReferences(Map.of()).rules(List.of())
+                .targetBindings(List.of(target)).restartDigest(placeholder).contentSha256(placeholder);
+        builder.restartDigest(DdcConfigCanonicalJson.restartDigest(builder.build()));
+        var baseline = builder.contentSha256(DdcConfigCanonicalJson.contentSha256(builder.build())).build();
+        Jackson2ObjectMapperBuilder.json().build().writeValue(path.toFile(), baseline);
+        var expected = new DdcConfigDataResource.ExpectedTargetVO("target", 1, "test-cluster", "runtime", "workload-uid", "invoice");
+        var sources = new DdcConfigDataLoader().load(mock(ConfigDataLoaderContext.class),
+                new DdcConfigDataResource(path, scope, expected)).getPropertySources();
+
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(DdcAutoConfiguration.class, DdcRedisAutoConfiguration.class,
+                        DdcRegistryAutoConfiguration.class, ApplicationAvailabilityAutoConfiguration.class))
+                .withInitializer(context -> sources.forEach(source -> context.getEnvironment().getPropertySources().addLast(source)))
+                .withBean("egonColaValidationUtils", ValidationUtils.class, () -> validationUtils)
+                .withBean("idpServiceOAuth2Client", IdpServiceOAuth2Client.class, () -> mock(IdpServiceOAuth2Client.class))
+                .withPropertyValues("egon.cola.component.tianshu.enabled=true", "egon.cola.component.tianshu.redis.enabled=true",
+                        "egon.cola.component.tianshu.registry.enabled=true", "egon.cola.component.tianshu.delivery.enabled=true",
+                        "egon.cola.component.tianshu.delivery.state-directory=" + temp.resolve("state"),
+                        "egon.cola.component.tianshu.delivery.pod-uid=pod-a",
+                        "egon.cola.component.tianshu.delivery.registration-id=invoice-cfg",
+                        "egon.cola.component.tianshu.delivery.app-id=invoice",
+                        "egon.cola.component.tianshu.delivery.identity-tenant-id=orders-tenant",
+                        "egon.cola.component.tianshu.delivery.expected-issuer=https://identity.example.test/tenants/orders",
+                        "egon.cola.component.tianshu.delivery.canonical-audience=https://tianshu.example.test")
+                .run(context -> {
+                    assertThat(context).hasNotFailed().hasSingleBean(DdcConfigSnapshotCoordinator.class)
+                            .doesNotHaveBean(DdcConfigClient.class).doesNotHaveBean(DdcServiceRegistryClient.class)
+                            .doesNotHaveBean(RedissonClient.class).doesNotHaveBean(DdcAckDelivery.class)
+                            .doesNotHaveBean("ddcLeaseSessionHolder").doesNotHaveBean("ddcRuntimeCoordinator");
+                    var availability = context.getBean(ApplicationAvailability.class);
+                    AvailabilityChangeEvent.publish(context, ReadinessState.ACCEPTING_TRAFFIC);
+                    AvailabilityChangeEvent.publish(context, LivenessState.CORRECT);
+                    assertThat(availability.getReadinessState()).isEqualTo(ReadinessState.REFUSING_TRAFFIC);
+                    assertThat(availability.getLivenessState()).isEqualTo(LivenessState.CORRECT);
+                });
     }
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
