@@ -26,6 +26,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -44,6 +45,7 @@ class DdcConfigProcessReceiptRepositoryTest {
     private final TransactionTemplate transactions = mock(TransactionTemplate.class);
     private final LocalValidatorFactoryBean validator = new LocalValidatorFactoryBean();
     private final AtomicReference<DdcConfigProcessReceiptPO> stored = new AtomicReference<>();
+    private final AtomicLong desiredRevision = new AtomicLong(43L);
     private DdcConfigProcessReceiptConverter converter;
     private DdcConfigProcessReceiptRepositoryImpl repository;
 
@@ -61,7 +63,8 @@ class DdcConfigProcessReceiptRepositoryTest {
         when(transactions.getPropagationBehavior()).thenReturn(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         when(transactions.execute(any())).thenAnswer(invocation -> ((TransactionCallback<?>) invocation.getArgument(0))
                 .doInTransaction(mock(org.springframework.transaction.TransactionStatus.class)));
-        when(mapper.selectManifest(1001L, 820001L, 43L)).thenAnswer(invocation -> receipt(1L, "REJECTED").getAuthorizedManifest().toString());
+        when(mapper.selectManifest(1001L, 820001L, 43L)).thenAnswer(invocation -> desiredRevision.get() == 43L
+                ? receipt(1L, "REJECTED").getAuthorizedManifest().toString() : null);
         when(boots.assertConfirmedFence(any(), any())).thenAnswer(invocation -> invocation.getArgument(1));
         when(mapper.selectExactForUpdate(any())).thenAnswer(invocation -> stored.get());
         when(mapper.selectExact(any())).thenAnswer(invocation -> stored.get());
@@ -83,6 +86,17 @@ class DdcConfigProcessReceiptRepositoryTest {
 
     @AfterEach
     void close() { validator.close(); MDC.clear(); }
+
+    @Test
+    void supersededDesiredRevisionReturnsConflictBeforeReadingOrMutatingReceiptState() {
+        desiredRevision.set(44L);
+        assertThat(repository.accept(CONTEXT, receipt(1L, "REJECTED")))
+                .isEqualTo(DdcConfigProcessReceiptRepository.AcceptanceEnum.CONFLICT);
+        verify(mapper, never()).selectExactForUpdate(any());
+        verify(mapper, never()).insertIfAbsent(any());
+        verify(mapper, never()).advance(any(), anyLong(), anyLong());
+        assertThat(stored.get()).isNull();
+    }
 
     @Test
     void rejectedThenAppliedAdvancesSingleRowAndLateReportIsStale() {
@@ -132,7 +146,7 @@ class DdcConfigProcessReceiptRepositoryTest {
         var altered = receipt(1L, "REJECTED").setReceiptDigest("f".repeat(64));
         assertThatThrownBy(() -> repository.accept(CONTEXT, altered)).isInstanceOf(IllegalArgumentException.class);
         var notFixed = receipt(1L, "REJECTED");
-        when(mapper.selectManifest(anyLong(), anyLong(), anyLong())).thenReturn(null);
+        when(mapper.selectManifest(anyLong(), anyLong(), anyLong())).thenReturn("{\"schemaVersion\":\"1\"}");
         assertThatThrownBy(() -> repository.accept(CONTEXT, notFixed)).isInstanceOf(IllegalArgumentException.class);
         verify(mapper, never()).insertIfAbsent(any());
         verify(mapper, never()).selectExact(any());
@@ -161,6 +175,46 @@ class DdcConfigProcessReceiptRepositoryTest {
         assertThat(calls).hasValue(2);
         verify(mapper, times(1)).insertIfAbsent(any());
         verify(mapper).selectExact(any());
+    }
+
+    @Test
+    void knownSupersessionDuringCommitConfirmationReturnsConflictWithoutASecondWrite() {
+        var calls = new AtomicInteger();
+        doAnswer(invocation -> {
+            Object result = ((TransactionCallback<?>) invocation.getArgument(0))
+                    .doInTransaction(mock(org.springframework.transaction.TransactionStatus.class));
+            if (calls.incrementAndGet() == 1) {
+                desiredRevision.set(44L);
+                throw new TransactionSystemException("synthetic lost commit reply followed by publication");
+            }
+            return result;
+        }).when(transactions).execute(any());
+        assertThat(repository.accept(CONTEXT, receipt(1L, "REJECTED")))
+                .isEqualTo(DdcConfigProcessReceiptRepository.AcceptanceEnum.CONFLICT);
+        assertThat(calls).hasValue(2);
+        verify(mapper, times(1)).insertIfAbsent(any());
+        verify(mapper, never()).selectExact(any());
+        assertThat(stored.get().getConfigRevision()).isEqualTo(43L);
+    }
+
+    @Test
+    void authoritySelectionLocksTheCurrentPublishedItemBeforeTheReceiptRow() throws Exception {
+        var configuration = new com.baomidou.mybatisplus.core.MybatisConfiguration();
+        String resource = "mybatis/mapper/tianshu/DdcConfigProcessReceiptMapper.xml";
+        try (var input = new org.springframework.core.io.ClassPathResource(resource).getInputStream()) {
+            new org.apache.ibatis.builder.xml.XMLMapperBuilder(input, configuration, resource, configuration.getSqlFragments()).parse();
+        }
+        String statement = DdcConfigProcessReceiptMapper.class.getName() + ".selectManifest";
+        String sql = configuration.getMappedStatement(statement).getBoundSql(java.util.Map.of(
+                "tenantId", 1001L, "configId", 820001L, "configRevision", 43L)).getSql().replaceAll("\\s+", " ").toLowerCase(java.util.Locale.ROOT);
+        assertThat(sql).contains("from ddc_config_item item", "join ddc_config_version v",
+                "v.config_revision = item.published_version", "item.published_version = ?", "for update of item")
+                .doesNotContain("_t0", "43", "820001");
+        repository.accept(CONTEXT, receipt(1L, "REJECTED"));
+        var order = inOrder(boots, mapper);
+        order.verify(boots).assertConfirmedFence(any(), any());
+        order.verify(mapper).selectManifest(1001L, 820001L, 43L);
+        order.verify(mapper).selectExactForUpdate(any());
     }
 
     @Test

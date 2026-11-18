@@ -154,6 +154,7 @@ class DdcConfigDeliveryPersistenceIT {
                 var bootTransactions = first.getBean("ddcConfigBootBindingTransactionTemplate", TransactionTemplate.class);
                 var receiptTransactions = first.getBean("ddcConfigReceiptTransactionTemplate", TransactionTemplate.class);
                 assertAmbiguousCommitRecovery(firstTenants, firstBoots, firstReceipts, bootTransactions, receiptTransactions, manifest);
+                assertDesiredPublicationRace(physical, firstTenants, firstBoots, secondTenants, secondReceipts, manifest);
             });
         });
     }
@@ -293,6 +294,55 @@ class DdcConfigDeliveryPersistenceIT {
         }
     }
 
+    private static void assertDesiredPublicationRace(PGSimpleDataSource physical,
+            DdcTenantContextExecutor firstTenants, DdcConfigBootBindingRepository boots,
+            DdcTenantContextExecutor secondTenants, DdcConfigProcessReceiptRepository receipts,
+            ObjectNode manifest) throws Exception {
+        var nextManifest = manifest.deepCopy();
+        ((ObjectNode) nextManifest.get("source")).put("revision", "2");
+        insertConfigVersion(physical, 19003L, 2L, nextManifest);
+        String pod = UUID.randomUUID().toString();
+        var fence = firstTenants.call(TENANT, () -> boots.createOrConfirm(TENANT, boot(pod, "boot-1")));
+        var oldDesired = receipt(pod, fence.getId(), manifest, 1, DdcConfigReceiptStatusEnum.REJECTED, REPORTED);
+        try (var publisher = physical.getConnection(); var workers = Executors.newSingleThreadExecutor()) {
+            publisher.setAutoCommit(false);
+            try (var update = publisher.prepareStatement("UPDATE public.ddc_config_item_t0 SET current_version=2,published_version=2,version=version+1,"
+                    + "update_user_id='fixture',update_time=CURRENT_TIMESTAMP WHERE tenant_id=? AND id=? RETURNING pg_backend_pid()")) {
+                update.setLong(1, TENANT.tenantId());
+                update.setLong(2, 19001L);
+                int blockingPid;
+                try (var rows = update.executeQuery()) {
+                    assertThat(rows.next()).isTrue();
+                    blockingPid = rows.getInt(1);
+                    assertThat(rows.next()).isFalse();
+                }
+                var acceptance = workers.submit(() -> secondTenants.call(TENANT, () -> receipts.accept(TENANT, oldDesired)));
+                try {
+                    assertThat(awaitPostgreSqlBlock(physical, blockingPid))
+                            .as("receipt must wait for the current configuration item lock before writing").isTrue();
+                    assertThat(acceptance.isDone()).isFalse();
+                    publisher.commit();
+                } catch (Exception | AssertionError failure) {
+                    publisher.rollback();
+                    throw failure;
+                }
+                assertThat(acceptance.get(10, TimeUnit.SECONDS)).isEqualTo(CONFLICT);
+            }
+        }
+        try (var connection = physical.getConnection(); var check = connection.prepareStatement(
+                "SELECT count(*) FROM public.ddc_config_process_receipt_t0 WHERE tenant_id=? AND pod_uid=?")) {
+            check.setLong(1, TENANT.tenantId());
+            check.setString(2, pod);
+            try (var rows = check.executeQuery()) {
+                assertThat(rows.next()).isTrue();
+                assertThat(rows.getLong(1)).as("superseded desired revision must not create receipt state").isZero();
+            }
+        }
+        assertThat(secondTenants.call(TENANT, () -> receipts.accept(TENANT, oldDesired))).isEqualTo(CONFLICT);
+        var currentDesired = receipt(pod, fence.getId(), nextManifest, 1, DdcConfigReceiptStatusEnum.REJECTED, REPORTED, 2L);
+        assertThat(secondTenants.call(TENANT, () -> receipts.accept(TENANT, currentDesired))).isEqualTo(ADVANCED);
+    }
+
     private static boolean awaitPostgreSqlBlock(PGSimpleDataSource physical, int blockingPid) throws Exception {
         long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
         try (var observer = physical.getConnection(); var probe = observer.prepareStatement("""
@@ -314,18 +364,23 @@ class DdcConfigDeliveryPersistenceIT {
 
     private static DdcConfigProcessReceiptBO receipt(String pod, Long fence, ObjectNode manifest, long sequence,
                                                      DdcConfigReceiptStatusEnum status, Instant reported) {
+        return receipt(pod, fence, manifest, sequence, status, reported, 1L);
+    }
+
+    private static DdcConfigProcessReceiptBO receipt(String pod, Long fence, ObjectNode manifest, long sequence,
+                                                     DdcConfigReceiptStatusEnum status, Instant reported, long revision) {
         boolean success = DdcConfigReceiptStatusEnum.APPLIED == status;
-        var command = DdcConfigReceiptCommand.builder().schemaVersion("1").bootId("boot-1").releaseRevision("1")
+        var command = DdcConfigReceiptCommand.builder().schemaVersion("1").bootId("boot-1").releaseRevision(Long.toString(revision))
                 .reportSeq(Long.toString(sequence)).contentSha256("sha256:" + CONTENT)
                 .baselineRestartDigest("sha256:" + RESTART).status(status).reportedAt(reported)
-                .appliedRevision(success ? "1" : null).appliedContentSha256(success ? "sha256:" + CONTENT : null)
+                .appliedRevision(success ? Long.toString(revision) : null).appliedContentSha256(success ? "sha256:" + CONTENT : null)
                 .appliedAt(success ? reported : null).errorCode(success ? null : "HOT_VALUE_REJECTED").build();
-        return new DdcConfigProcessReceiptBO().setTenantId(TENANT.tenantId()).setConfigId(19001L).setConfigRevision(1L)
+        return new DdcConfigProcessReceiptBO().setTenantId(TENANT.tenantId()).setConfigId(19001L).setConfigRevision(revision)
                 .setScopeJson(manifest.get("scope").deepCopy()).setTargetBindingId("target-19").setTargetRevision(1L)
                 .setClusterId("isolated-19").setK8sNamespace("runtime").setWorkloadUid("workload-19").setPodUid(pod)
                 .setContainerName("application").setContainerId("containerd://one").setBootId("boot-1").setBootFence(fence)
                 .setAuthorizedManifest(manifest.deepCopy()).setContentDigest(CONTENT).setRestartDigest(RESTART)
-                .setAppliedRevision(success ? 1L : null).setAppliedDigest(success ? CONTENT : null).setResult(status.getCode())
+                .setAppliedRevision(success ? revision : null).setAppliedDigest(success ? CONTENT : null).setResult(status.getCode())
                 .setReasonCode(command.getErrorCode()).setReportSeq(sequence)
                 .setReceiptDigest(DdcConfigCanonicalJson.receiptDigest(command).substring("sha256:".length()))
                 .setReportedAt(reported).setAppliedAt(success ? reported : null);
@@ -388,22 +443,29 @@ class DdcConfigDeliveryPersistenceIT {
             statement.execute("""
                     INSERT INTO public.ddc_config_item_t0
                     (id,tenant_id,create_user_id,create_time,update_user_id,update_time,public_id,app_code,env,config_key,
-                     value_type,current_version,created_at,updated_at,biz_code)
+                     value_type,current_version,published_version,created_at,updated_at,biz_code)
                     VALUES (19001,1901,'fixture',CURRENT_TIMESTAMP,'fixture',CURRENT_TIMESTAMP,'item-19001','reader',
-                            'prod','application.yml','YAML',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,'reading')
+                            'prod','application.yml','YAML',1,1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,'reading')
                     ON CONFLICT (id) DO NOTHING
                     """);
-            try (var insert = connection.prepareStatement("""
-                    INSERT INTO public.ddc_config_version_t0
-                    (id,tenant_id,create_user_id,create_time,update_user_id,update_time,public_id,config_id,
-                     app_code,env,config_key,config_revision,created_at,manifest_json)
-                    VALUES (19002,1901,'fixture',CURRENT_TIMESTAMP,'fixture',CURRENT_TIMESTAMP,'version-19002',
-                            19001,'reader','prod','application.yml',1,CURRENT_TIMESTAMP,?::jsonb)
-                    ON CONFLICT (id) DO NOTHING
-                    """)) {
-                insert.setString(1, JSON.writeValueAsString(manifest));
-                insert.executeUpdate();
-            }
+        }
+        insertConfigVersion(physical, 19002L, 1L, manifest);
+    }
+
+    private static void insertConfigVersion(PGSimpleDataSource physical, long id, long revision, ObjectNode manifest) throws Exception {
+        try (var connection = physical.getConnection(); var insert = connection.prepareStatement("""
+                INSERT INTO public.ddc_config_version_t0
+                (id,tenant_id,create_user_id,create_time,update_user_id,update_time,public_id,config_id,
+                 app_code,env,config_key,config_revision,created_at,manifest_json)
+                VALUES (?,1901,'fixture',CURRENT_TIMESTAMP,'fixture',CURRENT_TIMESTAMP,?,
+                        19001,'reader','prod','application.yml',?,CURRENT_TIMESTAMP,?::jsonb)
+                ON CONFLICT (id) DO NOTHING
+                """)) {
+            insert.setLong(1, id);
+            insert.setString(2, "version-" + id);
+            insert.setLong(3, revision);
+            insert.setString(4, JSON.writeValueAsString(manifest));
+            insert.executeUpdate();
         }
     }
 

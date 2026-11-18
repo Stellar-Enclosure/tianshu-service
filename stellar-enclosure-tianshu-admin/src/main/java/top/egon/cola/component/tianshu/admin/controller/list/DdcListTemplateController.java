@@ -1,5 +1,6 @@
 package top.egon.cola.component.tianshu.admin.controller.list;
 
+import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -39,6 +40,7 @@ public class DdcListTemplateController {
     @PermissionResource(key = "tianshu.api.listTemplate.load", type = ResourceType.API, labelPage = "tianshu.permissions", labelKey = "api.listTemplate.load")
     @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping
+    @Operation(operationId = "loadListTemplates", summary = "Load system and personal templates for a list view")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
     public ResponseEntity<ResultRecord<DdcListViewResult>> load(@PathVariable String pageKey, @PathVariable String listKey,
             @RequestParam String catalogVersion, @RequestParam(defaultValue = "false") boolean includeSystemMetadata) {
@@ -53,6 +55,7 @@ public class DdcListTemplateController {
     @PermissionResource(key = "tianshu.api.listTemplate.saveSystem", type = ResourceType.API, labelPage = "tianshu.permissions", labelKey = "api.listTemplate.saveSystem")
     @RequiresPermissions(codes = {DdcPermissionCodes.READ, DdcPermissionCodes.NAMESPACE_TEMPLATE_SYSTEM})
     @PostMapping(path = "/system", consumes = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(operationId = "saveSystemListTemplate", summary = "Save a versioned system list template")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
     public ResponseEntity<ResultRecord<DdcListTemplateResult>> saveSystem(@PathVariable String pageKey, @PathVariable String listKey,
             @Valid @RequestBody DdcListTemplateCommand command) { return save(pageKey, listKey, "SYSTEM", command); }
@@ -60,6 +63,7 @@ public class DdcListTemplateController {
     @PermissionResource(key = "tianshu.api.listTemplate.savePersonal", type = ResourceType.API, labelPage = "tianshu.permissions", labelKey = "api.listTemplate.savePersonal")
     @RequiresPermissions(codes = {DdcPermissionCodes.READ, DdcPermissionCodes.NAMESPACE_TEMPLATE_PERSONAL})
     @PostMapping(path = "/personal", consumes = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(operationId = "savePersonalListTemplate", summary = "Save a versioned personal list template")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
     public ResponseEntity<ResultRecord<DdcListTemplateResult>> savePersonal(@PathVariable String pageKey, @PathVariable String listKey,
             @Valid @RequestBody DdcListTemplateCommand command) { return save(pageKey, listKey, "PERSONAL", command); }
@@ -67,6 +71,7 @@ public class DdcListTemplateController {
     @PermissionResource(key = "tianshu.api.listTemplate.deleteSystem", type = ResourceType.API, labelPage = "tianshu.permissions", labelKey = "api.listTemplate.deleteSystem")
     @RequiresPermissions(codes = {DdcPermissionCodes.READ, DdcPermissionCodes.NAMESPACE_TEMPLATE_SYSTEM})
     @DeleteMapping("/system/{id}")
+    @Operation(operationId = "deleteSystemListTemplate", summary = "Delete a versioned system list template")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
     public ResponseEntity<ResultRecord<Boolean>> deleteSystem(@PathVariable String pageKey, @PathVariable String listKey,
             @PathVariable String id, @RequestParam String catalogVersion, @RequestParam String version) {
@@ -76,6 +81,7 @@ public class DdcListTemplateController {
     @PermissionResource(key = "tianshu.api.listTemplate.deletePersonal", type = ResourceType.API, labelPage = "tianshu.permissions", labelKey = "api.listTemplate.deletePersonal")
     @RequiresPermissions(codes = {DdcPermissionCodes.READ, DdcPermissionCodes.NAMESPACE_TEMPLATE_PERSONAL})
     @DeleteMapping("/personal/{id}")
+    @Operation(operationId = "deletePersonalListTemplate", summary = "Delete a versioned personal list template")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
     public ResponseEntity<ResultRecord<Boolean>> deletePersonal(@PathVariable String pageKey, @PathVariable String listKey,
             @PathVariable String id, @RequestParam String catalogVersion, @RequestParam String version) {
@@ -85,6 +91,7 @@ public class DdcListTemplateController {
     @PermissionResource(key = "tianshu.api.listTemplate.select", type = ResourceType.API, labelPage = "tianshu.permissions", labelKey = "api.listTemplate.select")
     @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @PostMapping(path = "/selection", consumes = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(operationId = "selectListTemplate", summary = "Persist the active template selection for a list view")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
     public ResponseEntity<ResultRecord<Boolean>> select(@PathVariable String pageKey, @PathVariable String listKey,
             @Valid @RequestBody DdcListSelectionCommand command) {

@@ -91,7 +91,7 @@ public class DdcConfigProcessReceiptRepositoryImpl extends EgonColaRepository<Dd
             // LOCAL transaction/connection; absence or a later row cannot prove our old write.
             try {
                 return Objects.requireNonNull(receiptTransactionTemplate.execute(status -> {
-                    verifyAuthority(context, receipt);
+                    if (!verifyAuthority(context, receipt)) return AcceptanceEnum.CONFLICT;
                     var committed = mapper.selectExact(row);
                     if (committed != null && sameIdentity(committed, row)
                             && Objects.equals(committed.getReportSeq(), row.getReportSeq())
@@ -126,7 +126,7 @@ public class DdcConfigProcessReceiptRepositoryImpl extends EgonColaRepository<Dd
     }
 
     private AcceptanceEnum acceptLocked(DdcTenantContextDTO context,DdcConfigProcessReceiptBO receipt,DdcConfigProcessReceiptPO incoming) {
-        verifyAuthority(context, receipt);
+        if (!verifyAuthority(context, receipt)) return AcceptanceEnum.CONFLICT;
         Instant arrival = clock.instant().truncatedTo(ChronoUnit.MICROS);
         incoming.setUpdateUserId(context.actor()).setUpdateTime(arrival);
         incoming.setLastReceivedAt(arrival);
@@ -161,14 +161,17 @@ public class DdcConfigProcessReceiptRepositoryImpl extends EgonColaRepository<Dd
         throw new org.springframework.dao.OptimisticLockingFailureException("CONFIG_RECEIPT_CONCURRENT_UPDATE");
     }
 
-    private void verifyAuthority(DdcTenantContextDTO context,DdcConfigProcessReceiptBO receipt) {
+    private boolean verifyAuthority(DdcTenantContextDTO context,DdcConfigProcessReceiptBO receipt) {
         requireContext(context);
         var confirmed = bootBindingRepository.assertConfirmedFence(context, converter.toBootBinding(receipt));
         if (confirmed == null) throw new DdcConfigBootBindingRepository.BindingUnavailableException();
+        // The mapper locks the current item before any receipt row. Its published pointer must
+        // still select this immutable revision, including when an uncertain commit is confirmed.
         String fixed = mapper.selectManifest(context.tenantId(), receipt.getConfigId(), receipt.getConfigRevision());
-        if (fixed == null) throw invalid();
+        if (fixed == null) return false;
         JsonNode manifest = DdcConfigCanonicalJson.parse(fixed.getBytes(StandardCharsets.UTF_8));
         if (!manifest.equals(receipt.getAuthorizedManifest())) throw invalid();
+        return true;
     }
 
     private void verifyReport(DdcConfigProcessReceiptBO receipt) {

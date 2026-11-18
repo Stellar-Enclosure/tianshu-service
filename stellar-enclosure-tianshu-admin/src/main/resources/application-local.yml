@@ -87,6 +87,11 @@ egon:
             queue-capacity: ${TIANSHU_SI_INDEX_QUEUE_CAPACITY:256}
             await-termination: ${TIANSHU_SI_INDEX_AWAIT_TERMINATION:10s}
         admin:
+          config-delivery:
+            enabled: false
+            api-server: https://127.0.0.1:1
+            workload-audience: tianshu-config-test
+            bindings: []
           ai:
             optimization:
               enabled: ${TIANSHU_AI_OPTIMIZATION_ENABLED:false}
@@ -150,12 +155,5 @@ egon:
           namespace: default
           application-code: tianshu
           artifact-version: local
-
-server:
-  ssl:
-    enabled: true
-    key-store: ${TIANSHU_TLS_KEY_STORE}
-    key-store-type: PKCS12
-    key-store-password: ${TIANSHU_TLS_KEY_STORE_PASSWORD}
 
 management.endpoint.health.group.readiness.include: ["readinessState", "ddcAuditReadiness"]

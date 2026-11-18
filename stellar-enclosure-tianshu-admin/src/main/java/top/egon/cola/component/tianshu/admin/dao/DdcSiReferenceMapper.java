@@ -23,6 +23,11 @@ import java.util.List;
 @Mapper
 @Validated
 public interface DdcSiReferenceMapper extends EgonColaMapper<DdcSiReferencePO> {
+    @Override
+    default int deleteVersionedById(DdcSiReferencePO entity) {
+        throw new UnsupportedOperationException("SI_REFERENCE_SOURCE_OPERATION_REQUIRED");
+    }
+
 
     @Override
     default DdcSiReferencePO selectActiveById(Serializable id) {

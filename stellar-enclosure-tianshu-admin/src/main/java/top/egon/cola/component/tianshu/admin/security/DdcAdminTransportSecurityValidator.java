@@ -32,47 +32,19 @@ public final class DdcAdminTransportSecurityValidator
     static void validate(Environment environment, String prefix) {
         String mode = required(environment, prefix + ".mode")
                 .toUpperCase(Locale.ROOT);
-        if ("DEVELOPMENT_PLAINTEXT".equals(mode)) {
-            return;
+        if (!"KUBERNETES_PLAINTEXT".equals(mode) && !"DEVELOPMENT_PLAINTEXT".equals(mode)) {
+            throw new IllegalStateException(prefix + ".mode must be KUBERNETES_PLAINTEXT or DEVELOPMENT_PLAINTEXT");
         }
-        if (!"MTLS".equals(mode)) {
-            throw new IllegalStateException(
-                    prefix + ".mode must be DEVELOPMENT_PLAINTEXT or MTLS"
-            );
+        if ("DEVELOPMENT_PLAINTEXT".equals(mode)
+                && !environment.matchesProfiles("local | test")) {
+            throw new IllegalStateException("DEVELOPMENT_PLAINTEXT requires the local or test profile");
         }
-        if (!environment.getProperty(
-                "server.ssl.enabled",
-                Boolean.class,
-                false
-        )) {
-            throw new IllegalStateException(
-                    "MTLS requires server.ssl.enabled=true"
-            );
+        if (environment.getProperty("server.ssl.enabled", Boolean.class, false)) {
+            throw new IllegalStateException("Tianshu internal application listeners require server.ssl.enabled=false");
         }
-        if (!"need".equalsIgnoreCase(environment.getProperty(
-                "server.ssl.client-auth",
-                ""
-        ))) {
-            throw new IllegalStateException(
-                    "MTLS requires server.ssl.client-auth=need"
-            );
+        if (!"none".equalsIgnoreCase(environment.getProperty("server.forward-headers-strategy", "none"))) {
+            throw new IllegalStateException("Tianshu internal application listeners do not trust forwarded headers");
         }
-        String bundle = required(environment, "server.ssl.bundle");
-        required(
-                environment,
-                "spring.ssl.bundle.pem." + bundle
-                        + ".keystore.certificate"
-        );
-        required(
-                environment,
-                "spring.ssl.bundle.pem." + bundle
-                        + ".keystore.private-key"
-        );
-        required(
-                environment,
-                "spring.ssl.bundle.pem." + bundle
-                        + ".truststore.certificate"
-        );
     }
 
     private static String required(

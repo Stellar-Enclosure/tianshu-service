@@ -55,9 +55,14 @@
         SELECT <include refid="Columns"/> FROM ddc_config_process_receipt WHERE <include refid="ExactKey"/> FOR UPDATE
     </select>
     <select id="selectManifest" resultType="java.lang.String">
-        SELECT manifest_json::text FROM ddc_config_version
-        WHERE tenant_id = #{tenantId} AND config_id = #{configId} AND config_revision = #{configRevision}
-          AND deleted_at IS NULL AND manifest_json IS NOT NULL
+        SELECT v.manifest_json::text
+        FROM ddc_config_item item
+        JOIN ddc_config_version v ON v.tenant_id = item.tenant_id AND v.config_id = item.id
+          AND v.config_revision = item.published_version
+        WHERE item.tenant_id = #{tenantId} AND item.id = #{configId}
+          AND item.published_version = #{configRevision} AND item.deleted_at IS NULL AND item.deleted = false
+          AND v.tenant_id = #{tenantId} AND v.deleted_at IS NULL AND v.manifest_json IS NOT NULL
+        FOR UPDATE OF item
     </select>
     <insert id="insertIfAbsent">
         INSERT INTO ddc_config_process_receipt (<include refid="Columns"/>) VALUES (#{row.id}, #{row.tenantId}, #{row.createUserId}, #{row.createTime}, #{row.updateUserId}, #{row.updateTime}, #{row.deletedAt}, #{row.version}, #{row.configId}, #{row.configRevision}, #{row.scopeJson,jdbcType=OTHER,typeHandler=top.egon.cola.component.tianshu.admin.dao.typehandler.DdcJsonbTypeHandler}, #{row.targetBindingId}, #{row.targetRevision}, #{row.clusterId}, #{row.k8sNamespace}, #{row.workloadUid}, #{row.podUid}, #{row.containerName}, #{row.containerId}, #{row.bootId}, #{row.contentDigest}, #{row.appliedRevision}, #{row.appliedDigest}, #{row.restartDigest}, #{row.result}, #{row.reasonCode}, NULL, #{row.reportSeq}, #{row.receiptDigest}, #{row.reportedAt}, #{row.appliedAt}, #{row.createTime})

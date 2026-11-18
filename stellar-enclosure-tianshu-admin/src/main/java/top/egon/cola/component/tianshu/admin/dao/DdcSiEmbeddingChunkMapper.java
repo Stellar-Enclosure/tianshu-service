@@ -23,6 +23,11 @@ import java.util.List;
 @Mapper
 @Validated
 public interface DdcSiEmbeddingChunkMapper extends EgonColaMapper<DdcSiEmbeddingChunkPO> {
+    @Override
+    default int deleteVersionedById(DdcSiEmbeddingChunkPO entity) {
+        throw new UnsupportedOperationException("SI_CHUNK_VERSION_OPERATION_REQUIRED");
+    }
+
 
     @Override
     default DdcSiEmbeddingChunkPO selectActiveById(Serializable id) {

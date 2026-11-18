@@ -1,9 +1,7 @@
 server:
   ssl:
-    enabled: true
-    key-store: ${TIANSHU_TLS_KEY_STORE}
-    key-store-type: PKCS12
-    key-store-password: ${TIANSHU_TLS_KEY_STORE_PASSWORD}
+    enabled: false
+  forward-headers-strategy: none
   port: 18080
 
 springdoc:
@@ -274,7 +272,20 @@ egon:
               audience: ${TIANSHU_ADMIN_JWT_AUDIENCE:}
               jwk-set-uri: ${TIANSHU_ADMIN_JWT_JWK_SET_URI:}
           transport-security:
-            mode: MTLS
+            mode: KUBERNETES_PLAINTEXT
+          config-delivery:
+            enabled: ${TIANSHU_CONFIG_DELIVERY_ENABLED:false}
+            api-server: ${TIANSHU_CONFIG_K8S_API_SERVER:https://kubernetes.default.svc}
+            api-ca-file: ${TIANSHU_CONFIG_K8S_API_CA_FILE:/var/run/secrets/kubernetes.io/serviceaccount/ca.crt}
+            api-token-file: ${TIANSHU_CONFIG_K8S_API_TOKEN_FILE:/var/run/secrets/kubernetes.io/serviceaccount/token}
+            api-timeout: ${TIANSHU_CONFIG_K8S_API_TIMEOUT:2s}
+            api-max-response-bytes: ${TIANSHU_CONFIG_K8S_API_MAX_RESPONSE_BYTES:4194304}
+            workload-audience: ${TIANSHU_CONFIG_WORKLOAD_AUDIENCE:tianshu-config}
+            signing-keyring-file: ${TIANSHU_CONFIG_DELIVERY_KEYRING_FILE:/var/run/tianshu/config-delivery/keys.json}
+            delivery-token-ttl: ${TIANSHU_CONFIG_DELIVERY_TOKEN_TTL:120s}
+            snapshot-validity: ${TIANSHU_CONFIG_SNAPSHOT_VALIDITY:5m}
+            # Provision exact, revisioned OAuth-to-workload bindings through deployment config.
+            bindings: []
           max-config-bytes: ${TIANSHU_MAX_CONFIG_BYTES:1048576}
           ui-i18n:
             biz-code: ${TIANSHU_RESOURCE_BIZ_CODE:xingyuan}

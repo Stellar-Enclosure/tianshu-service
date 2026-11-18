@@ -1,6 +1,14 @@
 package top.egon.cola.component.tianshu.admin.openapi;
 
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.security.SecurityRequirementEntry;
+import org.springframework.boot.env.YamlPropertySourceLoader;
+import org.springframework.core.io.ClassPathResource;
+import top.egon.cola.component.tianshu.admin.controller.config.DdcConfigDeliveryController;
+import top.egon.cola.component.tianshu.model.config.DdcConfigReceiptCommand;
+import top.egon.cola.component.tianshu.model.config.DdcConfigSnapshotDTO;
 import org.junit.jupiter.api.Test;
 import org.springdoc.core.customizers.OperationCustomizer;
 import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider;
@@ -14,6 +22,7 @@ import top.egon.cola.component.yuheng.openapi.config.GatewayOpenApiProperties;
 import top.egon.cola.component.yuheng.openapi.customizer.EgonOperationCustomizer;
 
 import java.util.List;
+import java.util.Arrays;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -31,6 +40,9 @@ class DdcPublishedOpenApiContractTest {
         for (var bean : scanner.findCandidateComponents("top.egon.cola.component.tianshu.admin.controller")) {
             String name = bean.getBeanClassName();
             Class<?> controller = Class.forName(name);
+            if (controller == DdcConfigDeliveryController.class) {
+                continue;
+            }
             Object instance = mock(controller);
             assertThat(controller.getAnnotation(EgonApiCatalog.class).interfaceGroupCode())
                     .as("published Group of %s", name).isEqualTo("tianshu");
@@ -54,4 +66,36 @@ class DdcPublishedOpenApiContractTest {
         }
         assertThat(operations).isGreaterThan(20);
     }
+
+    @Test
+    void internalConfigContractUsesTwoSimultaneousProofsAndStringRevision() throws Exception {
+        Class<DdcConfigDeliveryController> controller = DdcConfigDeliveryController.class;
+        assertThat(controller.getAnnotation(EgonApiCatalog.class)).isNull();
+        var commonResponses = controller.getAnnotation(ApiResponses.class);
+        assertThat(commonResponses.value()).extracting(ApiResponse::responseCode)
+                .contains("400", "401", "403", "409", "503");
+        var handlers = Arrays.stream(controller.getDeclaredMethods())
+                .filter(method -> method.isAnnotationPresent(Operation.class)).toList();
+        assertThat(handlers).hasSize(2);
+        assertThat(handlers).extracting(method -> method.getAnnotation(Operation.class).operationId())
+                .containsExactlyInAnyOrder("configSnapshot", "reportConfigReceipt");
+        for (var method : handlers) {
+            var operation = method.getAnnotation(Operation.class);
+            assertThat(operation.security()).hasSize(1);
+            var both = operation.security()[0];
+            assertThat(both.name()).isEqualTo("tianshuConfigServiceBearer");
+            assertThat(both.combine()).extracting(SecurityRequirementEntry::name)
+                    .containsExactly("tianshuConfigWorkloadToken");
+            assertThat(operation.parameters()).extracting(io.swagger.v3.oas.annotations.Parameter::name)
+                    .contains("X-Config-Boot-Id", "X-Egon-Workload-Token");
+        }
+        assertThat(DdcConfigSnapshotDTO.class.getMethod("getReleaseRevision").getReturnType()).isEqualTo(String.class);
+        assertThat(DdcConfigReceiptCommand.class.getMethod("getReportSeq").getReturnType()).isEqualTo(String.class);
+
+        var profile = new YamlPropertySourceLoader().load("application", new ClassPathResource("application.yml")).getFirst();
+        assertThat(profile.getProperty("springdoc.group-configs[0].group")).isEqualTo("tianshu");
+        assertThat(profile.getProperty("springdoc.group-configs[0].paths-to-match[0]")).isEqualTo("/api/v1/tianshu/**");
+        assertThat(profile.getProperty("springdoc.group-configs[0].paths-to-match[1]")).isNull();
+    }
+
 }

@@ -28,6 +28,11 @@ egon:
         registry:
           enabled: false
         admin:
+          config-delivery:
+            enabled: false
+            api-server: https://127.0.0.1:1
+            workload-audience: tianshu-config-test
+            bindings: []
           ai:
             optimization:
               enabled: false

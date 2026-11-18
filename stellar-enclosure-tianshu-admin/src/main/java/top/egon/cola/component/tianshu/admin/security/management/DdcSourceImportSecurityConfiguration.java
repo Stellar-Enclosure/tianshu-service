@@ -21,13 +21,15 @@ import top.egon.cola.platform.tianquan.shoubing.starter.security.IdpEndpointAuth
 import top.egon.cola.platform.tianquan.shoubing.starter.security.IdpSecurityObservationFilter;
 
 import java.util.List;
+import top.egon.cola.component.tianshu.admin.security.config.DdcConfigDeliverySecurityConfiguration;
 
 @Configuration(value = "ddcSourceImportSecurityConfiguration", proxyBeanMethods = false)
 public class DdcSourceImportSecurityConfiguration {
     @Bean
     public IdpEndpointAuthenticationPolicy idpEndpointAuthenticationPolicy() {
         return new IdpEndpointAuthenticationPolicy(List.of("/api/v1/tianshu/i18n/public/bundle"),
-                List.of("/internal/v1/i18n/source-imports", "/internal/v1/i18n/source-imports/*", "/internal/v1/tianshu/list-delegation"));
+                List.of("/internal/v1/i18n/source-imports", "/internal/v1/i18n/source-imports/*", "/internal/v1/tianshu/list-delegation",
+                        DdcConfigDeliverySecurityConfiguration.SNAPSHOT_PATH, DdcConfigDeliverySecurityConfiguration.RECEIPT_PATH));
     }
 
     @Bean("ddcSourceImportSecurityFilterChain")
