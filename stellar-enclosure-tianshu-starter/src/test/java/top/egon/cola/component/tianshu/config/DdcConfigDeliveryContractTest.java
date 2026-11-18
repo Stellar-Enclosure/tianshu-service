@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import top.egon.cola.component.tianshu.environment.DdcDynamicPropertySource;
 import top.egon.cola.component.tianshu.format.DdcConfigCanonicalJson;
 import top.egon.cola.component.tianshu.model.config.DdcConfigBaselineVO;
 import top.egon.cola.component.tianshu.model.config.DdcConfigReceiptCommand;
@@ -19,6 +20,8 @@ import top.egon.cola.component.tianshu.model.config.DdcConfigSnapshotDTO;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -59,6 +62,54 @@ class DdcConfigDeliveryContractTest {
              "appliedAt":"2026-11-17T16:00:02Z","receiptDigest":"%s","deliveryToken":"synthetic-token-a",
              "errorCode":null,"errorMessage":null}
             """.formatted(CONTENT, CONTENT, RESTART, RECEIPT).strip();
+
+    @Test
+    void baselineHotDigestUsesTheExactOnlineContentFieldsIncludingDependencies() throws Exception {
+        var digest = DdcConfigCanonicalJson.class.getMethod("contentSha256", DdcConfigBaselineVO.class);
+        String baselineJson = BASELINE_JSON.replace("\"restartValues\":",
+                "\"dependencySnapshotId\":\"deps-r43\",\"restartValues\":");
+        var baseline = MAPPER.readValue(baselineJson, DdcConfigBaselineVO.class);
+        var online = new DdcConfigSnapshotDTO("1", baseline.getScope(), baseline.getSource().getRevision(),
+                baseline.getEnabled(), baseline.getRestartDigest(), baseline.getContentSha256(), baseline.getHotSeed(),
+                "deps-r43", Instant.parse("2026-11-18T21:00:00Z"));
+        assertThat(digest.invoke(null, baseline)).isEqualTo(DdcConfigCanonicalJson.contentSha256(online));
+        var withoutDependency = MAPPER.readValue(baselineJson.replace("\"deps-r43\"", "null"), DdcConfigBaselineVO.class);
+        assertThat(digest.invoke(null, withoutDependency)).isNotEqualTo(digest.invoke(null, baseline));
+    }
+
+    @Test
+    void typedSpringSnapshotKeepsNullPresenceAndDeeplyImmutableContainerValues() {
+        var nested = MAPPER.createObjectNode().set("items", MAPPER.createArrayNode().add("secret-fixture"));
+        var values = new LinkedHashMap<String, JsonNode>();
+        values.put("explicit-null", MAPPER.getNodeFactory().nullNode());
+        values.put("empty", MAPPER.getNodeFactory().textNode(""));
+        values.put("nested", nested);
+        var first = DdcDynamicPropertySource.Snapshot.fromTyped("application.yml", 7L, CONTENT, values);
+        var source = new DdcDynamicPropertySource("tianshu:application.yml", first);
+        assertThat(source.containsProperty("explicit-null")).isTrue();
+        assertThat(source.getProperty("explicit-null")).isNull();
+        assertThat(source.getProperty("empty")).isEqualTo("");
+        assertThat(source.containsProperty("missing")).isFalse();
+
+        ((ObjectNode) nested).put("changed", 1);
+        var stored = (Map<?, ?>) source.getProperty("nested");
+        assertThat(stored.containsKey("changed")).isFalse();
+        assertThatThrownBy(stored::clear).isInstanceOf(UnsupportedOperationException.class);
+        assertThat(first.toString()).doesNotContain("secret-fixture");
+
+        source.replace(DdcDynamicPropertySource.Snapshot.fromTyped("application.yml", 8L, CONTENT, Map.of()));
+        assertThat(source.getPropertyNames()).isEmpty();
+        assertThat(source.containsProperty("explicit-null")).isFalse();
+    }
+
+    @Test
+    void deniesReservedBootstrapKeyEvenWhenNestedInsideAContainer() {
+        var nested = MAPPER.createObjectNode();
+        nested.putObject("config").put("import", "fixture");
+        assertThatThrownBy(() -> DdcDynamicPropertySource.Snapshot.fromTyped(
+                "application.yml", 7L, CONTENT, Map.of("spring", nested)))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("CONFIG_PROPERTY_PATH_RESERVED");
+    }
 
     @Test
     void explicitNullAndEmptyTextRemainDifferentDigestInputs() {

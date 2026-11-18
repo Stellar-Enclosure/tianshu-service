@@ -1,5 +1,6 @@
 package top.egon.cola.component.tianshu.environment;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.boot.env.PropertySourceInfo;
 import org.springframework.boot.origin.Origin;
 import org.springframework.boot.origin.OriginLookup;
@@ -8,7 +9,9 @@ import org.springframework.core.env.EnumerablePropertySource;
 import org.springframework.lang.Nullable;
 import top.egon.cola.component.tianshu.model.config.DdcConfigFormat;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -42,6 +45,12 @@ public final class DdcDynamicPropertySource
     @Nullable
     public Object getProperty(String name) {
         return unwrap(snapshot().rawValues().get(name));
+    }
+
+    /** Explicit null is present in the typed snapshot, even though Spring resolves absent values as null. */
+    @Override
+    public boolean containsProperty(String name) {
+        return snapshot().rawValues().containsKey(name);
     }
 
     /**
@@ -157,9 +166,74 @@ public final class DdcDynamicPropertySource
             Objects.requireNonNull(format, "format");
             Objects.requireNonNull(checksum, "checksum");
             Objects.requireNonNull(rawValues, "rawValues");
-            rawValues = Collections.unmodifiableMap(
-                    new LinkedHashMap<>(rawValues)
-            );
+            Map<String, Object> snapshot = new LinkedHashMap<>();
+            rawValues.forEach((key, value) -> snapshot.put(key, immutableValue(value)));
+            rawValues = Collections.unmodifiableMap(snapshot);
+        }
+
+        /** Converts typed config values into a complete, deeply immutable Spring property snapshot. */
+        public static Snapshot fromTyped(String resourceName, long releaseRevision, String contentDigest,
+                                         Map<String, JsonNode> values) {
+            values.forEach(Snapshot::verifyTypedPath);
+            return new Snapshot(resourceName, DdcConfigFormat.YAML, releaseRevision, contentDigest,
+                    new LinkedHashMap<>(values));
+        }
+
+        @Override
+        public String toString() {
+            return "DdcPropertySnapshot[resourceName=" + resourceName + ", revision=" + version
+                    + ", checksum=" + checksum + ", propertyCount=" + rawValues.size() + "]";
+        }
+
+        private static void verifyTypedPath(String path, JsonNode value) {
+            if (path.isBlank() || DdcReservedConfigurationKeys.isReserved(path)) {
+                throw new IllegalArgumentException("CONFIG_PROPERTY_PATH_RESERVED");
+            }
+            if (value.isObject()) {
+                value.fields().forEachRemaining(field -> verifyTypedPath(path + "." + field.getKey(), field.getValue()));
+            } else if (value.isArray()) {
+                for (int index = 0; index < value.size(); index++) {
+                    verifyTypedPath(path + "[" + index + "]", value.get(index));
+                }
+            }
+        }
+
+        private static Object jsonValue(JsonNode value) {
+            return switch (value.getNodeType()) {
+                case NULL -> null;
+                case STRING -> value.textValue();
+                case BOOLEAN -> value.booleanValue();
+                case NUMBER -> value.numberValue();
+                case ARRAY -> {
+                    List<Object> values = new ArrayList<>();
+                    value.forEach(item -> values.add(jsonValue(item)));
+                    yield Collections.unmodifiableList(values);
+                }
+                case OBJECT -> {
+                    Map<String, Object> values = new LinkedHashMap<>();
+                    value.fields().forEachRemaining(field -> values.put(field.getKey(), jsonValue(field.getValue())));
+                    yield Collections.unmodifiableMap(values);
+                }
+                default -> throw new IllegalArgumentException("CONFIG_PROPERTY_VALUE_UNSUPPORTED");
+            };
+        }
+
+        private static Object immutableValue(Object value) {
+            if (value instanceof OriginTrackedValue tracked) {
+                return OriginTrackedValue.of(immutableValue(tracked.getValue()), tracked.getOrigin());
+            }
+            if (value instanceof Map<?, ?> source) {
+                Map<Object, Object> copied = new LinkedHashMap<>();
+                source.forEach((key, item) -> copied.put(key, immutableValue(item)));
+                return Collections.unmodifiableMap(copied);
+            }
+            if (value instanceof List<?> source) {
+                return source.stream().map(Snapshot::immutableValue).toList();
+            }
+            if (value instanceof JsonNode node) {
+                return jsonValue(node);
+            }
+            return value;
         }
 
         /**

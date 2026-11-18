@@ -1,15 +1,24 @@
 package top.egon.cola.component.tianshu.service.refresh;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.core.env.CompositePropertySource;
 import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.core.env.PropertySource;
+import org.springframework.core.env.StandardEnvironment;
 import org.springframework.lang.Nullable;
 import top.egon.cola.component.tianshu.environment.DdcDynamicPropertySource;
 import top.egon.cola.component.tianshu.format.DdcConfigFormatStrategyRegistry;
+import top.egon.cola.component.tianshu.format.DdcConfigCanonicalJson;
+import top.egon.cola.component.tianshu.model.config.DdcConfigBaselineVO;
+import top.egon.cola.component.tianshu.model.config.DdcConfigScopeVO;
+import top.egon.cola.component.tianshu.model.config.DdcConfigSnapshotDTO;
+import top.egon.cola.component.tianshu.configdata.DdcConfigDataLoader;
 import top.egon.cola.component.tianshu.model.config.DdcConfigFormat;
 import top.egon.cola.component.tianshu.api.refresh.DdcConfigApplier;
 import top.egon.cola.component.tianshu.api.refresh.DdcConfigApplierRegistry;
@@ -26,6 +35,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.time.Instant;
+import java.time.Clock;
+import java.math.BigDecimal;
+import java.math.BigInteger;
 
 /**
  * 将动态下发的 YAML 配置事务式应用到 Spring 环境和运行时消费者。
@@ -38,13 +51,8 @@ import java.util.Set;
  * refreshed. A failure restores the old source and rolls back completed leaf appliers in reverse order. Event-listener
  * failures are logged without rolling back successfully applied configuration.</p>
  */
+@Slf4j
 public class DdcYamlConfigApplier implements SmartInitializingSingleton {
-
-    /**
-     * 当前类的日志记录器。 Logger for this class.
-     */
-    private static final Logger LOGGER =
-            LoggerFactory.getLogger(DdcYamlConfigApplier.class);
 
     /**
      * 承载动态属性源并解析最终属性值的 Spring 环境。 Spring environment hosting the dynamic source and resolving final values.
@@ -86,6 +94,9 @@ public class DdcYamlConfigApplier implements SmartInitializingSingleton {
      * 当前环境中的可替换 Tianshu 动态属性源。 Replaceable Tianshu dynamic property source in the current environment.
      */
     private final DdcDynamicPropertySource propertySource;
+    private final Clock clock;
+    private boolean applyingTypedSnapshot;
+    private boolean rollbackIncomplete;
 
     /**
      * 创建 YAML 配置应用器并定位已由 ConfigData 安装的动态属性源。
@@ -108,6 +119,13 @@ public class DdcYamlConfigApplier implements SmartInitializingSingleton {
             ApplicationEventPublisher eventPublisher,
             long maxConfigBytes,
             DdcConfigFormatStrategyRegistry formatStrategies) {
+        this(environment, applierRegistry, fieldBindingService, rebinder, eventPublisher, maxConfigBytes, formatStrategies, Clock.systemUTC());
+    }
+
+    public DdcYamlConfigApplier(ConfigurableEnvironment environment, DdcConfigApplierRegistry applierRegistry,
+            DdcFieldBindingService fieldBindingService, DdcConfigurationPropertiesRebinder rebinder,
+            ApplicationEventPublisher eventPublisher, long maxConfigBytes,
+            DdcConfigFormatStrategyRegistry formatStrategies, Clock clock) {
         this.environment = environment;
         this.applierRegistry = applierRegistry;
         this.fieldBindingService = fieldBindingService;
@@ -119,6 +137,7 @@ public class DdcYamlConfigApplier implements SmartInitializingSingleton {
                 "formatStrategies"
         );
         this.propertySource = findPropertySource(environment);
+        this.clock = Objects.requireNonNull(clock, "clock");
     }
 
     /**
@@ -136,7 +155,24 @@ public class DdcYamlConfigApplier implements SmartInitializingSingleton {
      * Applies startup-loaded values to explicitly registered runtime consumers in priority order after singleton initialization.
      */
     @Override
-    public void afterSingletonsInstantiated() {
+    public synchronized void afterSingletonsInstantiated() {
+        var metadata = DdcConfigDataLoader.baselineMetadataOrNull(environment);
+        if (metadata != null) {
+            assertWritable();
+            applyingTypedSnapshot = true;
+            try {
+            rebinder.afterSingletonsInstantiated();
+            var current = propertySource.snapshot();
+            var empty = DdcDynamicPropertySource.Snapshot.fromTyped(current.resourceName(), current.version(), current.checksum(), Map.of());
+            validateTypedRules(metadata.rules(), current, empty, true);
+            var candidateEnvironment = preview(current);
+            var beans = rebinder.prepare(candidateEnvironment, current.values().keySet(), Set.of());
+            var fields = fieldBindingService.prepare(candidateEnvironment, current.values().keySet());
+            var leaves = prepareTypedLeaves(metadata.rules(), current, empty, preview(empty), current.values().keySet());
+            commitPrepared(current, current, beans, fields, leaves);
+            return;
+            } finally { applyingTypedSnapshot = false; }
+        }
         DdcDynamicPropertySource.Snapshot snapshot =
                 propertySource.snapshot();
         snapshot.values().keySet().stream()
@@ -163,10 +199,11 @@ public class DdcYamlConfigApplier implements SmartInitializingSingleton {
      * @throws IllegalArgumentException 内容超限或无法解析时抛出; thrown when content exceeds the limit or cannot be parsed
      * @throws RuntimeException         运行时消费者应用失败时抛出; thrown when a runtime consumer fails to apply the change
      */
-    public DdcConfigurationChangedEvent apply(
+    public synchronized DdcConfigurationChangedEvent apply(
             String content,
             long version,
             @Nullable String changeId) {
+        assertWritable();
         validateSize(content);
         DdcDynamicPropertySource candidate = load(content, version);
         DdcDynamicPropertySource.Snapshot previous =
@@ -220,6 +257,264 @@ public class DdcYamlConfigApplier implements SmartInitializingSingleton {
                 );
         publish(event);
         return event;
+    }
+
+    /** The full baseline overload verifies the immutable restart combination without retaining its HOT seed. */
+    public DdcConfigurationChangedEvent applySnapshot(@NotNull @Valid DdcConfigBaselineVO baseline,
+                                                     @NotNull @Valid DdcConfigSnapshotDTO snapshot,
+                                                     @Nullable String changeId) {
+        Objects.requireNonNull(baseline, "baseline");
+        if (!baseline.getRestartDigest().equals(DdcConfigCanonicalJson.restartDigest(baseline))) {
+            throw new IllegalArgumentException("CONFIG_BASELINE_RESTART_DIGEST_INVALID");
+        }
+        return applySnapshot(baseline.getScope(), baseline.getRestartDigest(), baseline.getRules(), snapshot, changeId);
+    }
+
+    /** Complete HOT replacement. The caller persists APPLIED only after this method has returned successfully. */
+    public synchronized DdcConfigurationChangedEvent applySnapshot(@NotNull @Valid DdcConfigScopeVO expectedScope,
+            @NotNull String baselineRestartDigest, @NotNull List<DdcConfigBaselineVO.RuleVO> rules,
+            @NotNull @Valid DdcConfigSnapshotDTO snapshot, @Nullable String changeId) {
+        return applySnapshot(expectedScope, baselineRestartDigest, rules, snapshot, changeId, ignored -> { });
+    }
+
+    public synchronized DdcConfigurationChangedEvent applySnapshot(@NotNull @Valid DdcConfigScopeVO expectedScope,
+            @NotNull String baselineRestartDigest, @NotNull List<DdcConfigBaselineVO.RuleVO> rules,
+            @NotNull @Valid DdcConfigSnapshotDTO snapshot, @Nullable String changeId,
+            java.util.function.Consumer<DdcConfigurationChangedEvent> persistenceBeforePublish) {
+        assertWritable();
+        applyingTypedSnapshot = true;
+        try {
+        Objects.requireNonNull(persistenceBeforePublish, "persistenceBeforePublish");
+        Objects.requireNonNull(snapshot, "snapshot");
+        if (!expectedScope.equals(snapshot.getScope()) || !"1".equals(snapshot.getSchemaVersion())) {
+            throw new IllegalArgumentException("CONFIG_SNAPSHOT_SCOPE_INVALID");
+        }
+        if (!baselineRestartDigest.equals(snapshot.getRestartDigest())) {
+            throw new IllegalStateException("CONFIG_RESTART_REQUIRED");
+        }
+        if (!snapshot.getContentSha256().equals(DdcConfigCanonicalJson.contentSha256(snapshot))) {
+            throw new IllegalArgumentException("CONFIG_SNAPSHOT_DIGEST_INVALID");
+        }
+        if (!snapshot.getValidUntil().isAfter(clock.instant())) throw new IllegalArgumentException("CONFIG_SNAPSHOT_EXPIRED");
+        byte[] encoded = DdcConfigCanonicalJson.canonicalBytes(json(snapshot.getHotValues()));
+        if (encoded.length > maxConfigBytes) throw new IllegalArgumentException("CONFIG_SNAPSHOT_TOO_LARGE");
+        long revision = Long.parseLong(snapshot.getReleaseRevision());
+        var previous = propertySource.snapshot();
+        if (!expectedScope.getResourceName().equals(previous.resourceName())) throw new IllegalArgumentException("CONFIG_SNAPSHOT_RESOURCE_INVALID");
+        if (revision < previous.version()) throw new IllegalArgumentException("CONFIG_SNAPSHOT_STALE");
+        if (revision == previous.version() && !previous.checksum().equals(snapshot.getContentSha256())) {
+            throw new IllegalArgumentException("CONFIG_SNAPSHOT_REVISION_CONFLICT");
+        }
+        var candidate = DdcDynamicPropertySource.Snapshot.fromTyped(expectedScope.getResourceName(), revision,
+                snapshot.getContentSha256(), snapshot.getHotValues());
+        validateTypedRules(rules, candidate, previous, snapshot.getEnabled());
+        var delta = diff(previous, candidate);
+        if (revision == previous.version()) {
+            var event = typedEvent(candidate, delta, Set.of(), changeId);
+            persistenceBeforePublish.accept(event);
+            return event;
+        }
+        var candidateEnvironment = preview(candidate);
+        var preparedBeans = rebinder.prepare(candidateEnvironment, delta.changedKeys(), delta.removedKeys());
+        var preparedFields = fieldBindingService.prepare(candidateEnvironment, delta.changedKeys());
+        var leaves = new ArrayList<>(prepareTypedLeaves(rules, candidate, previous, preview(previous), delta.changedKeys()));
+        var event = typedEvent(candidate, delta, delta.changedKeys(), changeId);
+        leaves.add(new PreparedLeaf() {
+            @Override public void commit() { persistenceBeforePublish.accept(event); }
+            @Override public void rollback() { }
+        });
+        commitPrepared(previous, candidate, preparedBeans, preparedFields, leaves);
+        publish(event);
+        return event;
+        } finally {
+            applyingTypedSnapshot = false;
+        }
+    }
+
+    private void assertWritable() {
+        if (rollbackIncomplete) throw new IllegalStateException("CONFIG_HOT_ROLLBACK_FAILED");
+        if (applyingTypedSnapshot) throw new IllegalStateException("CONFIG_HOT_REENTRANT_APPLY");
+    }
+
+    private DdcConfigurationChangedEvent typedEvent(DdcDynamicPropertySource.Snapshot snapshot, Diff delta,
+                                                   Set<String> refreshed, String changeId) {
+        return new DdcConfigurationChangedEvent(snapshot.resourceName(), snapshot.version(), snapshot.checksum(),
+                delta.changedKeys(), delta.addedKeys(), delta.updatedKeys(), delta.removedKeys(), refreshed, Set.of(), changeId);
+    }
+
+    private void validateTypedRules(List<DdcConfigBaselineVO.RuleVO> rules, DdcDynamicPropertySource.Snapshot candidate,
+                                    DdcDynamicPropertySource.Snapshot previous, boolean enabled) {
+        var byKey = ruleMap(rules);
+        var oldValues = previous.values();
+        var newValues = candidate.values();
+        var keys = new LinkedHashSet<>(oldValues.keySet());
+        keys.addAll(newValues.keySet());
+        for (var key : keys) {
+            var rule = byKey.get(key);
+            if (rule == null || rule.getMode() != DdcConfigBaselineVO.ReloadModeEnum.HOT) throw new IllegalStateException("CONFIG_RESTART_REQUIRED");
+            if (!applierRegistry.hasExplicitRegistration(key) && !rebinder.supportsKey(key) && !fieldBindingService.supportsKey(key)) {
+                throw new IllegalStateException("CONFIG_HOT_CONSUMER_UNKNOWN");
+            }
+            if (!newValues.containsKey(key)) {
+                if (enabled && !rule.getDeletionAllowed()) throw new IllegalArgumentException("CONFIG_HOT_DELETION_FORBIDDEN");
+                continue;
+            }
+            var value = json(newValues.get(key));
+            if (!rule.acceptsValue(value)) throw new IllegalArgumentException("CONFIG_HOT_TYPE_INVALID");
+            if (value.isNull()) {
+                if (!rule.getNullable() || !applierRegistry.hasExplicitRegistration(key)
+                        || !(applierRegistry.resolve(key) instanceof TypedLeafApplier typed) || !typed.supportsExplicitNull()) {
+                    throw new IllegalStateException("CONFIG_HOT_EXPLICIT_NULL_UNSUPPORTED");
+                }
+                if (rebinder.consumesKey(key) || fieldBindingService.consumesKey(key)) {
+                    throw new IllegalStateException("CONFIG_HOT_EXPLICIT_NULL_UNSUPPORTED");
+                }
+            }
+            if (rule.getSchemaRef() != null && (!applierRegistry.hasExplicitRegistration(key)
+                    || !(applierRegistry.resolve(key) instanceof TypedLeafApplier typed) || !typed.supportsSchema(rule.getSchemaRef()))) {
+                throw new IllegalStateException("CONFIG_HOT_SCHEMA_UNSUPPORTED");
+            }
+        }
+    }
+
+    private static Map<String, DdcConfigBaselineVO.RuleVO> ruleMap(List<DdcConfigBaselineVO.RuleVO> rules) {
+        Map<String, DdcConfigBaselineVO.RuleVO> result = new LinkedHashMap<>();
+        for (var rule : List.copyOf(rules)) if (result.putIfAbsent(rule.getKey(), rule) != null) {
+            throw new IllegalArgumentException("CONFIG_RULE_KEY_DUPLICATE");
+        }
+        return result;
+    }
+
+    private List<PreparedLeaf> prepareTypedLeaves(List<DdcConfigBaselineVO.RuleVO> rules,
+            DdcDynamicPropertySource.Snapshot candidate, DdcDynamicPropertySource.Snapshot previous,
+            ConfigurableEnvironment previousEnvironment, Set<String> changedKeys) {
+        var byKey = ruleMap(rules);
+        var candidateEnvironment = preview(candidate);
+        var nextValues = candidate.values();
+        var oldValues = previous.values();
+        List<PreparedLeaf> prepared = new ArrayList<>();
+        changedKeys.stream().filter(applierRegistry::hasExplicitRegistration)
+                .sorted(Comparator.comparingInt((String key) -> applierRegistry.resolve(key).priority()).thenComparing(String::compareTo))
+                .forEach(key -> {
+                    var applier = applierRegistry.resolve(key);
+                    var next = leafValue(nextValues, candidateEnvironment, key);
+                    var old = leafValue(oldValues, previousEnvironment, key);
+                    if (applier instanceof TypedLeafApplier typed) {
+                        prepared.add(Objects.requireNonNull(typed.prepare(key, next, old, byKey.get(key), candidate.version()), "preparedLeaf"));
+                    } else {
+                        if (next.present() && (next.value().isNull() || next.value().isContainerNode())) {
+                            throw new IllegalStateException("CONFIG_HOT_TYPED_LEAF_REQUIRED");
+                        }
+                        prepared.add(new PreparedLeaf() {
+                            @Override public void commit() { applier.apply(key, next.resolvedValue(), candidate.version()); }
+                            @Override public void rollback() { applier.apply(key, old.resolvedValue(), previous.version()); }
+                        });
+                    }
+                });
+        return List.copyOf(prepared);
+    }
+
+    private static ValueVO leafValue(Map<String, Object> values, ConfigurableEnvironment environment, String key) {
+        if (values.containsKey(key)) {
+            var value = json(values.get(key));
+            String resolved = value.isNull() ? null : value.isTextual() ? value.textValue()
+                    : new String(DdcConfigCanonicalJson.canonicalBytes(value), StandardCharsets.UTF_8);
+            return new ValueVO(true, value, resolved);
+        }
+        return new ValueVO(false, null, environment.getProperty(key));
+    }
+
+    private void commitPrepared(DdcDynamicPropertySource.Snapshot previous, DdcDynamicPropertySource.Snapshot candidate,
+            @Nullable DdcConfigurationPropertiesRebinder.PreparedRebind beans,
+            @Nullable DdcFieldBindingService.PreparedRefresh fields, List<PreparedLeaf> leaves) {
+        int attempted = 0;
+        propertySource.replace(candidate);
+        try {
+            if (beans != null) beans.commit();
+            if (fields != null) fields.commit();
+            for (var leaf : leaves) { attempted++; leaf.commit(); }
+        } catch (RuntimeException failure) {
+            propertySource.replace(previous);
+            for (int index = attempted - 1; index >= 0; index--) {
+                try { leaves.get(index).rollback(); }
+                catch (RuntimeException rollbackFailure) { rollbackIncomplete = true; failure.addSuppressed(rollbackFailure); }
+            }
+            if (fields != null) try { fields.rollback(); }
+            catch (RuntimeException rollbackFailure) { rollbackIncomplete = true; failure.addSuppressed(rollbackFailure); }
+            if (beans != null) try { beans.rollback(); }
+            catch (RuntimeException rollbackFailure) { rollbackIncomplete = true; failure.addSuppressed(rollbackFailure); }
+            if (rollbackIncomplete) throw new IllegalStateException("CONFIG_HOT_ROLLBACK_FAILED", failure);
+            throw failure;
+        }
+    }
+
+    private ConfigurableEnvironment preview(DdcDynamicPropertySource.Snapshot snapshot) {
+        var result = new StandardEnvironment();
+        for (var source : result.getPropertySources()) result.getPropertySources().remove(source.getName());
+        result.setConversionService(environment.getConversionService());
+        result.setActiveProfiles(environment.getActiveProfiles());
+        result.setDefaultProfiles(environment.getDefaultProfiles());
+        for (var source : environment.getPropertySources()) {
+            if (!"configurationProperties".equals(source.getName())) result.getPropertySources().addLast(previewSource(source, snapshot));
+        }
+        return result;
+    }
+
+    private PropertySource<?> previewSource(PropertySource<?> source, DdcDynamicPropertySource.Snapshot snapshot) {
+        if (source == propertySource) return new DdcDynamicPropertySource(source.getName(), snapshot);
+        if (source instanceof CompositePropertySource composite) {
+            var copied = new CompositePropertySource(source.getName());
+            for (var nested : composite.getPropertySources()) copied.addPropertySource(previewSource(nested, snapshot));
+            return copied;
+        }
+        return source;
+    }
+
+    private static JsonNode json(Object value) {
+        var factory = JsonNodeFactory.instance;
+        if (value == null) return factory.nullNode();
+        if (value instanceof JsonNode node) return node.deepCopy();
+        if (value instanceof String text) return factory.textNode(text);
+        if (value instanceof Boolean flag) return factory.booleanNode(flag);
+        if (value instanceof BigDecimal number) return factory.numberNode(number);
+        if (value instanceof BigInteger number) return factory.numberNode(number);
+        if (value instanceof Byte || value instanceof Short || value instanceof Integer) return factory.numberNode(((Number) value).intValue());
+        if (value instanceof Long number) return factory.numberNode(number);
+        if (value instanceof Float || value instanceof Double) return factory.numberNode(((Number) value).doubleValue());
+        if (value instanceof Map<?, ?> map) {
+            var result = factory.objectNode();
+            map.forEach((key, item) -> { if (!(key instanceof String text)) throw new IllegalArgumentException("CONFIG_HOT_JSON_INVALID"); result.set((String) key, json(item)); });
+            return result;
+        }
+        if (value instanceof List<?> list) {
+            var result = factory.arrayNode();
+            list.forEach(item -> result.add(json(item)));
+            return result;
+        }
+        throw new IllegalArgumentException("CONFIG_HOT_JSON_INVALID");
+    }
+
+    /** A prepared participant validates without mutation, then commits and can restore its actual prior runtime state. */
+    public interface PreparedLeaf {
+        void commit();
+        void rollback();
+    }
+
+    public interface TypedLeafApplier extends DdcConfigApplier {
+        PreparedLeaf prepare(String key, ValueVO next, ValueVO previous, DdcConfigBaselineVO.RuleVO rule, long version);
+        default boolean supportsExplicitNull() { return false; }
+        default boolean supportsSchema(String schemaRef) { return false; }
+        @Override default void apply(String key, @Nullable String value, long version) {
+            throw new IllegalStateException("CONFIG_HOT_TYPED_ENTRY_REQUIRED");
+        }
+    }
+
+    public record ValueVO(boolean present, @Nullable JsonNode value, @Nullable String resolvedValue) {
+        public ValueVO {
+            if (present != (value != null)) throw new IllegalArgumentException("CONFIG_HOT_VALUE_PRESENCE_INVALID");
+            value = value == null ? null : value.deepCopy();
+        }
+        @Override public JsonNode value() { return value == null ? null : value.deepCopy(); }
     }
 
     /**
@@ -433,10 +728,10 @@ public class DdcYamlConfigApplier implements SmartInitializingSingleton {
                         previous.version()
                 );
             } catch (RuntimeException rollbackFailure) {
-                LOGGER.warn(
-                        "Tianshu config leaf rollback failed for key={}",
+                log.warn(
+                        "Tianshu config leaf rollback failed for key={} failureType={}",
                         applied.key(),
-                        rollbackFailure
+                        rollbackFailure.getClass().getSimpleName()
                 );
             }
         }
@@ -446,7 +741,8 @@ public class DdcYamlConfigApplier implements SmartInitializingSingleton {
         try {
             rebinder.rebind(diff.changedKeys(), Set.of());
         } catch (RuntimeException rollbackFailure) {
-            LOGGER.warn("Tianshu configuration properties rollback failed", rollbackFailure);
+            log.warn("Tianshu configuration properties rollback failed; failureType={}",
+                    rollbackFailure.getClass().getSimpleName());
         }
     }
 
@@ -460,10 +756,10 @@ public class DdcYamlConfigApplier implements SmartInitializingSingleton {
         try {
             eventPublisher.publishEvent(event);
         } catch (RuntimeException exception) {
-            LOGGER.warn(
-                    "Tianshu configuration change listener failed for version={}",
+            log.warn(
+                    "Tianshu configuration change listener failed for version={} failureType={}",
                     event.version(),
-                    exception
+                    exception.getClass().getSimpleName()
             );
         }
     }

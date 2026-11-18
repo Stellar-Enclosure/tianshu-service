@@ -72,14 +72,27 @@ public final class DdcConfigCanonicalJson {
 
     public static String contentSha256(DdcConfigSnapshotDTO snapshot) {
         Objects.requireNonNull(snapshot, "snapshot");
+        return contentDigest(snapshot.getSchemaVersion(), snapshot.getScope(), snapshot.getReleaseRevision(),
+                snapshot.getEnabled(), snapshot.getRestartDigest(), snapshot.getHotValues(), snapshot.getDependencySnapshotId());
+    }
+
+    /** Baseline HOT seed and HTTP snapshot use one fixed content digest contract. */
+    public static String contentSha256(DdcConfigBaselineVO baseline) {
+        Objects.requireNonNull(baseline, "baseline");
+        return contentDigest(baseline.getSchemaVersion(), baseline.getScope(), baseline.getSource().getRevision(),
+                baseline.getEnabled(), baseline.getRestartDigest(), baseline.getHotSeed(), baseline.getDependencySnapshotId());
+    }
+
+    private static String contentDigest(String schemaVersion, DdcConfigScopeVO scope, String revision,
+            boolean enabled, String restartDigest, Map<String, JsonNode> hotValues, String dependencySnapshotId) {
         ObjectNode content = MAPPER.createObjectNode();
-        content.put("schemaVersion", snapshot.getSchemaVersion());
-        content.set("scope", scope(snapshot.getScope()));
-        content.put("releaseRevision", snapshot.getReleaseRevision());
-        content.put("enabled", snapshot.getEnabled());
-        content.put("restartDigest", snapshot.getRestartDigest());
-        content.set("hotValues", values(snapshot.getHotValues()));
-        content.put("dependencySnapshotId", snapshot.getDependencySnapshotId());
+        content.put("schemaVersion", schemaVersion);
+        content.set("scope", scope(scope));
+        content.put("releaseRevision", revision);
+        content.put("enabled", enabled);
+        content.put("restartDigest", restartDigest);
+        content.set("hotValues", values(hotValues));
+        content.put("dependencySnapshotId", dependencySnapshotId);
         return digest(content);
     }
 

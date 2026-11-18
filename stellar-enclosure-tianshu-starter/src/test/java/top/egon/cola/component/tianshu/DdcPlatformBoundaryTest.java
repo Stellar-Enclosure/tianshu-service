@@ -1,6 +1,7 @@
 package top.egon.cola.component.tianshu;
 
 import org.junit.jupiter.api.Test;
+import top.egon.cola.component.tianshu.autoconfigure.DdcAutoConfiguration;
 import org.springframework.lang.Nullable;
 import top.egon.cola.component.tianshu.api.client.DdcConfigClient;
 import top.egon.cola.component.tianshu.api.client.DdcManagementClient;
@@ -41,6 +42,7 @@ class DdcPlatformBoundaryTest {
                     "annotation",
                     "api",
                     "autoconfigure",
+                    "configdata",
                     "environment",
                     "error",
                     "format",
@@ -142,9 +144,6 @@ class DdcPlatformBoundaryTest {
         assertMissing("top.egon.cola.component.tianshu.bootstrap.DdcBootstrapClient");
         assertMissing("top.egon.cola.component.tianshu.common.DdcKeys");
         assertMissing("top.egon.cola.component.tianshu.configdata.DdcConfigDataFetcher");
-        assertMissing("top.egon.cola.component.tianshu.configdata.DdcConfigDataLoader");
-        assertMissing("top.egon.cola.component.tianshu.configdata.DdcConfigDataLocationResolver");
-        assertMissing("top.egon.cola.component.tianshu.configdata.DdcConfigDataResource");
         assertMissing("top.egon.cola.component.tianshu.client.config.Http"
                 + "DdcConfigClient");
         assertMissing("top.egon.cola.component.tianshu.client.registry.Http"
@@ -154,6 +153,21 @@ class DdcPlatformBoundaryTest {
         assertMissing("top.egon.cola.component.tianshu.model.client.DdcClientTransportSecurity");
         assertMissing("top.egon.cola.component.tianshu.model.client.DdcManagementClientProperties");
         assertMissing("top.egon.cola.component.tianshu.error.http.DdcOpenApiRequestException");
+    }
+
+    @Test
+    void starterPackagesLocalConfigDataAndDoesNotOwnTheLegacyRemoteFetcher() throws Exception {
+        String base = "top.egon.cola.component.tianshu.configdata.";
+        var localLoader = Class.forName(base + "DdcConfigDataLoader");
+        var localResource = Class.forName(base + "DdcConfigDataResource");
+        var localResolver = Class.forName(base + "DdcConfigDataLocationResolver");
+        assertThat(localLoader.getProtectionDomain().getCodeSource())
+                .isEqualTo(DdcAutoConfiguration.class.getProtectionDomain().getCodeSource());
+        assertThat(localResource.getProtectionDomain().getCodeSource())
+                .isEqualTo(localLoader.getProtectionDomain().getCodeSource());
+        assertThat(localResolver.getProtectionDomain().getCodeSource())
+                .isEqualTo(localLoader.getProtectionDomain().getCodeSource());
+        assertMissing(base + "DdcConfigDataFetcher");
     }
 
     @Test

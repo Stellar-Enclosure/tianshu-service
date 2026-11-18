@@ -1,15 +1,29 @@
 package top.egon.cola.component.tianshu.service.refresh;
 
+import lombok.extern.slf4j.Slf4j;
+
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.boot.context.properties.ConfigurationPropertiesBean;
 import org.springframework.boot.context.properties.ConfigurationPropertiesBindingPostProcessor;
 import org.springframework.boot.context.properties.bind.BindMethod;
+import org.springframework.boot.context.properties.bind.Bindable;
+import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.bind.BindHandler;
+import org.springframework.boot.context.properties.bind.PropertySourcesPlaceholdersResolver;
+import org.springframework.boot.context.properties.bind.handler.NoUnboundElementsBindHandler;
+import org.springframework.boot.context.properties.bind.validation.ValidationBindHandler;
+import org.springframework.boot.context.properties.ConfigurationPropertiesBindHandlerAdvisor;
+import org.springframework.boot.context.properties.source.ConfigurationPropertySources;
+import org.springframework.boot.convert.ApplicationConversionService;
 import org.springframework.boot.context.properties.source.ConfigurationPropertyName;
 import org.springframework.context.ApplicationContext;
 import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.core.env.Environment;
 import org.springframework.util.ClassUtils;
+import org.springframework.util.ReflectionUtils;
+import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
+import org.springframework.validation.beanvalidation.SpringValidatorAdapter;
 import top.egon.cola.component.tianshu.annotation.DdcRefreshable;
 
 import java.beans.PropertyDescriptor;
@@ -18,6 +32,11 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
+import java.util.Collections;
+import java.math.BigDecimal;
+import java.math.BigInteger;
 
 /**
  * 发现并重新绑定允许动态刷新的 Spring Boot 配置属性 Bean。
@@ -30,6 +49,7 @@ import java.util.Set;
  * participate in refresh. A removed key without a fallback value from another property source prevents rebinding,
  * avoiding writes of missing values into mutable Beans.</p>
  */
+@Slf4j
 public class DdcConfigurationPropertiesRebinder
         implements SmartInitializingSingleton {
 
@@ -96,7 +116,7 @@ public class DdcConfigurationPropertiesRebinder
                     bean.getInstance(),
                     ConfigurationPropertyName.of(
                             bean.getAnnotation().prefix()
-                    )
+                    ), bean
             ));
         }
         refreshableBeans = List.copyOf(candidates);
@@ -113,6 +133,8 @@ public class DdcConfigurationPropertiesRebinder
     public Set<String> rebind(Set<String> changedKeys,
                               Set<String> removedKeys) {
         Set<String> refreshedKeys = new LinkedHashSet<>();
+        List<BeanChange> attempted = new ArrayList<>();
+        try {
         for (RefreshableBean bean : refreshableBeans) {
             Set<String> matchingKeys = matchingKeys(
                     bean.prefix(),
@@ -125,6 +147,7 @@ public class DdcConfigurationPropertiesRebinder
             )) {
                 continue;
             }
+            attempted.add(new BeanChange(bean.instance(), copyBean(bean.instance()), null));
             bindingPostProcessor.postProcessBeforeInitialization(
                     bean.instance(),
                     bean.name()
@@ -132,7 +155,202 @@ public class DdcConfigurationPropertiesRebinder
             refreshedKeys.addAll(matchingKeys);
         }
         return Set.copyOf(refreshedKeys);
+        } catch (RuntimeException failure) {
+            restore(attempted, failure);
+            throw failure;
+        }
     }
+
+    /** Prefix ownership is deliberately wider than capability, so explicit null cannot leak to an ordinary consumer. */
+    public boolean consumesKey(String key) {
+        return refreshableBeans.stream().anyMatch(bean -> !matchingKeys(bean.prefix(), Set.of(key)).isEmpty());
+    }
+
+    public boolean supportsKey(String key) {
+        return refreshableBeans.stream().anyMatch(bean -> propertyPath(bean, key) != null);
+    }
+
+    /** Bind and validate isolated copies. No live Bean or live property source is changed during preparation. */
+    public PreparedRebind prepare(Environment candidate, Set<String> changedKeys, Set<String> removedKeys) {
+        List<BeanChange> changes = new ArrayList<>();
+        Set<String> refreshed = new LinkedHashSet<>();
+        var conversion = new ApplicationConversionService();
+        ApplicationConversionService.addBeans(conversion, applicationContext);
+        var binder = new Binder(ConfigurationPropertySources.get(candidate),
+                new PropertySourcesPlaceholdersResolver(candidate), conversion);
+        LocalValidatorFactoryBean ownedValidator = null;
+        var jakartaValidator = applicationContext.getBeanProvider(jakarta.validation.Validator.class).getIfAvailable();
+        if (jakartaValidator == null) {
+            ownedValidator = new LocalValidatorFactoryBean();
+            ownedValidator.setApplicationContext(applicationContext);
+            ownedValidator.afterPropertiesSet();
+            jakartaValidator = ownedValidator;
+        }
+        try {
+            for (var bean : refreshableBeans) {
+                var matching = matchingKeys(bean.prefix(), changedKeys);
+                if (matching.isEmpty()) continue;
+                for (var key : matching) {
+                    if (propertyPath(bean, key) == null) throw new IllegalStateException("CONFIG_HOT_CONSUMER_UNKNOWN");
+                    if (removedKeys.contains(key) && candidate.getProperty(key) == null) {
+                        throw new IllegalStateException("CONFIG_HOT_REMOVAL_REQUIRES_RESTART");
+                    }
+                }
+                Object previous = copyBean(bean.instance());
+                Object prepared = copyBean(bean.instance());
+                BindHandler handler = BindHandler.DEFAULT;
+                if (!bean.descriptor().getAnnotation().ignoreUnknownFields()) handler = new NoUnboundElementsBindHandler(handler);
+                var validators = new ArrayList<org.springframework.validation.Validator>();
+                validators.add(new SpringValidatorAdapter(jakartaValidator));
+                if (applicationContext.containsBean("configurationPropertiesValidator")) {
+                    validators.add(applicationContext.getBean("configurationPropertiesValidator", org.springframework.validation.Validator.class));
+                }
+                handler = new ValidationBindHandler(handler, validators.toArray(org.springframework.validation.Validator[]::new));
+                for (var advisor : applicationContext.getBeanProvider(ConfigurationPropertiesBindHandlerAdvisor.class).orderedStream().toList()) {
+                    handler = advisor.apply(handler);
+                }
+                binder.bind(bean.prefix(), Bindable.ofInstance(prepared)
+                        .withAnnotations(bean.descriptor().asBindTarget().getAnnotations()), handler);
+                var validated = AnnotatedElementUtils.findMergedAnnotation(ClassUtils.getUserClass(bean.instance()),
+                        org.springframework.validation.annotation.Validated.class);
+                if (validated == null) validated = bean.descriptor().asBindTarget()
+                        .getAnnotation(org.springframework.validation.annotation.Validated.class);
+                var groups = validated == null ? new Class<?>[0] : validated.value();
+                var violations = jakartaValidator.validate(prepared, groups);
+                if (!violations.isEmpty()) throw new jakarta.validation.ConstraintViolationException(violations);
+                if (applicationContext.containsBean("configurationPropertiesValidator")) {
+                    var custom = applicationContext.getBean("configurationPropertiesValidator", org.springframework.validation.Validator.class);
+                    if (custom.supports(prepared.getClass())) {
+                        var errors = new org.springframework.validation.BeanPropertyBindingResult(prepared, bean.name());
+                        if (custom instanceof org.springframework.validation.SmartValidator smart) smart.validate(prepared, errors, (Object[]) groups);
+                        else custom.validate(prepared, errors);
+                        if (errors.hasErrors()) throw new IllegalArgumentException("CONFIG_HOT_BEAN_VALIDATION_FAILED");
+                    }
+                }
+                changes.add(new BeanChange(bean.instance(), previous, prepared));
+                refreshed.addAll(matching);
+            }
+            return new PreparedRebind(changes, refreshed);
+        } finally {
+            if (ownedValidator != null) ownedValidator.close();
+        }
+    }
+
+    public static final class PreparedRebind {
+        private final List<BeanChange> changes;
+        private final Set<String> refreshed;
+        private int attempted;
+
+        private PreparedRebind(List<BeanChange> changes, Set<String> refreshed) {
+            this.changes = List.copyOf(changes);
+            this.refreshed = Set.copyOf(refreshed);
+        }
+        public Set<String> refreshedKeys() { return refreshed; }
+        public void commit() {
+            for (var change : changes) {
+                attempted++;
+                BeanUtils.copyProperties(change.prepared(), change.instance());
+            }
+        }
+        public void rollback() {
+            var failure = new IllegalStateException("CONFIG_HOT_ROLLBACK_FAILED");
+            restore(changes.subList(0, attempted), failure);
+            attempted = 0;
+            if (failure.getSuppressed().length != 0) throw failure;
+        }
+    }
+
+    private static void restore(List<BeanChange> changes, RuntimeException failure) {
+        for (int index = changes.size() - 1; index >= 0; index--) {
+            var change = changes.get(index);
+            try { BeanUtils.copyProperties(change.previous(), change.instance()); }
+            catch (RuntimeException rollbackFailure) { failure.addSuppressed(rollbackFailure); }
+        }
+    }
+
+    private String propertyPath(RefreshableBean bean, String key) {
+        if (matchingKeys(bean.prefix(), Set.of(key)).isEmpty()) return null;
+        String prefix = bean.prefix().toString();
+        String path = prefix.isEmpty() ? key : key.length() > prefix.length() ? key.substring(prefix.length() + 1) : "";
+        if (path.isBlank()) return null;
+        Class<?> type = ClassUtils.getUserClass(bean.instance());
+        StringBuilder resolved = new StringBuilder();
+        String[] elements = path.split("\\.");
+        for (int index = 0; index < elements.length; index++) {
+            PropertyDescriptor found = null;
+            for (var descriptor : BeanUtils.getPropertyDescriptors(type)) {
+                if (relaxed(descriptor.getName()).equals(relaxed(elements[index]))) { found = descriptor; break; }
+            }
+            if (found == null || found.getReadMethod() == null || found.getWriteMethod() == null) return null;
+            if (!resolved.isEmpty()) resolved.append('.');
+            resolved.append(found.getName());
+            type = found.getPropertyType();
+        }
+        return resolved.toString();
+    }
+
+    private static String relaxed(String value) { return value.replace("-", "").replace("_", "").toLowerCase(java.util.Locale.ROOT); }
+
+    /** Deeply detached JavaBean state; unsupported runtime resources are never silently shared into a HOT preview. */
+    private static Object copyBean(Object value) { return copyValue(value, new IdentityHashMap<>(), 0); }
+
+    private static Object copyValue(Object value, IdentityHashMap<Object, Object> copies, int depth) {
+        if (value == null || immutable(value.getClass())) return value;
+        if (depth > 32 || copies.containsKey(value)) throw new IllegalStateException("CONFIG_HOT_BEAN_STATE_UNSUPPORTED");
+        if (value instanceof Map<?, ?> map) {
+            var result = new LinkedHashMap<>();
+            copies.put(value, result);
+            map.forEach((key, element) -> result.put(copyValue(key, copies, depth + 1), copyValue(element, copies, depth + 1)));
+            copies.remove(value);
+            return result;
+        }
+        if (value instanceof java.util.Collection<?> collection) {
+            java.util.Collection<Object> result = value instanceof Set<?> ? new LinkedHashSet<>() : new ArrayList<>();
+            copies.put(value, result);
+            for (var element : collection) result.add(copyValue(element, copies, depth + 1));
+            copies.remove(value);
+            return result;
+        }
+        if (value.getClass().isArray()) {
+            int length = java.lang.reflect.Array.getLength(value);
+            var result = java.lang.reflect.Array.newInstance(value.getClass().componentType(), length);
+            copies.put(value, result);
+            for (int index = 0; index < length; index++) java.lang.reflect.Array.set(result, index,
+                    copyValue(java.lang.reflect.Array.get(value, index), copies, depth + 1));
+            copies.remove(value);
+            return result;
+        }
+        if (value.getClass().getName().startsWith("java.") || value.getClass().isRecord()) {
+            throw new IllegalStateException("CONFIG_HOT_BEAN_STATE_UNSUPPORTED");
+        }
+        var result = BeanUtils.instantiateClass(ClassUtils.getUserClass(value));
+        copies.put(value, result);
+        for (var descriptor : BeanUtils.getPropertyDescriptors(ClassUtils.getUserClass(value))) {
+            if (descriptor.getReadMethod() == null || "class".equals(descriptor.getName())) continue;
+            ReflectionUtils.makeAccessible(descriptor.getReadMethod());
+            Object property = ReflectionUtils.invokeMethod(descriptor.getReadMethod(), value);
+            if (descriptor.getWriteMethod() == null) {
+                Object initial = ReflectionUtils.invokeMethod(descriptor.getReadMethod(), result);
+                if (!java.util.Objects.equals(property, initial) || property != null && !immutable(property.getClass())) {
+                    throw new IllegalStateException("CONFIG_HOT_BEAN_STATE_UNSUPPORTED");
+                }
+            } else {
+                ReflectionUtils.makeAccessible(descriptor.getWriteMethod());
+                ReflectionUtils.invokeMethod(descriptor.getWriteMethod(), result, copyValue(property, copies, depth + 1));
+            }
+        }
+        copies.remove(value);
+        return result;
+    }
+
+    private static boolean immutable(Class<?> type) {
+        return type.isPrimitive() || type.isEnum() || type == String.class || type == Boolean.class || type == Character.class
+                || type == Byte.class || type == Short.class || type == Integer.class || type == Long.class
+                || type == Float.class || type == Double.class || type == BigDecimal.class || type == BigInteger.class
+                || type.getName().startsWith("java.time.") || type == java.net.URI.class || type == java.util.UUID.class;
+    }
+
+    private record BeanChange(Object instance, Object previous, Object prepared) { }
 
     /**
      * 校验候选 Bean 使用可变 JavaBean 绑定并至少公开一个写方法。
@@ -224,7 +442,8 @@ public class DdcConfigurationPropertiesRebinder
     private record RefreshableBean(
             String name,
             Object instance,
-            ConfigurationPropertyName prefix
+            ConfigurationPropertyName prefix,
+            ConfigurationPropertiesBean descriptor
     ) {
     }
 }

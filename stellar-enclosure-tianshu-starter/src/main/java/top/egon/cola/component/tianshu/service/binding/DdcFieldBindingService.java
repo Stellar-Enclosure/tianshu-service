@@ -1,7 +1,10 @@
 package top.egon.cola.component.tianshu.service.binding;
 
+import lombok.extern.slf4j.Slf4j;
+
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.beans.factory.config.DependencyDescriptor;
+import org.springframework.core.env.Environment;
 import org.springframework.util.ClassUtils;
 import org.springframework.util.ReflectionUtils;
 import top.egon.cola.component.tianshu.annotation.DdcValue;
@@ -16,6 +19,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * 登记并重新解析使用 {@link DdcValue} 声明的可刷新字段。
@@ -29,7 +33,93 @@ import java.util.Set;
  * refreshable fields and invokes {@link ConfigurableListableBeanFactory#resolveDependency} after the dynamic
  * property source changes, preserving the same placeholder, SpEL, and type-conversion semantics.</p>
  */
+@Slf4j
 public class DdcFieldBindingService {
+
+    private static final Pattern HOT_EXPRESSION = Pattern.compile("\\$\\{([A-Za-z0-9][A-Za-z0-9._-]*)(?::([^{}]*))?}");
+
+    /** A precise, convertible placeholder is an explicit HOT field capability; arbitrary SpEL is not. */
+    public boolean supportsKey(String key) {
+        return registry.bindings().stream().anyMatch(binding -> {
+            var match = HOT_EXPRESSION.matcher(expression(binding));
+            return match.matches() && key.equals(match.group(1));
+        });
+    }
+
+    public boolean consumesKey(String key) {
+        return registry.bindings().stream().anyMatch(binding -> expression(binding).contains("${" + key + "}")
+                || expression(binding).contains("${" + key + ":"));
+    }
+
+    /** Resolve and convert every affected field against an isolated candidate, before writing any live field. */
+    public PreparedRefresh prepare(Environment candidate, Set<String> changedKeys) {
+        List<PendingWrite> pending = new ArrayList<>();
+        org.springframework.validation.beanvalidation.LocalValidatorFactoryBean ownedValidator = null;
+        var validator = beanFactory.getBeanProvider(jakarta.validation.Validator.class).getIfAvailable();
+        if (validator == null) {
+            ownedValidator = new org.springframework.validation.beanvalidation.LocalValidatorFactoryBean();
+            ownedValidator.setConstraintValidatorFactory(new org.springframework.validation.beanvalidation.SpringConstraintValidatorFactory(beanFactory));
+            ownedValidator.afterPropertiesSet();
+            validator = ownedValidator;
+        }
+        try {
+        for (var binding : registry.bindings()) {
+            var match = HOT_EXPRESSION.matcher(expression(binding));
+            if (!match.matches()) {
+                if (changedKeys.stream().anyMatch(key -> expression(binding).contains("${" + key + "}")
+                        || expression(binding).contains("${" + key + ":"))) {
+                    throw new IllegalStateException("CONFIG_HOT_FIELD_EXPRESSION_UNSUPPORTED");
+                }
+                continue;
+            }
+            if (!changedKeys.contains(match.group(1))) continue;
+            String resolved = candidate.resolveRequiredPlaceholders(expression(binding));
+            if (resolved.contains("#{")) throw new IllegalStateException("CONFIG_HOT_FIELD_EXPRESSION_UNSUPPORTED");
+            Object value = beanFactory.getTypeConverter().convertIfNecessary(resolved,
+                    binding.getField().getType(), binding.getField());
+            var beanType = ClassUtils.getUserClass(binding.getBean());
+            if (validator.getConstraintsForClass(beanType).hasConstraints()) {
+                throw new IllegalStateException("CONFIG_HOT_FIELD_VALIDATION_UNSUPPORTED");
+            }
+            var validated = org.springframework.core.annotation.AnnotatedElementUtils.findMergedAnnotation(beanType,
+                    org.springframework.validation.annotation.Validated.class);
+            var groups = validated == null ? new Class<?>[0] : validated.value();
+            var violations = validator.validateValue(beanType, binding.getField().getName(), value, groups);
+            if (!violations.isEmpty()) throw new jakarta.validation.ConstraintViolationException(violations);
+            Object previous = read(binding);
+            if (!Objects.equals(previous, value)) pending.add(new PendingWrite(binding, previous, value, expression(binding)));
+        }
+        return new PreparedRefresh(pending);
+        } finally { if (ownedValidator != null) ownedValidator.close(); }
+    }
+
+    public final class PreparedRefresh {
+        private final List<PendingWrite> writes;
+        private int attempted;
+
+        private PreparedRefresh(List<PendingWrite> writes) { this.writes = List.copyOf(writes); }
+
+        public void commit() {
+            for (var pending : writes) {
+                attempted++;
+                write(pending.binding(), pending.value());
+            }
+        }
+
+        public void rollback() {
+            RuntimeException failure = null;
+            for (int index = attempted - 1; index >= 0; index--) {
+                var pending = writes.get(index);
+                try { write(pending.binding(), pending.previousValue()); }
+                catch (RuntimeException problem) {
+                    if (failure == null) failure = new IllegalStateException("CONFIG_HOT_ROLLBACK_FAILED");
+                    failure.addSuppressed(problem);
+                }
+            }
+            attempted = 0;
+            if (failure != null) throw failure;
+        }
+    }
 
     /**
      * 保存当前活动字段绑定的注册表。 Registry storing currently active field bindings.

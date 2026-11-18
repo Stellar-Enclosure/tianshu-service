@@ -14,6 +14,7 @@ import jakarta.validation.constraints.Pattern;
 import lombok.Builder;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
+import org.springframework.lang.Nullable;
 import top.egon.cola.component.common.core.enums.EgonEnum;
 import top.egon.cola.component.tianshu.format.DdcConfigCanonicalJson;
 
@@ -41,6 +42,7 @@ public final class DdcConfigBaselineVO {
     private final String contentSha256;
     @NotBlank @Pattern(regexp = "sha256:[0-9a-f]{64}")
     private final String restartDigest;
+    private final String dependencySnapshotId;
     @NotNull @Valid
     private final List<@NotNull @Valid RuleVO> rules;
     @NotNull @Valid
@@ -67,6 +69,8 @@ public final class DdcConfigBaselineVO {
             @JsonDeserialize(using = DdcConfigCanonicalJson.WireStringDeserializer.class) String contentSha256,
             @JsonProperty(value = "restartDigest", required = true)
             @JsonDeserialize(using = DdcConfigCanonicalJson.WireStringDeserializer.class) String restartDigest,
+            @JsonProperty("dependencySnapshotId")
+            @JsonDeserialize(using = DdcConfigCanonicalJson.WireStringDeserializer.class) String dependencySnapshotId,
             @JsonProperty(value = "rules", required = true) List<RuleVO> rules,
             @JsonProperty(value = "targetBindings", required = true) List<TargetBindingVO> targetBindings,
             @JsonProperty(value = "restartValues", required = true) Map<String, JsonNode> restartValues,
@@ -81,6 +85,8 @@ public final class DdcConfigBaselineVO {
         this.enabled = Objects.requireNonNull(enabled, "CONFIG_ENABLED_REQUIRED");
         this.contentSha256 = DdcConfigSnapshotDTO.digest(contentSha256);
         this.restartDigest = DdcConfigSnapshotDTO.digest(restartDigest);
+        this.dependencySnapshotId = dependencySnapshotId == null ? null
+                : DdcConfigScopeVO.token(dependencySnapshotId, 256, "dependencySnapshotId");
         this.rules = List.copyOf(Objects.requireNonNull(rules, "CONFIG_RULES_REQUIRED"));
         var ruleKeys = new HashSet<String>();
         this.rules.forEach(rule -> {
@@ -189,6 +195,25 @@ public final class DdcConfigBaselineVO {
             this.schemaRef = schemaRef == null ? null : DdcConfigScopeVO.token(schemaRef, 256, "schemaRef");
             this.nullable = Objects.requireNonNull(nullable, "CONFIG_RULE_NULLABLE_REQUIRED");
             this.deletionAllowed = Objects.requireNonNull(deletionAllowed, "CONFIG_RULE_DELETION_ALLOWED_REQUIRED");
+        }
+
+        /** Evaluates type, explicit null, and deletion against this release's fixed key rule. */
+        public boolean acceptsValue(@Nullable JsonNode value) {
+            if (value == null) {
+                return deletionAllowed;
+            }
+            if (value.isNull()) {
+                return nullable;
+            }
+            return switch (valueType) {
+                case "STRING", "DECIMAL_STRING" -> value.isTextual();
+                case "BOOLEAN" -> value.isBoolean();
+                case "INTEGER" -> value.isIntegralNumber();
+                case "NUMBER" -> value.isNumber();
+                case "OBJECT" -> value.isObject();
+                case "ARRAY" -> value.isArray();
+                default -> false;
+            };
         }
 
         @JsonAnySetter
