@@ -5,18 +5,10 @@ import top.egon.cola.component.rpc.tianshu.contract.proto.v1.AiResourceQuery;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.AiSkillDraftUpload;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.AiSkillPublishRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.AiUsageReportBatch;
-import top.egon.cola.component.rpc.tianshu.contract.proto.v1.DeleteConfigRequest;
-import top.egon.cola.component.rpc.tianshu.contract.proto.v1.FindConfigRequest;
-import top.egon.cola.component.rpc.tianshu.contract.proto.v1.GetConfigClientsRequest;
-import top.egon.cola.component.rpc.tianshu.contract.proto.v1.GetInstancesRequest;
-import top.egon.cola.component.rpc.tianshu.contract.proto.v1.GetScopeBindingsRequest;
-import top.egon.cola.component.rpc.tianshu.contract.proto.v1.GetServiceKeysRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.ListSiCatalogRequest;
-import top.egon.cola.component.rpc.tianshu.contract.proto.v1.PublishConfigRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.RegisterManagedSiRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.ResolveSiResourceRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.SemanticSearchSiRequest;
-import top.egon.cola.component.rpc.tianshu.contract.proto.v1.UpsertConfigRequest;
 
 /**
  * 从已发布的 Tianshu unary protobuf 请求中提取鉴权作用域。
@@ -24,8 +16,6 @@ import top.egon.cola.component.rpc.tianshu.contract.proto.v1.UpsertConfigRequest
  */
 public final class DdcRpcScopeExtractor {
 
-    private static final String MANAGEMENT =
-            "egon.tianshu.v1.DdcManagementService/";
     private static final String AI_RESOURCE =
             "egon.tianshu.v1.DdcAiResourceService/";
     private static final String SI_RESOURCE =
@@ -38,29 +28,6 @@ public final class DdcRpcScopeExtractor {
                     "fullMethodName and request are required");
         }
         return switch (fullMethodName) {
-            case MANAGEMENT + "FindConfig" -> managementScope(
-                    type(request, FindConfigRequest.class).getScope());
-            case MANAGEMENT + "UpsertConfig" -> managementScope(
-                    type(request, UpsertConfigRequest.class).getScope());
-            case MANAGEMENT + "DeleteConfig" -> managementScope(
-                    type(request, DeleteConfigRequest.class).getScope());
-            case MANAGEMENT + "PublishConfig" -> managementScope(
-                    type(request, PublishConfigRequest.class).getScope());
-            case MANAGEMENT + "GetPublishTask",
-                 MANAGEMENT + "RetryPublishTask" -> Scope.unscoped(
-                    "MANAGEMENT");
-            case MANAGEMENT + "GetBiz",
-                 MANAGEMENT + "ListBizs",
-                 MANAGEMENT + "GetApp",
-                 MANAGEMENT + "ListApps" -> Scope.unscoped("MANAGEMENT");
-            case MANAGEMENT + "GetConfigClients" -> managementScope(
-                    type(request, GetConfigClientsRequest.class).getScope());
-            case MANAGEMENT + "GetScopeBindings" -> scopeBindingQuery(
-                    type(request, GetScopeBindingsRequest.class));
-            case MANAGEMENT + "GetServiceKeys" -> managementQuery(
-                    type(request, GetServiceKeysRequest.class));
-            case MANAGEMENT + "GetInstances" -> managementQuery(
-                    type(request, GetInstancesRequest.class));
             case AI_RESOURCE + "GetPrompt",
                  AI_RESOURCE + "GetSkill",
                  AI_RESOURCE + "GetVersionHead" -> aiReadScope(
@@ -98,11 +65,6 @@ public final class DdcRpcScopeExtractor {
             default -> throw new IllegalArgumentException(
                     "Unknown Tianshu RPC method");
         };
-    }
-
-    private Scope managementScope(
-            top.egon.cola.component.rpc.tianshu.contract.proto.v1.DdcScope scope) {
-        return required("MANAGEMENT", scope);
     }
 
     /**
@@ -152,64 +114,6 @@ public final class DdcRpcScopeExtractor {
                 query.getNamespaceCode());
     }
 
-    private Scope required(
-            String clientType,
-            top.egon.cola.component.rpc.tianshu.contract.proto.v1.DdcScope scope) {
-        if (scope == null
-                || !text(scope.getBizCode())
-                || !text(scope.getEnv())
-                || !text(scope.getAppCode())) {
-            throw new IllegalArgumentException(
-                    "bizCode, env and appCode scope are required");
-        }
-        return new Scope(
-                clientType,
-                scope.getAppCode(),
-                scope.getEnv(),
-                scope.getBizCode(),
-                null
-        );
-    }
-
-    private Scope scopeBindingQuery(GetScopeBindingsRequest request) {
-        if (!request.hasQuery()) {
-            throw new IllegalArgumentException("scope query is required");
-        }
-        var query = request.getQuery();
-        return new Scope(
-                "MANAGEMENT",
-                query.hasAppCode() ? query.getAppCode() : null,
-                query.hasEnv() ? query.getEnv() : null,
-                query.hasBizCode() ? query.getBizCode() : null
-        );
-    }
-
-    private Scope managementQuery(GetServiceKeysRequest request) {
-        if (!request.hasQuery()) {
-            throw new IllegalArgumentException("service query is required");
-        }
-        var query = request.getQuery();
-        return new Scope(
-                "MANAGEMENT",
-                query.hasAppCode() ? query.getAppCode() : null,
-                query.hasEnv() ? query.getEnv() : null,
-                query.hasBizCode() ? query.getBizCode() : null
-        );
-    }
-
-    private Scope managementQuery(GetInstancesRequest request) {
-        if (!request.hasQuery()) {
-            throw new IllegalArgumentException("service query is required");
-        }
-        var query = request.getQuery();
-        return new Scope(
-                "MANAGEMENT",
-                query.hasAppCode() ? query.getAppCode() : null,
-                query.hasEnv() ? query.getEnv() : null,
-                query.hasBizCode() ? query.getBizCode() : null
-        );
-    }
-
     private <T extends Message> T type(Message value, Class<T> expected) {
         if (!expected.isInstance(value)) {
             throw new IllegalArgumentException("Unexpected Tianshu RPC request type");
@@ -249,12 +153,5 @@ public final class DdcRpcScopeExtractor {
             this(clientType, appCode, env, bizCode, namespaceCode, null);
         }
 
-        public Scope(String clientType, String appCode, String env, String bizCode) {
-            this(clientType, appCode, env, bizCode, null, null);
-        }
-
-        private static Scope unscoped(String clientType) {
-            return new Scope(clientType, null, null, null, null, null);
-        }
     }
 }

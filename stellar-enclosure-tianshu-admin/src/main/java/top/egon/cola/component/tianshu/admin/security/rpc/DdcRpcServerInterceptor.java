@@ -352,7 +352,7 @@ public final class DdcRpcServerInterceptor implements ServerInterceptor {
         } catch (StatusRuntimeException rejected) {
             throw rejected;
         } catch (RuntimeException unavailable) {
-            if (write(operation)) {
+            if (operation != DdcRpcOperation.AI_READ) {
                 throw DdcRpcProviderExceptionMapper.status(
                         Status.UNAVAILABLE,
                         "TIANSHU_NONCE_STORE_UNAVAILABLE",
@@ -361,19 +361,6 @@ public final class DdcRpcServerInterceptor implements ServerInterceptor {
                 );
             }
         }
-    }
-
-    private boolean write(DdcRpcOperation operation) {
-        return switch (operation) {
-            case MANAGEMENT_CONFIG_READ,
-                 MANAGEMENT_TASK_READ,
-                 MANAGEMENT_INSTANCE_READ,
-                 MANAGEMENT_SCOPE_READ,
-                 MANAGEMENT_REGISTRY_READ,
-                 MANAGEMENT_CATALOG_READ,
-                 AI_READ -> false;
-            default -> true;
-        };
     }
 
     private boolean permitsNamespaces(Set<String> patterns, Set<String> namespaceCodes) {

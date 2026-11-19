@@ -312,15 +312,6 @@ egon:
                 biz-code-patterns: ${TIANSHU_RPC_RUNTIME_BIZ_CODE_PATTERNS:*}
                 namespace-patterns: ${TIANSHU_RPC_RUNTIME_NAMESPACE_PATTERNS:*}
                 allowed-operations: AI_READ,AI_REPORT
-              - credential-id: ${TIANSHU_RPC_MANAGEMENT_CREDENTIAL_ID:management}
-                access-key: ${TIANSHU_RPC_MANAGEMENT_ACCESS_KEY:}
-                secret: ${TIANSHU_RPC_MANAGEMENT_SECRET_KEY:}
-                client-type: MANAGEMENT
-                app-code-patterns: ${TIANSHU_RPC_MANAGEMENT_APP_CODE_PATTERNS:*}
-                env-patterns: ${TIANSHU_RPC_MANAGEMENT_ENV_PATTERNS:*}
-                biz-code-patterns: ${TIANSHU_RPC_MANAGEMENT_BIZ_CODE_PATTERNS:*}
-                namespace-patterns: ${TIANSHU_RPC_MANAGEMENT_NAMESPACE_PATTERNS:*}
-                allowed-operations: MANAGEMENT_CONFIG_READ,MANAGEMENT_CONFIG_WRITE,MANAGEMENT_PUBLISH,MANAGEMENT_TASK_READ,MANAGEMENT_TASK_RETRY,MANAGEMENT_INSTANCE_READ,MANAGEMENT_SCOPE_READ,MANAGEMENT_REGISTRY_READ,MANAGEMENT_CATALOG_READ
             allowed-clock-skew-seconds: 300
             nonce-cache-max-size: 10000
           publish:

@@ -4,7 +4,6 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import org.junit.jupiter.api.Test;
 import top.egon.cola.component.tianshu.admin.rpc.provider.DdcAiResourceRpcProvider;
-import top.egon.cola.component.tianshu.admin.rpc.provider.DdcManagementRpcProvider;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -21,9 +20,6 @@ import static org.mockito.Mockito.mock;
 /** The actual protocol adapters reject direct calls before any collaborator can be reached. */
 class DdcManagedEntryPointGuardTest {
     static final Map<Class<?>, Set<String>> INTERNAL_RPC = Map.of(
-            DdcManagementRpcProvider.class, Set.of("getBiz", "listBizs", "getApp", "listApps", "findConfig", "upsertConfig", "deleteConfig",
-                    "publishConfig", "getPublishTask", "retryPublishTask", "getConfigClients", "revokeResourceAdmission",
-                    "getScopeBindings", "getServiceKeys", "getInstances"),
             DdcAiResourceRpcProvider.class, Set.of("getPrompt", "getSkill", "reportUsage", "getVersionHead", "replaceSkillDraft", "publishSkillDraft"));
 
     @Test
@@ -49,6 +45,6 @@ class DdcManagedEntryPointGuardTest {
             }
             assertThat(actual).containsExactlyInAnyOrderElementsOf(entry.getValue());
         }
-        assertThat(covered).isEqualTo(21);
+        assertThat(covered).isEqualTo(6);
     }
 }

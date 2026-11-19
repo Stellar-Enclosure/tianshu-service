@@ -107,8 +107,6 @@ class DdcProfileParityTest {
         assertThat(adminProfile.getProperty(TIANSHU_PREFIX + "admin.rpc.credentials[0].allowed-operations"))
                 .isEqualTo("AI_READ,AI_REPORT");
         assertThat(adminProfile.getProperty(TIANSHU_PREFIX + "admin.rpc.credentials[1].client-type"))
-                .isEqualTo("MANAGEMENT");
-        assertThat(adminProfile.getProperty(TIANSHU_PREFIX + "admin.rpc.credentials[2].client-type"))
                 .isNull();
     }
 
