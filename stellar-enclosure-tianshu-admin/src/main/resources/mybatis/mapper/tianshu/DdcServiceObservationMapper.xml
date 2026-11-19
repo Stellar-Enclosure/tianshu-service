@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="top.egon.cola.component.tianshu.admin.dao.DdcServiceObservationMapper">
+    <resultMap id="Observation" type="top.egon.cola.component.tianshu.admin.model.po.DdcServiceObservationPO">
+        <id property="id" column="id"/>
+        <result property="tenantId" column="tenant_id"/>
+        <result property="createUserId" column="create_user_id"/>
+        <result property="createTime" column="create_time"/>
+        <result property="updateUserId" column="update_user_id"/>
+        <result property="updateTime" column="update_time"/>
+        <result property="deletedAt" column="deleted_at"/>
+        <result property="version" column="version"/>
+        <result property="identityTenantId" column="identity_tenant_id"/>
+        <result property="bindingId" column="binding_id"/>
+        <result property="bindingRevision" column="binding_revision"/>
+        <result property="bindingFingerprint" column="binding_fingerprint"/>
+        <result property="clusterId" column="cluster_id"/>
+        <result property="k8sNamespace" column="k8s_namespace"/>
+        <result property="serviceName" column="service_name"/>
+        <result property="serviceUid" column="service_uid"/>
+        <result property="portName" column="port_name"/>
+        <result property="servicePort" column="service_port"/>
+        <result property="writerEpoch" column="writer_epoch"/>
+        <result property="reportSeq" column="report_seq"/>
+        <result property="observedAt" column="observed_at"/>
+        <result property="validUntil" column="valid_until"/>
+        <result property="recordedAt" column="recorded_at"/>
+        <result property="viewJson" column="view_json" jdbcType="OTHER" typeHandler="top.egon.cola.component.tianshu.admin.dao.typehandler.DdcJsonbTypeHandler"/>
+    </resultMap>
+    <sql id="Columns">id, tenant_id, create_user_id, create_time, update_user_id, update_time, deleted_at, version, identity_tenant_id, binding_id, binding_revision, binding_fingerprint, cluster_id, k8s_namespace, service_name, service_uid, port_name, service_port, writer_epoch, report_seq, observed_at, valid_until, recorded_at, view_json</sql>
+    <sql id="Key">tenant_id = #{key.tenantId} AND binding_id = #{key.bindingId}
+        AND binding_revision = #{key.bindingRevision} AND deleted_at IS NULL</sql>
+    <select id="selectActive" resultMap="Observation">SELECT <include refid="Columns"/> FROM ddc_service_observation WHERE <include refid="Key"/></select>
+    <select id="selectActiveForUpdate" resultMap="Observation">SELECT <include refid="Columns"/> FROM ddc_service_observation WHERE <include refid="Key"/> FOR UPDATE</select>
+    <insert id="insertIfAbsent">
+        INSERT INTO ddc_service_observation (<include refid="Columns"/>) VALUES (
+            #{row.id}, #{row.tenantId}, #{row.createUserId}, #{row.createTime}, #{row.updateUserId}, #{row.updateTime}, NULL, 0, #{row.identityTenantId}, #{row.bindingId}, #{row.bindingRevision}, #{row.bindingFingerprint}, #{row.clusterId}, #{row.k8sNamespace}, #{row.serviceName}, #{row.serviceUid}, #{row.portName}, #{row.servicePort}, #{row.writerEpoch}, #{row.reportSeq}, #{row.observedAt}, #{row.validUntil}, #{row.recordedAt}, #{row.viewJson,jdbcType=OTHER,typeHandler=top.egon.cola.component.tianshu.admin.dao.typehandler.DdcJsonbTypeHandler})
+        ON CONFLICT (tenant_id, binding_id, binding_revision, deleted_at) DO NOTHING
+    </insert>
+    <update id="advance">
+        UPDATE ddc_service_observation SET observed_at = #{row.observedAt}, valid_until = #{row.validUntil},
+            recorded_at = #{row.recordedAt}, writer_epoch = #{row.writerEpoch}, report_seq = #{row.reportSeq},
+            view_json = #{row.viewJson,jdbcType=OTHER,typeHandler=top.egon.cola.component.tianshu.admin.dao.typehandler.DdcJsonbTypeHandler},
+            update_user_id = #{row.updateUserId}, update_time = #{row.updateTime}, version = version + 1
+        WHERE tenant_id = #{row.tenantId} AND id = #{row.id} AND version = #{expectedVersion} AND deleted_at IS NULL
+            AND identity_tenant_id = #{row.identityTenantId} AND binding_id = #{row.bindingId}
+            AND binding_revision = #{row.bindingRevision} AND binding_fingerprint = #{row.bindingFingerprint}
+            AND cluster_id = #{row.clusterId} AND k8s_namespace = #{row.k8sNamespace}
+            AND service_name = #{row.serviceName} AND service_uid = #{row.serviceUid}
+            AND port_name = #{row.portName} AND service_port = #{row.servicePort}
+            AND writer_epoch = #{expectedEpoch} AND report_seq = #{expectedSeq}
+            AND (#{row.writerEpoch} &gt; #{expectedEpoch}
+                OR (#{row.writerEpoch} = #{expectedEpoch} AND #{row.reportSeq} &gt; #{expectedSeq}))
+    </update>
+</mapper>

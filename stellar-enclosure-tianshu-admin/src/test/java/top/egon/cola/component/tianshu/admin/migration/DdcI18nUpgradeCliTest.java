@@ -94,14 +94,16 @@ class DdcI18nUpgradeCliTest {
         try (var validators = Validation.buildDefaultValidatorFactory()) {
             ValidationUtils validation = new ValidationUtils(validators.getValidator());
             var environment = environment();
-            var current = bind(environment);
-            var previous = bind(environment);
+            var current = DdcPersistenceMigrationCli.propertiesForMode(DdcPersistenceMigrationCli.Mode.UPGRADE_I18N, bind(environment));
+            var previous = DdcPersistenceMigrationCli.propertiesForMode(DdcPersistenceMigrationCli.Mode.UPGRADE_I18N, bind(environment));
+            var original = new java.util.LinkedHashMap<>(current.getTables());
             var loader = loader(environment, validation);
             var validator = new EgonColaShardingTopologyValidator(validation);
             var currentTopology = validator.validate(current, loader.load(current));
             var previousTopology = DdcPersistenceMigrationCli.priorI18nTopology(current, previous, currentTopology, loader, validator);
-            assertThat(current.getTables()).containsKey("ddc_i18n_page").hasSize(35);
-            assertThat(previous.getTables()).doesNotContainKey("ddc_i18n_page").hasSize(34);
+            assertThat(current.getTables()).containsKey("ddc_i18n_page").isEqualTo(original);
+            original.remove("ddc_i18n_page");
+            assertThat(previous.getTables()).isEqualTo(original);
             assertThat(previousTopology.profiles()).doesNotContainKey("ddc_i18n_page");
             assertThat(currentTopology.profiles()).containsKey("ddc_i18n_page");
             assertThat(previousTopology.fingerprint()).isNotEqualTo(currentTopology.fingerprint());

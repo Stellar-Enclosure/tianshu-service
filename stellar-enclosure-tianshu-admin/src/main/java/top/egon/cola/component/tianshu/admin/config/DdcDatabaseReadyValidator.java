@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.SmartInitializingSingleton;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.core.io.support.ResourcePatternResolver;
@@ -33,7 +34,7 @@ import java.util.TreeMap;
 /** Fails application startup unless the managed Tianshu and Outbox schemas are already ready. */
 @Slf4j
 @Component("ddcDatabaseReadyValidator")
-@RequiredArgsConstructor
+@RequiredArgsConstructor(onConstructor_ = @Autowired)
 public class DdcDatabaseReadyValidator implements SmartInitializingSingleton {
 
     private static final String TIANSHU_MANIFEST = "db/egon-mp/repository-manifest.json";
@@ -231,6 +232,7 @@ public class DdcDatabaseReadyValidator implements SmartInitializingSingleton {
         validateManifestResourceChecksum(manifest);
         boolean cloudDelivery = DdcCloudDeliveryReadyValidator.isIncludedIn(manifest);
         boolean nativeRollout = DdcCloudDeliveryReadyValidator.includesNativeRollout(manifest);
+        boolean serviceObservation = DdcCloudDeliveryReadyValidator.includesServiceObservation(manifest);
 
         try (Connection connection = primary.getConnection()) {
             connection.setSchema("public");
@@ -252,6 +254,9 @@ public class DdcDatabaseReadyValidator implements SmartInitializingSingleton {
             }
             if (nativeRollout) {
                 DdcCloudDeliveryReadyValidator.validateNativeRollout(connection);
+            }
+            if (serviceObservation) {
+                DdcCloudDeliveryReadyValidator.validateServiceObservation(connection);
             }
             validateHistory(connection, manifest, routeFingerprint);
         } catch (SQLException failure) {

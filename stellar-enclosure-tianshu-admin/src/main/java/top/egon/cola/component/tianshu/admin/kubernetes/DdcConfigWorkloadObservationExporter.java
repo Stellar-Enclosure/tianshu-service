@@ -62,7 +62,8 @@ public class DdcConfigWorkloadObservationExporter implements SmartLifecycle, Aut
                 throw new IllegalArgumentException("TIANSHU_CONFIG_OBSERVATION_EXPORT_INTERVAL_INVALID");
             }
             List<BindingVO> approved = List.copyOf(bindings.bindings());
-            if (approved.isEmpty() || approved.size() > 128) throw new IllegalArgumentException("TIANSHU_CONFIG_OBSERVATION_BINDINGS_INVALID");
+            if (approved.isEmpty()) return;
+            if (approved.size() > 128) throw new IllegalArgumentException("TIANSHU_CONFIG_OBSERVATION_BINDINGS_INVALID");
             Set<List<String>> keys = new HashSet<>();
             for (var binding : approved) {
                 var target = binding.target();

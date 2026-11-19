@@ -17,7 +17,17 @@ import static org.mockito.Mockito.times;
 class DdcRedisAutoConfigurationTest {
 
     @Test
-    void createsOneSharedClientWhenConfigurationAndRegistryAreEnabled() {
+    void supportedSdkClasspathContainsOnlyExplicitRedisRuntime() {
+        var loader = DdcRedisAutoConfigurationTest.class.getClassLoader();
+        assertThat(loader.getResource("org/redisson/api/RedissonClient.class")).isNotNull();
+        assertThat(loader.getResource("org/redisson/spring/starter/RedissonAutoConfigurationV2.class")).isNull();
+        assertThat(loader.getResource("org/redisson/spring/starter/RedissonAutoConfigurationV4.class")).isNull();
+        assertThat(loader.getResource("org/springframework/data/redis/core/RedisTemplate.class")).isNull();
+        assertThat(loader.getResource("org/redisson/spring/data/connection/RedissonConnectionFactory.class")).isNull();
+    }
+
+    @Test
+    void retiredConfigurationAndRegistrySwitchesCannotCreateRedisClient() {
         RedissonClient client = mock(RedissonClient.class);
 
         try (MockedStatic<Redisson> redisson = mockStatic(Redisson.class)) {
@@ -33,14 +43,12 @@ class DdcRedisAutoConfigurationTest {
                             "egon.cola.component.tianshu.registry.enabled=true"
                     )
                     .run(context -> {
-                        assertThat(context).hasSingleBean(RedissonClient.class);
-                        assertThat(context.getBean("ddcRedissonClient"))
-                                .isSameAs(client);
+                        assertThat(context).hasNotFailed().doesNotHaveBean(RedissonClient.class);
                     });
 
             redisson.verify(
                     () -> Redisson.create(any(Config.class)),
-                    times(1)
+                    times(0)
             );
         }
     }
@@ -56,7 +64,8 @@ class DdcRedisAutoConfigurationTest {
                     .withPropertyValues(
                             "egon.cola.component.tianshu.tenant-id=42",
                             "egon.cola.component.tianshu.redis.username=tenant-42",
-                            "egon.cola.component.tianshu.ai.skill.workspace.subscription-enabled=true"
+                            "egon.cola.component.tianshu.ai.skill.workspace.subscription-enabled=true",
+                            "egon.cola.component.tianshu.delivery.enabled=true"
                     )
                     .run(context -> assertThat(context.getBean("ddcRedissonClient")).isSameAs(client));
         }
@@ -69,4 +78,29 @@ class DdcRedisAutoConfigurationTest {
                 .withPropertyValues("egon.cola.component.tianshu.ai.skill.workspace.enabled=true")
                 .run(context -> assertThat(context).doesNotHaveBean("ddcRedissonClient"));
     }
+    @Test
+    void workspaceSubscriptionRetainsDedicatedClientAndRequiresTenantAuthority() {
+        var client = mock(RedissonClient.class);
+        new ApplicationContextRunner().withConfiguration(AutoConfigurations.of(DdcRedisAutoConfiguration.class))
+                .withBean("ddcRedissonClient", RedissonClient.class, () -> client)
+                .withPropertyValues("egon.cola.component.tianshu.ai.skill.workspace.subscription-enabled=true")
+                .run(context -> assertThat(context).hasNotFailed().getBean("ddcRedissonClient").isSameAs(client));
+        new ApplicationContextRunner().withConfiguration(AutoConfigurations.of(DdcRedisAutoConfiguration.class))
+                .withPropertyValues("egon.cola.component.tianshu.ai.skill.workspace.subscription-enabled=true",
+                        "egon.cola.component.tianshu.redis.username=tenant-42")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure()).hasRootCauseMessage(
+                            "egon.cola.component.tianshu.tenant-id must be a positive Long");
+                });
+        new ApplicationContextRunner().withConfiguration(AutoConfigurations.of(DdcRedisAutoConfiguration.class))
+                .withPropertyValues("egon.cola.component.tianshu.ai.skill.workspace.subscription-enabled=true",
+                        "egon.cola.component.tianshu.tenant-id=42")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure()).hasRootCauseMessage(
+                            "egon.cola.component.tianshu.redis.username is required when Redis is enabled");
+                });
+    }
+
 }

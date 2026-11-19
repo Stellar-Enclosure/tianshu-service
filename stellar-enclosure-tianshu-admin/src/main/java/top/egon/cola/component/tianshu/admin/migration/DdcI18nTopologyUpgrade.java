@@ -60,6 +60,11 @@ final class DdcI18nTopologyUpgrade {
         return this;
     }
 
+    DdcI18nTopologyUpgrade serviceObservation() {
+        plan = UpgradePlan.SERVICE_OBSERVATION;
+        return this;
+    }
+
     void upgrade() {
         validateManifests();
         try {
@@ -107,6 +112,7 @@ final class DdcI18nTopologyUpgrade {
         }
         if (plan == UpgradePlan.CLOUD_DELIVERY) validateCloudDeliveryPrefix();
         if (plan == UpgradePlan.NATIVE_CONFIG_ROLLOUT) validateNativeConfigRolloutPrefix();
+        if (plan == UpgradePlan.SERVICE_OBSERVATION) validateServiceObservationPrefix();
         for (var manifest : List.of(tianshuManifest, outboxManifest)) {
             for (var script : manifest.scripts()) {
                 try {
@@ -150,6 +156,14 @@ final class DdcI18nTopologyUpgrade {
         if (!"ec2deb49cfa03eaf3258818f79af9c9f7bba8e14dbb21c34231ca31763fa61c0"
                 .equals(tianshuManifest.scripts().get(8).sha256())) {
             throw new IllegalStateException("TIANSHU_NATIVE_CONFIG_UPGRADE_PREDECESSOR_MANIFEST_MISMATCH");
+        }
+    }
+
+    private void validateServiceObservationPrefix() {
+        validateNativeConfigRolloutPrefix();
+        if (!"0e2711e9aa749579ff3e0685f93aa031a00514c01bff2bfc78f3cde4b487ada8"
+                .equals(tianshuManifest.scripts().get(9).sha256())) {
+            throw new IllegalStateException("TIANSHU_SERVICE_OBSERVATION_UPGRADE_PREDECESSOR_MANIFEST_MISMATCH");
         }
     }
 
@@ -363,7 +377,11 @@ final class DdcI18nTopologyUpgrade {
         NATIVE_CONFIG_ROLLOUT(List.of("20260922_001", "20260928_001", "20261017_001", "20261018_001",
                 "20261022_001", "20261023_001", "20261028_001", "20261116_001", "20261117_001", "20261118_001"),
                 "db/egon-mp/V20261118_001__tianshu_native_config_rollout.sql",
-                List.of("ddc_config_workload_observation_t0"), "upgrade-native-config-rollout");
+                List.of("ddc_config_workload_observation_t0"), "upgrade-native-config-rollout"),
+        SERVICE_OBSERVATION(List.of("20260922_001", "20260928_001", "20261017_001", "20261018_001",
+                "20261022_001", "20261023_001", "20261028_001", "20261116_001", "20261117_001", "20261118_001", "20261119_001"),
+                "db/egon-mp/V20261119_001__tianshu_service_observation.sql",
+                List.of("ddc_service_observation_t0"), "upgrade-service-observation");
         private final List<String> versions;
         private final String script;
         private final List<String> tables;

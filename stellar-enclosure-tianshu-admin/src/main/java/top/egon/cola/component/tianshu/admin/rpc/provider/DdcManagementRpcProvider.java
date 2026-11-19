@@ -1,9 +1,9 @@
 package top.egon.cola.component.tianshu.admin.rpc.provider;
 
+import io.grpc.Status;
 import org.springframework.beans.factory.annotation.Autowired;
 import top.egon.cola.component.tianshu.admin.common.DdcAdminException;
 import top.egon.cola.component.tianshu.admin.service.management.DdcManagementFacade;
-import top.egon.cola.component.tianshu.admin.service.lease.DdcResourceAdmissionRevocationService;
 import top.egon.cola.component.tianshu.admin.security.rpc.DdcServicePrincipal;
 import top.egon.cola.component.tianshu.autoconfigure.properties.DdcProperties;
 import top.egon.cola.component.tianshu.error.management.DdcManagementErrorCode;
@@ -54,7 +54,6 @@ import top.egon.cola.component.rpc.tianshu.mapping.DdcManagementProtoMapper;
 public class DdcManagementRpcProvider implements DdcManagementRpc {
 
     private final DdcManagementFacade facade;
-    private final DdcResourceAdmissionRevocationService revocations;
     private final DdcManagementProtoMapper mapper;
 
     /**
@@ -64,12 +63,10 @@ public class DdcManagementRpcProvider implements DdcManagementRpc {
     @Autowired
     public DdcManagementRpcProvider(
             DdcManagementFacade facade,
-            DdcResourceAdmissionRevocationService revocations,
             DdcProperties ddcProperties,
             DdcRpcProperties rpcProperties) {
         this(
                 facade,
-                revocations,
                 new DdcManagementProtoMapper(
                         new DdcCommonProtoMapper(
                                 rpcProperties.getMaxInboundMessageSize()),
@@ -81,10 +78,8 @@ public class DdcManagementRpcProvider implements DdcManagementRpc {
     /** 使用显式映射器创建 Provider。 / Creates the provider with an explicit mapper. */
     public DdcManagementRpcProvider(
             DdcManagementFacade facade,
-            DdcResourceAdmissionRevocationService revocations,
             DdcManagementProtoMapper mapper) {
         this.facade = facade;
-        this.revocations = revocations;
         this.mapper = mapper;
     }
 
@@ -220,28 +215,14 @@ public class DdcManagementRpcProvider implements DdcManagementRpc {
     public GetConfigClientsResponse getConfigClients(
             GetConfigClientsRequest request) {
         DdcServicePrincipal.current();
-        return mapper.toConfigClientsResponse(facade.getConfigClients(
-                mapper.fromConfigClientsRequest(request)));
+        throw Status.UNIMPLEMENTED.withDescription("Use the Tianshu workload observation API").asRuntimeException();
     }
 
-    /**
-     * 撤销精确 Resource Server 三元组的准入租约。
-     * / Revokes admission leases for an exact Resource Server triple.
-     *
-     * @param request protobuf 撤销请求 / protobuf revocation request
-     * @return 幂等撤销统计 / idempotent revocation counts
-     */
     @Override
     public RevokeResourceAdmissionResponse revokeResourceAdmission(
             RevokeResourceAdmissionRequest request) {
         DdcServicePrincipal.current();
-        return mapper.toResourceAdmissionRevocationResponse(
-                revocations.revoke(
-                        mapper.fromResourceAdmissionRevocationRequest(
-                                request
-                        )
-                )
-        );
+        throw Status.UNIMPLEMENTED.withDescription("Resource authorization is managed by Tianquan").asRuntimeException();
     }
 
     @Override

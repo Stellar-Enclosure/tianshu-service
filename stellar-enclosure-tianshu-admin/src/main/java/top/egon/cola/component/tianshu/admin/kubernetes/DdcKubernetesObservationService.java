@@ -7,6 +7,9 @@ import top.egon.cola.component.tianshu.admin.kubernetes.DdcKubernetesApiClient.R
 import top.egon.cola.component.tianshu.admin.kubernetes.DdcKubernetesApiClient.WatchEvent;
 import top.egon.cola.component.tianshu.admin.kubernetes.DdcKubernetesApiClient.WatchHandle;
 import top.egon.cola.component.tianshu.model.config.DdcConfigBaselineVO.TargetBindingVO;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcServiceObservationBindingVO;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcServiceObservationViewVO;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcServiceObservationViewVO.EndpointVO;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -250,6 +253,149 @@ public final class DdcKubernetesObservationService implements SmartLifecycle, Au
         } catch (RuntimeException malformed) {
             return empty(target, StatusEnum.UNAVAILABLE, "INVALID_WORKLOAD_OBSERVATION", observed, expiry, clock.instant());
         }
+    }
+
+    /** Service evidence comes from the same complete namespace bundle; endpoint count is not a reachability claim. */
+    public DdcServiceObservationViewVO currentServiceView(DdcServiceObservationBindingVO binding) {
+        Objects.requireNonNull(binding, "binding");
+        NamespaceState state = namespaces.get(binding.kubernetesNamespace());
+        if (!clusterId.equals(binding.clusterId()) || state == null) return serviceView(StatusEnum.UNAVAILABLE,
+                "OUT_OF_SCOPE", null, null, null, List.of());
+        Bundle bundle = state.bundle.get();
+        Instant observed = bundle.observedAt();
+        Instant expiry = observed == null ? null : observed.plus(maxStale);
+        if (closed) return serviceView(StatusEnum.CLOSED, "CLOSED", observed, expiry, null, List.of());
+        if (bundle.status != StatusEnum.FRESH) return serviceView(bundle.status, bundle.reason, observed, expiry, null, List.of());
+        Instant now = clock.instant();
+        if (observed == null || now.isBefore(observed) || !now.isBefore(expiry)) return serviceView(StatusEnum.STALE,
+                "OBSERVATION_EXPIRED", observed, expiry, null, List.of());
+        JsonNode service = bundle.resources.getOrDefault(ResourceKind.SERVICE, Map.of()).values().stream()
+                .filter(item -> binding.serviceName().equals(item.path("metadata").path("name").textValue())).findFirst().orElse(null);
+        if (service == null) return serviceView(StatusEnum.UNAVAILABLE, "SERVICE_ABSENT", observed, expiry, null, List.of());
+        String resourceVersion = service.path("metadata").path("resourceVersion").textValue();
+        if (!binding.serviceUid().equals(service.path("metadata").path("uid").textValue())) return serviceView(
+                StatusEnum.IDENTITY_CONFLICT, "SERVICE_UID_MISMATCH", observed, expiry, resourceVersion, List.of());
+        try {
+            if (service.path("metadata").hasNonNull("deletionTimestamp")) throw malformed();
+            JsonNode servicePort = selectedTcpPort(service.path("spec").path("ports"), binding.portName());
+            if (port(servicePort, "port") != binding.servicePort()) throw malformed();
+            JsonNode targetPort = servicePort.get("targetPort");
+            if (targetPort != null) {
+                if (targetPort.isIntegralNumber()) port(servicePort, "targetPort");
+                else if (targetPort.isTextual()) text(servicePort, "targetPort", 63);
+                else throw malformed();
+            }
+            var endpoints = new LinkedHashMap<String, EndpointVO>();
+            for (JsonNode slice : bundle.resources.getOrDefault(ResourceKind.ENDPOINT_SLICE, Map.of()).values()) {
+                JsonNode metadata = slice.path("metadata");
+                boolean labelMatches = binding.serviceName().equals(metadata.path("labels").path("kubernetes.io/service-name").textValue());
+                boolean ownerMatches = false;
+                for (JsonNode owner : metadata.path("ownerReferences")) {
+                    if (binding.serviceUid().equals(owner.path("uid").textValue())
+                            || ("Service".equals(owner.path("kind").textValue()) && binding.serviceName().equals(owner.path("name").textValue()))) ownerMatches = true;
+                }
+                if (!labelMatches && !ownerMatches) continue;
+                JsonNode owner = controller(metadata);
+                if (!labelMatches || owner == null || !"v1".equals(owner.path("apiVersion").textValue())
+                        || !"Service".equals(owner.path("kind").textValue()) || !binding.serviceName().equals(owner.path("name").textValue())
+                        || !binding.serviceUid().equals(owner.path("uid").textValue()) || metadata.hasNonNull("deletionTimestamp")) throw malformed();
+                if (!Set.of("IPv4", "IPv6").contains(slice.path("addressType").asText())) throw malformed();
+                int endpointPort = port(selectedTcpPort(slice.path("ports"), binding.portName()), "port");
+                if (!slice.path("endpoints").isArray()) throw malformed();
+                for (JsonNode endpoint : slice.path("endpoints")) {
+                    JsonNode reference = endpoint.path("targetRef");
+                    if (!"Pod".equals(reference.path("kind").textValue())
+                            || (reference.has("apiVersion") && !"v1".equals(reference.path("apiVersion").textValue()))
+                            || !binding.kubernetesNamespace().equals(reference.path("namespace").textValue())) throw malformed();
+                    String uid = text(reference, "uid", 128); String name = text(reference, "name", 253);
+                    JsonNode pod = bundle.resources.getOrDefault(ResourceKind.POD, Map.of()).get(uid);
+                    if (pod == null || !name.equals(pod.path("metadata").path("name").textValue()) || !approvedServicePod(pod, binding, bundle)) throw malformed();
+                    JsonNode selector = service.path("spec").path("selector");
+                    if (!selector.isMissingNode() && !selector.isNull()) {
+                        if (!selector.isObject()) throw malformed();
+                        var labels = selector.fields();
+                        while (labels.hasNext()) {
+                            var entry = labels.next();
+                            if (!entry.getValue().isTextual() || !entry.getValue().equals(pod.path("metadata").path("labels").path(entry.getKey()))) throw malformed();
+                        }
+                    }
+                    int expectedPort = targetPort == null ? binding.servicePort()
+                            : targetPort.isIntegralNumber() ? port(servicePort, "targetPort") : namedPodPort(pod, text(servicePort, "targetPort", 63));
+                    if (expectedPort != endpointPort) throw malformed();
+                    JsonNode conditions = endpoint.path("conditions");
+                    if (!conditions.isMissingNode() && !conditions.isNull() && !conditions.isObject()) throw malformed();
+                    var candidate = new EndpointVO(uid, name, endpointPort, condition(conditions, "ready"),
+                            condition(conditions, "serving"), condition(conditions, "terminating"));
+                    EndpointVO previous = endpoints.putIfAbsent(uid + ":" + endpointPort, candidate);
+                    if (previous != null && !previous.equals(candidate)) throw malformed();
+                    if (endpoints.size() > MAX_ITEMS) throw malformed();
+                }
+            }
+            return serviceView(StatusEnum.FRESH, null, observed, expiry, resourceVersion, endpoints.values().stream()
+                    .sorted(Comparator.comparing(EndpointVO::podUid).thenComparingInt(EndpointVO::targetPort)).toList());
+        } catch (RuntimeException invalid) {
+            return serviceView(StatusEnum.UNAVAILABLE, "INVALID_SERVICE_OBSERVATION", observed, expiry, resourceVersion, List.of());
+        }
+    }
+
+    private static boolean approvedServicePod(JsonNode pod, DdcServiceObservationBindingVO binding, Bundle bundle) {
+        JsonNode parent = controller(pod.path("metadata"));
+        if (parent == null || !"apps/v1".equals(parent.path("apiVersion").textValue())) return false;
+        ResourceKind kind;
+        if ("ReplicaSet".equals(parent.path("kind").textValue())) {
+            JsonNode replica = bundle.resources.getOrDefault(ResourceKind.REPLICA_SET, Map.of()).get(parent.path("uid").asText());
+            if (replica == null || !parent.path("name").equals(replica.path("metadata").path("name"))) return false;
+            parent = controller(replica.path("metadata"));
+            if (parent == null || !"apps/v1".equals(parent.path("apiVersion").textValue()) || !"Deployment".equals(parent.path("kind").textValue())) return false;
+            kind = ResourceKind.DEPLOYMENT;
+        } else if ("StatefulSet".equals(parent.path("kind").textValue())) kind = ResourceKind.STATEFUL_SET;
+        else return false;
+        String uid = parent.path("uid").asText();
+        JsonNode workload = bundle.resources.getOrDefault(kind, Map.of()).get(uid);
+        return binding.workloadUids().contains(uid) && workload != null
+                && parent.path("name").equals(workload.path("metadata").path("name"))
+                && !workload.path("metadata").hasNonNull("deletionTimestamp");
+    }
+
+    private static JsonNode selectedTcpPort(JsonNode ports, String name) {
+        if (!ports.isArray()) throw malformed();
+        JsonNode result = null;
+        for (JsonNode candidate : ports) if (name.equals(candidate.path("name").textValue())) {
+            if (result != null || !"TCP".equals(candidate.path("protocol").asText("TCP"))) throw malformed();
+            result = candidate;
+        }
+        if (result == null) throw malformed();
+        return result;
+    }
+
+    private static int namedPodPort(JsonNode pod, String name) {
+        int result = 0; int count = 0;
+        if (!pod.path("spec").path("containers").isArray()) throw malformed();
+        for (JsonNode container : pod.path("spec").path("containers")) for (JsonNode candidate : container.path("ports")) {
+            if (name.equals(candidate.path("name").textValue()) && "TCP".equals(candidate.path("protocol").asText("TCP"))) {
+                result = port(candidate, "containerPort"); count++;
+            }
+        }
+        if (count != 1) throw malformed();
+        return result;
+    }
+
+    private static int port(JsonNode object, String key) {
+        long result = number(object, key, true);
+        if (result > 65_535) throw malformed();
+        return (int) result;
+    }
+
+    private static @Nullable Boolean condition(JsonNode object, String key) {
+        JsonNode value = object.get(key);
+        if (value == null || value.isNull()) return null;
+        if (!value.isBoolean()) throw malformed();
+        return value.booleanValue();
+    }
+
+    private static DdcServiceObservationViewVO serviceView(StatusEnum status, @Nullable String reason, @Nullable Instant observed,
+            @Nullable Instant expiry, @Nullable String resourceVersion, List<EndpointVO> endpoints) {
+        return new DdcServiceObservationViewVO(status, reason, observed, expiry, resourceVersion, endpoints);
     }
 
     private boolean ownedPod(JsonNode pod, ResourceKind kind, TargetBindingVO target, JsonNode workload, Bundle bundle) {

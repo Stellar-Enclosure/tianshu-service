@@ -156,6 +156,39 @@ class DdcConfigDeliverySecurityConfigurationTest {
         });
     }
 
+    @Test
+    void authoritativeRevocationCannotBeBypassedByConditionalGetOrReceiptDeliveryProof() throws Exception {
+        var service = principal();
+        var current = new DdcConfigWorkloadIdentityVO(new DdcTenantContextDTO(941L, "tenant-reader", "service:reader"),
+                SCOPE, "bind", 7, "cluster", "runtime", "deployment-uid", "pod-uid", "app", "containerd://abc", "boot-id");
+        when(oauth.verify("oauth.proof"))
+                .thenReturn(new AccessTokenVerification.Valid<>(service, READ, null, ISSUER))
+                .thenReturn(new AccessTokenVerification.Invalid<>("JWT_REVOKED"))
+                .thenReturn(new AccessTokenVerification.Invalid<>("IDENTITY_STATE_REJECTED"))
+                .thenReturn(new AccessTokenVerification.Unavailable<>("IDENTITY_AUTHORITY_UNAVAILABLE"));
+        when(kubernetes.verify(service, "pod.proof", "boot-id")).thenReturn(current);
+        var first = request("GET", SNAPSHOT_PATH);
+        var successful = new MockHttpServletResponse();
+        var controllerCalls = new java.util.concurrent.atomic.AtomicInteger();
+        filter.doFilter(first, successful, (req, res) -> controllerCalls.incrementAndGet());
+        assertThat(controllerCalls).hasValue(1);
+
+        var conditional = request("GET", SNAPSHOT_PATH);
+        conditional.addHeader("If-None-Match", "\"previously-approved-revision\"");
+        checkDenied(conditional, 403, "TIANSHU_CONFIG_AUTHORIZATION_REVOKED");
+        var receipt = spy(request("POST", RECEIPT_PATH));
+        receipt.addHeader("Idempotency-Key", "previously-issued-incarnation-and-revision");
+        receipt.setContent("{\"deliveryToken\":\"previously-issued-delivery-proof\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        checkDenied(receipt, 403, "TIANSHU_CONFIG_AUTHORIZATION_REVOKED");
+        verify(receipt, never()).getInputStream();
+        verify(receipt, never()).getReader();
+        checkDenied(request("POST", RECEIPT_PATH), 503, "TIANSHU_CONFIG_OAUTH_UNAVAILABLE");
+        verify(oauth, times(4)).verify("oauth.proof");
+        verify(kubernetes, times(1)).verify(service, "pod.proof", "boot-id");
+        assertThat(controllerCalls).hasValue(1);
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    }
+
     private void verifyOAuthFailure(AccessTokenVerification<ServiceIdentityPrincipal> verifier, int expected, String code)
             throws Exception {
         when(oauth.verify("oauth.proof")).thenReturn(verifier);

@@ -9,13 +9,25 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class DdcServiceRegistryPersistenceBoundaryTest {
 
     @Test
-    void serviceRegistryIsRedisOnlyAndDoesNotIntroduceJpaTables() throws IOException {
+    void currentRegistryHasNoPhysicalRedisWriterOrNotificationProducer() {
+        for (String name : List.of(
+                "top.egon.cola.component.tianshu.admin.repository.DdcServiceRegistryRedisRepository",
+                "top.egon.cola.component.tianshu.admin.service.registry.DdcServiceRegistryService",
+                "top.egon.cola.component.tianshu.admin.service.notification.DdcNotificationPublisher",
+                "top.egon.cola.component.tianshu.admin.service.notification.DdcRegistryEventDeliveryHandler")) {
+            assertThatThrownBy(() -> Class.forName(name, false, getClass().getClassLoader()))
+                    .as(name).isInstanceOf(ClassNotFoundException.class);
+        }
+    }
+
+    @Test
+    void retainedLegacySchemaAndWireTypesDoNotIntroduceJpaTables() throws IOException {
         assertThat(hasJpaEntityAnnotation(DdcServiceInstance.class)).isFalse();
-        assertThat(hasJpaEntityAnnotation(DdcServiceRegistryRedisRepository.class)).isFalse();
 
         for (String dialect : List.of("postgresql", "sqlite")) {
             String schema = resource("db/" + dialect + "/V1__create_ddc_schema.sql")

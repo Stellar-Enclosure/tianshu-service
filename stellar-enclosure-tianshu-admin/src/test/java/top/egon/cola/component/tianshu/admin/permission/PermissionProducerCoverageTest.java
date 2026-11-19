@@ -11,6 +11,7 @@ import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 import top.egon.cola.component.tianshu.admin.internal.controller.DdcConfigDeliveryController;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcPublicI18nBundleResult;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcInstanceWorkloadVO;
 import top.egon.cola.component.tianshu.admin.security.config.DdcConfigWorkloadVerifier;
 import top.egon.cola.component.tianshu.model.config.DdcConfigReceiptCommand;
 import top.egon.cola.component.tianshu.model.config.DdcConfigScopeVO;
@@ -58,6 +59,32 @@ class PermissionProducerCoverageTest {
             "top.egon.cola.component.tianshu.api.list.ListDelegationRequest",
             "top.egon.cola.component.tianshu.api.list.ListDelegationResponse");
     private final ObjectMapper json = new ObjectMapper().findAndRegisterModules();
+
+    @Test
+    void workloadAndArchiveHttpMappingsHaveReadOnlyPermissionsAndAClosedProjection() throws Exception {
+        Map<String, PermissionManifest.ResourceDefinition> resources = new TreeMap<>();
+        for (var fragment : fragments()) {
+            for (var resource : fragment.resources()) resources.put(resource.key(), resource);
+        }
+        Map<String, String> instances = Map.of(
+                "list", "/api/v1/tianshu/instances",
+                "page", "/api/v1/tianshu/instances/page",
+                "historyList", "/api/v1/tianshu/instances/history",
+                "historyPage", "/api/v1/tianshu/instances/history/page");
+        for (var endpoint : instances.entrySet()) {
+            var resource = resources.get("tianshu.api.instance." + endpoint.getKey());
+            assertThat(resource.type()).isEqualTo(ResourceType.API);
+            assertThat(resource.target()).containsEntry("paths", List.of(endpoint.getValue()))
+                    .containsEntry("methods", List.of("GET", "HEAD"));
+        }
+        Set<String> fields = new TreeSet<>();
+        Set<String> external = new TreeSet<>();
+        walk(DdcInstanceWorkloadVO.class, true, resources, fields, external, new HashSet<>());
+        assertThat(external).isEmpty();
+        assertThat(resources.keySet().stream().filter(key -> key.startsWith("tianshu.field.DdcInstanceWorkloadVO.")))
+                .containsExactlyInAnyOrderElementsOf(fields);
+        assertThat(fields).hasSize(15);
+    }
 
     @Test
     void everyManagedHttpMappingAndReachableDtoPropertyHasExactlyOneExportedResource() throws Exception {

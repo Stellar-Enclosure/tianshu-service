@@ -243,6 +243,9 @@ egon:
           config-publication:
             policy-file: ${TIANSHU_CONFIG_PUBLICATION_POLICY_FILE:}
             policy-sha256: ${TIANSHU_CONFIG_PUBLICATION_POLICY_SHA256:}
+          service-observation:
+            bindings-file: ${TIANSHU_SERVICE_OBSERVATION_BINDINGS_FILE:}
+            bindings-sha256: ${TIANSHU_SERVICE_OBSERVATION_BINDINGS_SHA256:}
           config-publisher:
             cluster-id: ${TIANSHU_CONFIG_PUBLISHER_CLUSTER_ID:}
             api-server: ${TIANSHU_CONFIG_PUBLISHER_API_SERVER:}
@@ -308,16 +311,7 @@ egon:
                 env-patterns: ${TIANSHU_RPC_RUNTIME_ENV_PATTERNS:*}
                 biz-code-patterns: ${TIANSHU_RPC_RUNTIME_BIZ_CODE_PATTERNS:*}
                 namespace-patterns: ${TIANSHU_RPC_RUNTIME_NAMESPACE_PATTERNS:*}
-                allowed-operations: SDK_REGISTER,SDK_HEARTBEAT,SDK_OFFLINE,CONFIG_PULL,PUBLISH_ACK,AI_READ,AI_REPORT
-              - credential-id: ${TIANSHU_RPC_REGISTRY_CREDENTIAL_ID:registry}
-                access-key: ${TIANSHU_RPC_REGISTRY_ACCESS_KEY:}
-                secret: ${TIANSHU_RPC_REGISTRY_SECRET_KEY:}
-                client-type: REGISTRY
-                app-code-patterns: ${TIANSHU_RPC_REGISTRY_APP_CODE_PATTERNS:*}
-                env-patterns: ${TIANSHU_RPC_REGISTRY_ENV_PATTERNS:*}
-                biz-code-patterns: ${TIANSHU_RPC_REGISTRY_BIZ_CODE_PATTERNS:*}
-                namespace-patterns: ${TIANSHU_RPC_REGISTRY_NAMESPACE_PATTERNS:*}
-                allowed-operations: REGISTRY_REGISTER,REGISTRY_HEARTBEAT,REGISTRY_DEREGISTER,REGISTRY_READ
+                allowed-operations: AI_READ,AI_REPORT
               - credential-id: ${TIANSHU_RPC_MANAGEMENT_CREDENTIAL_ID:management}
                 access-key: ${TIANSHU_RPC_MANAGEMENT_ACCESS_KEY:}
                 secret: ${TIANSHU_RPC_MANAGEMENT_SECRET_KEY:}

@@ -1,6 +1,18 @@
 package top.egon.cola.component.tianshu.admin.service.management;
 
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.validation.annotation.Validated;
+import top.egon.cola.component.common.mybatis.business.EgonColaTenantIdProvider;
+import top.egon.cola.component.tianshu.admin.config.DdcServiceObservationBindings;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcServiceObservationBindingVO;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcServiceObservationViewVO;
+import top.egon.cola.component.tianshu.admin.repository.DdcServiceObservationRepository;
+import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextDTO;
+import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantRegistry;
 import org.springframework.stereotype.Service;
 import top.egon.cola.component.tianshu.admin.common.DdcAdminException;
 import top.egon.cola.component.common.core.exception.CommonException;
@@ -11,20 +23,17 @@ import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishTaskBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcAppBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcBizBO;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcConfigVO;
-import top.egon.cola.component.tianshu.admin.repository.DdcNamespaceEnvAppBindingRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcPublishAckRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcPublishTaskRepository;
 import top.egon.cola.component.tianshu.admin.service.config.DdcConfigService;
-import top.egon.cola.component.tianshu.admin.service.lease.DdcInstanceAdminService;
 import top.egon.cola.component.tianshu.admin.service.metadata.DdcNamespaceEnvAppBindingService;
 import top.egon.cola.component.tianshu.admin.service.metadata.DdcAppService;
 import top.egon.cola.component.tianshu.admin.service.metadata.DdcBizService;
 import top.egon.cola.component.tianshu.admin.service.metadata.DdcScopeGate;
 import top.egon.cola.component.tianshu.admin.service.publish.DdcPublishService;
-import top.egon.cola.component.tianshu.admin.service.registry.DdcServiceRegistryService;
 import top.egon.cola.component.tianshu.error.management.DdcManagementErrorCode;
+import top.egon.cola.component.tianshu.error.DdcErrorStatus;
 import top.egon.cola.component.tianshu.model.management.DdcManagementConfig;
-import top.egon.cola.component.tianshu.model.management.DdcManagementConfigClientInstance;
 import top.egon.cola.component.tianshu.model.management.DdcManagementConfigDeleteRequest;
 import top.egon.cola.component.tianshu.model.management.DdcManagementConfigQuery;
 import top.egon.cola.component.tianshu.model.management.DdcManagementConfigUpsertRequest;
@@ -33,7 +42,6 @@ import top.egon.cola.component.tianshu.model.management.DdcManagementAppQuery;
 import top.egon.cola.component.tianshu.model.management.DdcManagementBiz;
 import top.egon.cola.component.tianshu.model.management.DdcManagementBizLookup;
 import top.egon.cola.component.tianshu.model.management.DdcManagementBizQuery;
-import top.egon.cola.component.tianshu.model.management.DdcManagementInstanceQuery;
 import top.egon.cola.component.tianshu.model.management.DdcManagementPublishRequest;
 import top.egon.cola.component.tianshu.model.management.DdcManagementPublishResult;
 import top.egon.cola.component.tianshu.model.management.DdcManagementPublishStatus;
@@ -46,104 +54,38 @@ import top.egon.cola.component.tianshu.model.management.DdcManagementServiceInst
 import top.egon.cola.component.tianshu.model.management.DdcManagementServiceKey;
 import top.egon.cola.component.tianshu.model.management.DdcManagementServiceQuery;
 import top.egon.cola.component.tianshu.model.management.DdcManagementServiceSnapshot;
-import top.egon.cola.component.tianshu.model.registry.DdcServiceKind;
-import top.egon.cola.component.tianshu.model.registry.DdcServiceCatalogSnapshot;
-import top.egon.cola.component.tianshu.model.registry.DdcServiceKey;
-import top.egon.cola.component.tianshu.model.registry.DdcServiceQuery;
-import top.egon.cola.component.tianshu.model.registry.DdcServiceSnapshot;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
-import java.util.stream.Collectors;
 
-@Service
+@Slf4j
+@Validated
+@Service("ddcManagementFacade")
+@RequiredArgsConstructor(onConstructor_ = @Autowired)
 public class DdcManagementFacade {
 
-    private final DdcConfigService configService;
-
-    private final DdcPublishService publishService;
-
-    private final DdcPublishTaskRepository publishTaskRepository;
-
-    private final DdcPublishAckRepository publishAckRepository;
-
-    private final DdcInstanceAdminService instanceAdminService;
-
-    private final DdcServiceRegistryService registryService;
-
-    private final DdcScopeGate scopeGate;
-
-    private final DdcNamespaceEnvAppBindingRepository bindingRepository;
-
-    private final DdcNamespaceEnvAppBindingService bindingService;
-
-    private final DdcBizService bizService;
-
-    private final DdcAppService appService;
-
-    @Autowired
-    public DdcManagementFacade(
-            DdcConfigService configService,
-            DdcPublishService publishService,
-            DdcPublishTaskRepository publishTaskRepository,
-            DdcPublishAckRepository publishAckRepository,
-            DdcInstanceAdminService instanceAdminService,
-            DdcServiceRegistryService registryService,
-            DdcScopeGate scopeGate,
-            DdcNamespaceEnvAppBindingRepository bindingRepository,
-            DdcNamespaceEnvAppBindingService bindingService,
-            DdcBizService bizService,
-            DdcAppService appService
-    ) {
-        this.configService = configService;
-        this.publishService = publishService;
-        this.publishTaskRepository = publishTaskRepository;
-        this.publishAckRepository = publishAckRepository;
-        this.instanceAdminService = instanceAdminService;
-        this.registryService = registryService;
-        this.scopeGate = scopeGate;
-        this.bindingRepository = bindingRepository;
-        this.bindingService = bindingService;
-        this.bizService = bizService;
-        this.appService = appService;
-    }
-
-    /**
-     * 保留仅管理面旧构造器，供不需要目录能力的单元测试使用。
-     * / Retains the management-only constructor for tests that do not use the catalog.
-     */
-    public DdcManagementFacade(
-            DdcConfigService configService,
-            DdcPublishService publishService,
-            DdcPublishTaskRepository publishTaskRepository,
-            DdcPublishAckRepository publishAckRepository,
-            DdcInstanceAdminService instanceAdminService,
-            DdcServiceRegistryService registryService,
-            DdcScopeGate scopeGate,
-            DdcNamespaceEnvAppBindingRepository bindingRepository,
-            DdcNamespaceEnvAppBindingService bindingService
-    ) {
-        this(
-                configService,
-                publishService,
-                publishTaskRepository,
-                publishAckRepository,
-                instanceAdminService,
-                registryService,
-                scopeGate,
-                bindingRepository,
-                bindingService,
-                null,
-                null
-        );
-    }
+    @Qualifier("ddcConfigService") private final DdcConfigService configService;
+    @Qualifier("ddcPublishService") private final DdcPublishService publishService;
+    @Qualifier("ddcPublishTaskRepository") private final DdcPublishTaskRepository publishTaskRepository;
+    @Qualifier("ddcPublishAckRepository") private final DdcPublishAckRepository publishAckRepository;
+    @Qualifier("ddcScopeGate") private final DdcScopeGate scopeGate;
+    @Qualifier("ddcNamespaceEnvAppBindingService") private final DdcNamespaceEnvAppBindingService bindingService;
+    @Qualifier("ddcBizService") private final DdcBizService bizService;
+    @Qualifier("ddcAppService") private final DdcAppService appService;
+    @Qualifier("ddcServiceObservationBindings") private final DdcServiceObservationBindings serviceBindings;
+    @Qualifier("ddcServiceObservationRepository") private final DdcServiceObservationRepository serviceObservations;
+    @Qualifier("ddcTenantRegistry") private final DdcTenantRegistry tenants;
+    @Qualifier("ddcPublishClock") private final Clock clock;
 
     public Optional<DdcManagementBiz> getBiz(DdcManagementBizLookup lookup) {
         require(lookup, "business lookup");
@@ -351,23 +293,6 @@ public class DdcManagementFacade {
         return result(getPublishTask(changeId));
     }
 
-    public List<DdcManagementConfigClientInstance> getConfigClients(
-            DdcManagementInstanceQuery query
-    ) {
-        require(query, "instance query");
-        requireText(query.bizCode(), "bizCode");
-        requireText(query.appCode(), "appCode");
-        requireText(query.env(), "env");
-        return instanceAdminService.list(
-                        query.bizCode(),
-                        query.env(),
-                        query.appCode()
-                ).stream()
-                .sorted(Comparator.comparing(top.egon.cola.component.tianshu.admin.model.vo.DdcInstanceResult::getInstanceId))
-                .map(this::configClient)
-                .toList();
-    }
-
     /**
      * 查询匹配的作用域绑定并转换为稳定管理模型。
      * / Retrieves matching scope bindings and maps them to the stable management model.
@@ -397,46 +322,128 @@ public class DdcManagementFacade {
                 .toList();
     }
 
-    public DdcManagementServiceCatalog getServiceKeys(
-            DdcManagementServiceQuery query
-    ) {
-        DdcServiceQuery serviceQuery = serviceQuery(query);
-        DdcServiceCatalogSnapshot snapshot =
-                registryService.getServiceKeys(serviceQuery);
-        Set<String> visibleScopes = visibleScopes(query);
-        return new DdcManagementServiceCatalog(
-                snapshot.revision(),
-                snapshot.observedAt(),
-                snapshot.serviceKeys().stream()
-                        .filter(key -> visibleScopes == null
-                                || visibleScopes.contains(scope(key)))
-                        .map(this::serviceKey)
-                        .toList()
-        );
+    /** Approved Service inventory plus complete, current observations; no legacy registration reads or cleanup. */
+    public DdcManagementServiceCatalog getServiceKeys(DdcManagementServiceQuery query) {
+        DdcTenantContextDTO trusted = registryContext();
+        List<DdcServiceObservationBindingVO> bindings = matchingBindings(trusted, query);
+        List<DdcManagementServiceKey> keys = new ArrayList<>();
+        Instant observedAt = null;
+        for (var binding : bindings) {
+            var view = currentService(trusted, binding);
+            keys.add(serviceKey(binding));
+            if (observedAt == null || view.observedAt().isBefore(observedAt)) observedAt = view.observedAt();
+        }
+        // The old Redis generation is retired. Kubernetes resourceVersion is opaque, not a replacement counter.
+        return new DdcManagementServiceCatalog(0L, observedAt, List.copyOf(keys));
     }
 
-    public DdcManagementServiceSnapshot getInstances(
-            DdcManagementServiceQuery query
-    ) {
+    public DdcManagementServiceSnapshot getInstances(DdcManagementServiceQuery query) {
+        return getInstances(query, null);
+    }
+
+    /** bindingId disambiguates independently approved physical Services sharing a logical tuple. */
+    public DdcManagementServiceSnapshot getInstances(DdcManagementServiceQuery query, String bindingId) {
         require(query, "service query");
-        DdcServiceKind kind = serviceKind(query.serviceKind());
-        DdcServiceKey key = new DdcServiceKey(
-                requireText(query.bizCode(), "bizCode"),
-                requireText(query.env(), "env"),
-                requireText(query.appCode(), "appCode"),
-                kind,
-                requireText(query.serviceName(), "serviceName"),
-                query.group(),
-                query.version(),
-                requireText(query.protocol(), "protocol")
-        );
-        DdcServiceSnapshot snapshot = registryService.getInstances(key);
-        return new DdcManagementServiceSnapshot(
-                serviceKey(snapshot.serviceKey()),
-                snapshot.revision(),
-                snapshot.observedAt(),
-                snapshot.instances().stream().map(this::serviceInstance).toList()
-        );
+        requireText(query.bizCode(), "bizCode");
+        requireText(query.env(), "env");
+        requireText(query.appCode(), "appCode");
+        requireText(query.serviceKind(), "serviceKind");
+        requireText(query.serviceName(), "serviceName");
+        requireText(query.protocol(), "protocol");
+        if (bindingId != null && (bindingId.isBlank() || bindingId.length() > 128
+                || bindingId.chars().anyMatch(Character::isISOControl))) {
+            throw new DdcAdminException("invalid bindingId");
+        }
+        DdcTenantContextDTO trusted = registryContext();
+        var candidates = matchingBindings(trusted, query).stream()
+                .filter(binding -> bindingId == null || binding.bindingId().equals(bindingId)).toList();
+        if (candidates.isEmpty()) throw registryFailure(404, "TIANSHU_SERVICE_BINDING_NOT_FOUND");
+        if (candidates.size() != 1) throw registryFailure(409, "TIANSHU_SERVICE_BINDING_AMBIGUOUS");
+        var binding = candidates.getFirst();
+        var view = currentService(trusted, binding);
+        var instances = view.endpoints().stream()
+                .sorted(Comparator.comparing(DdcServiceObservationViewVO.EndpointVO::podUid)
+                        .thenComparingInt(DdcServiceObservationViewVO.EndpointVO::targetPort))
+                .map(endpoint -> serviceInstance(binding, view, endpoint)).toList();
+        return new DdcManagementServiceSnapshot(serviceKey(binding), 0L, view.observedAt(), instances);
+    }
+
+    private DdcTenantContextDTO registryContext() {
+        try {
+            Long tenant = EgonColaTenantIdProvider.currentTenantId();
+            var registered = tenants.requireEnabledTenant(tenant);
+            if (tenant == null || tenant <= 0 || !tenant.equals(registered.getTenantId())) throw registryUnavailable();
+            return new DdcTenantContextDTO(tenant, registered.getIdentityTenantId(), MDC.get("userId"));
+        } catch (RuntimeException unavailable) {
+            throw registryUnavailable();
+        }
+    }
+
+    private List<DdcServiceObservationBindingVO> matchingBindings(
+            DdcTenantContextDTO trusted, DdcManagementServiceQuery query) {
+        require(query, "service query");
+        String kind = optionalKind(query.serviceKind());
+        List<DdcServiceObservationBindingVO> owned;
+        try {
+            owned = serviceBindings.bindings().stream()
+                    .filter(binding -> binding.tenantId() == trusted.tenantId())
+                    .toList();
+        } catch (RuntimeException unavailable) {
+            throw registryUnavailable();
+        }
+        if (owned.isEmpty() || owned.stream().anyMatch(binding ->
+                !trusted.identityTenantId().equals(binding.identityTenantId()))) throw registryUnavailable();
+        return owned.stream().filter(binding -> matches(query.bizCode(), binding.bizCode())
+                && matches(query.namespaceCode(), binding.namespaceCode())
+                && matches(query.env(), binding.env()) && matches(query.appCode(), binding.appCode())
+                && matches(kind, serviceKind(binding)) && matches(query.protocol(), binding.protocol())
+                && matches(query.serviceName(), binding.logicalServiceName())
+                && matches(query.group(), binding.group()) && matches(query.version(), binding.version()))
+                .sorted(Comparator.comparing(DdcServiceObservationBindingVO::bindingId)).toList();
+    }
+
+    private DdcServiceObservationViewVO currentService(
+            DdcTenantContextDTO trusted, DdcServiceObservationBindingVO binding) {
+        try {
+            scopeGate.assertEnabledFresh(binding.bizCode(), binding.appCode(), binding.env(), binding.namespaceCode());
+            var view = serviceObservations.findCurrent(trusted, binding).orElseThrow(this::registryUnavailable);
+            Instant now = clock.instant();
+            if (!view.fresh() || view.observedAt() == null || view.observedAt().isAfter(now)
+                    || view.validUntil() == null || !view.validUntil().isAfter(now)
+                    || !view.validUntil().isAfter(view.observedAt()) || view.serviceResourceVersion() == null
+                    || view.serviceResourceVersion().isBlank()) throw registryUnavailable();
+            return view;
+        } catch (RuntimeException unavailable) {
+            if (unavailable instanceof CommonException known
+                    && DdcErrorStatus.SCOPE_DISABLED.getStatus().equals(known.getStatus())) throw known;
+            log.warn("Service observation unavailable: code=TIANSHU_SERVICE_OBSERVATION_UNAVAILABLE");
+            throw registryUnavailable();
+        }
+    }
+
+    private boolean matches(String requested, String actual) {
+        return requested == null || requested.isBlank() || requested.equals(actual);
+    }
+
+    private String optionalKind(String value) {
+        if (value == null || value.isBlank()) return null;
+        String normalized = value.toUpperCase(Locale.ROOT);
+        if (!List.of("RPC_PROVIDER", "HTTP_PROVIDER", "INTERNAL_GATEWAY").contains(normalized)) {
+            throw new DdcAdminException("unsupported serviceKind");
+        }
+        return normalized;
+    }
+
+    private String serviceKind(DdcServiceObservationBindingVO binding) {
+        return "grpc".equals(binding.protocol()) ? "RPC_PROVIDER" : "HTTP_PROVIDER";
+    }
+
+    private CommonException registryUnavailable() {
+        return registryFailure(503, "TIANSHU_SERVICE_OBSERVATION_UNAVAILABLE");
+    }
+
+    private CommonException registryFailure(int status, String code) {
+        return new CommonException(status, code, code, true, null);
     }
 
     private DdcBizBO findBizByCode(String bizCode) {
@@ -517,84 +524,36 @@ public class DdcManagementFacade {
         );
     }
 
-    private DdcManagementConfigClientInstance configClient(
-            top.egon.cola.component.tianshu.admin.model.vo.DdcInstanceResult value) {
-        return new DdcManagementConfigClientInstance(
-                value.getBizCode(),
-                value.getEnv(),
-                value.getAppCode(),
-                value.getInstanceId(),
-                value.getLeaseId(),
-                value.getHost(),
-                value.getPort(),
-                "CONFIG_CLIENT",
-                value.getStatus(),
-                instant(value.getCreatedAt()),
-                instant(value.getLastHeartbeatAt()),
-                instant(value.getLeaseExpireAt()),
-                value.getRuntimeMetadata()
-        );
+    private DdcManagementServiceKey serviceKey(DdcServiceObservationBindingVO value) {
+        return new DdcManagementServiceKey(value.bizCode(), value.env(), value.appCode(), value.bindingId(),
+                serviceKind(value), value.logicalServiceName(), value.group(), value.version(), value.protocol());
     }
 
-    private DdcManagementServiceKey serviceKey(DdcServiceKey value) {
-        return new DdcManagementServiceKey(
-                value.bizCode(),
-                value.env(),
-                value.appCode(),
-                value.serviceId(),
-                value.serviceKind().name(),
-                value.serviceName(),
-                value.group(),
-                value.version(),
-                value.protocol()
-        );
+    private DdcManagementServiceInstance serviceInstance(DdcServiceObservationBindingVO binding,
+            DdcServiceObservationViewVO view, DdcServiceObservationViewVO.EndpointVO endpoint) {
+        var metadata = new LinkedHashMap<String, String>();
+        metadata.put("observationSource", "KUBERNETES");
+        metadata.put("bindingId", binding.bindingId());
+        metadata.put("bindingRevision", Long.toString(binding.bindingRevision()));
+        metadata.put("clusterId", binding.clusterId());
+        metadata.put("kubernetesNamespace", binding.kubernetesNamespace());
+        metadata.put("serviceName", binding.serviceName());
+        metadata.put("serviceUid", binding.serviceUid());
+        metadata.put("serviceResourceVersion", view.serviceResourceVersion());
+        metadata.put("podUid", endpoint.podUid());
+        metadata.put("podName", endpoint.podName());
+        metadata.put("observedAt", view.observedAt().toString());
+        metadata.put("validUntil", view.validUntil().toString());
+        // Absent nullable conditions remain unknown; Map<String,String> cannot carry JSON null.
+        putCondition(metadata, "ready", endpoint.ready());
+        putCondition(metadata, "serving", endpoint.serving());
+        putCondition(metadata, "terminating", endpoint.terminating());
+        return new DdcManagementServiceInstance(binding.bindingId() + ":" + endpoint.podUid() + ":" + endpoint.targetPort(),
+                null, null, endpoint.targetPort(), false, Map.copyOf(metadata), "UNKNOWN", null, null, null);
     }
 
-    private DdcManagementServiceInstance serviceInstance(
-            top.egon.cola.component.tianshu.model.registry.DdcServiceInstance value
-    ) {
-        return new DdcManagementServiceInstance(
-                value.instanceId(),
-                value.leaseId(),
-                value.host(),
-                value.port(),
-                value.secure(),
-                value.metadata(),
-                value.status(),
-                value.registeredAt(),
-                value.lastHeartbeatAt(),
-                value.leaseExpireAt()
-        );
-    }
-
-    private DdcServiceQuery serviceQuery(DdcManagementServiceQuery query) {
-        if (query == null) {
-            throw new DdcAdminException("service query is required");
-        }
-        return new DdcServiceQuery(
-                query.bizCode(),
-                query.env(),
-                query.appCode(),
-                optionalServiceKind(query.serviceKind()),
-                query.protocol(),
-                query.serviceName(),
-                query.group(),
-                query.version()
-        );
-    }
-
-    private DdcServiceKind serviceKind(String value) {
-        try {
-            return DdcServiceKind.valueOf(
-                    requireText(value, "serviceKind").toUpperCase(Locale.ROOT)
-            );
-        } catch (IllegalArgumentException exception) {
-            throw new DdcAdminException("unsupported serviceKind");
-        }
-    }
-
-    private DdcServiceKind optionalServiceKind(String value) {
-        return value == null || value.isBlank() ? null : serviceKind(value);
+    private void putCondition(Map<String, String> metadata, String key, Boolean condition) {
+        if (condition != null) metadata.put(key, condition.toString());
     }
 
     private DdcManagementPublishStatus status(String value) {
@@ -639,26 +598,4 @@ public class DdcManagementFacade {
                 : value.atZone(ZoneId.systemDefault()).toInstant();
     }
 
-    private Set<String> visibleScopes(DdcManagementServiceQuery query) {
-        if (query.namespaceCode() == null || query.namespaceCode().isBlank()) {
-            return null;
-        }
-        if (bindingRepository == null) {
-            return Set.of();
-        }
-        String bizCode = query.bizCode() == null || query.bizCode().isBlank()
-                ? null
-                : query.bizCode().trim();
-        return bindingRepository.findVisiblePhysicalScopes(
-                        bizCode,
-                        query.namespaceCode().trim()
-                ).stream()
-                .map(row -> String.join("\n", String.valueOf(row.get("bizcode")),
-                        String.valueOf(row.get("envcode")), String.valueOf(row.get("appcode"))))
-                .collect(Collectors.toUnmodifiableSet());
-    }
-
-    private String scope(DdcServiceKey key) {
-        return String.join("\n", key.bizCode(), key.env(), key.appCode());
-    }
 }

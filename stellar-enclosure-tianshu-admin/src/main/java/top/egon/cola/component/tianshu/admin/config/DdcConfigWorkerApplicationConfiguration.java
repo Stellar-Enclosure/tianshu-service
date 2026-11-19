@@ -49,6 +49,7 @@ import top.egon.cola.component.tianshu.admin.dao.DdcConfigItemMapper;
 import top.egon.cola.component.tianshu.admin.dao.DdcConfigVersionMapper;
 import top.egon.cola.component.tianshu.admin.dao.DdcConfigWorkloadObservationMapper;
 import top.egon.cola.component.tianshu.admin.dao.DdcPublishTaskMapper;
+import top.egon.cola.component.tianshu.admin.dao.DdcServiceObservationMapper;
 import top.egon.cola.component.tianshu.admin.kubernetes.DdcConfigWorkloadObservationExporter;
 import top.egon.cola.component.tianshu.admin.kubernetes.DdcConfigWorkloadObservationExporter.BindingResolver;
 import top.egon.cola.component.tianshu.admin.kubernetes.DdcConfigWorkloadObservationExporter.BindingVO;
@@ -57,6 +58,7 @@ import top.egon.cola.component.tianshu.admin.kubernetes.DdcKubernetesApiClient.D
 import top.egon.cola.component.tianshu.admin.kubernetes.DdcKubernetesApiClient.Mode;
 import top.egon.cola.component.tianshu.admin.kubernetes.DdcKubernetesApiClient.ScopeVO;
 import top.egon.cola.component.tianshu.admin.kubernetes.DdcKubernetesObservationService;
+import top.egon.cola.component.tianshu.admin.kubernetes.DdcServiceObservationExporter;
 import top.egon.cola.component.tianshu.admin.model.convertor.DdcConfigItemConverter;
 import top.egon.cola.component.tianshu.admin.model.convertor.DdcConfigItemConverterImpl;
 import top.egon.cola.component.tianshu.admin.model.convertor.DdcConfigVersionConverter;
@@ -65,10 +67,15 @@ import top.egon.cola.component.tianshu.admin.model.convertor.DdcConfigWorkloadOb
 import top.egon.cola.component.tianshu.admin.model.convertor.DdcConfigWorkloadObservationConverterImpl;
 import top.egon.cola.component.tianshu.admin.model.convertor.DdcPublishTaskConverter;
 import top.egon.cola.component.tianshu.admin.model.convertor.DdcPublishTaskConverterImpl;
+import top.egon.cola.component.tianshu.admin.model.convertor.DdcServiceObservationConverter;
+import top.egon.cola.component.tianshu.admin.model.convertor.DdcServiceObservationConverterImpl;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcServiceObservationBindingVO;
+import top.egon.cola.component.tianshu.admin.repository.DdcServiceObservationRepository;
 import top.egon.cola.component.tianshu.admin.repository.impl.DdcConfigItemRepositoryImpl;
 import top.egon.cola.component.tianshu.admin.repository.impl.DdcConfigVersionRepositoryImpl;
 import top.egon.cola.component.tianshu.admin.repository.impl.DdcConfigWorkloadObservationRepositoryImpl;
 import top.egon.cola.component.tianshu.admin.repository.impl.DdcPublishTaskRepositoryImpl;
+import top.egon.cola.component.tianshu.admin.repository.impl.DdcServiceObservationRepositoryImpl;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantAdminProperties;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextDTO;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextExecutor;
@@ -187,11 +194,13 @@ public final class DdcConfigWorkerApplicationConfiguration {
         }
     }
 
-    @Import({PersistenceApplication.class, DdcConfigWorkloadObservationRepositoryImpl.class})
+    @Import({PersistenceApplication.class, DdcConfigWorkloadObservationRepositoryImpl.class,
+            DdcServiceObservationRepositoryImpl.class, DdcServiceObservationBindings.class})
     public static class ObserverApplication {
         @Bean("ddcConfigWorkerSettings") WorkerSettings settings(Environment environment,
-                @Qualifier("ddcConfigPublicationPolicies") RegisteredPolicies policies) {
-            return settingsFor("config-observer", environment, policies);
+                @Qualifier("ddcConfigPublicationPolicies") RegisteredPolicies policies,
+                @Qualifier("ddcServiceObservationBindings") DdcServiceObservationBindings serviceBindings) {
+            return settingsFor("config-observer", environment, policies, serviceBindings.bindings());
         }
         @Bean(name = "ddcKubernetesConfigObserverApiClient", destroyMethod = "close")
         DdcKubernetesApiClient observerApi(@Qualifier("ddcConfigWorkerSettings") WorkerSettings settings,
@@ -208,6 +217,14 @@ public final class DdcConfigWorkerApplicationConfiguration {
         }
         @Bean("ddcConfigWorkloadObservationMapper") DdcConfigWorkloadObservationMapper observationMapper(@Qualifier("sqlSessionTemplate") SqlSessionTemplate sessions) { return sessions.getMapper(DdcConfigWorkloadObservationMapper.class); }
         @Bean("ddcConfigWorkloadObservationConverterImpl") DdcConfigWorkloadObservationConverter converter() { return new DdcConfigWorkloadObservationConverterImpl(); }
+        @Bean("ddcServiceObservationMapper")
+        DdcServiceObservationMapper serviceObservationMapper(@Qualifier("sqlSessionTemplate") SqlSessionTemplate sessions) {
+            return sessions.getMapper(DdcServiceObservationMapper.class);
+        }
+        @Bean("ddcServiceObservationConverterImpl")
+        DdcServiceObservationConverter serviceObservationConverter() {
+            return new DdcServiceObservationConverterImpl();
+        }
         @Bean("ddcConfigWorkloadObservationExportInterval") Duration exportInterval(Environment environment) { return duration(environment, ADMIN + "config-observer.export-interval", Duration.ofSeconds(2)); }
         @Bean(name = "ddcConfigWorkloadObservationExporter", destroyMethod = "close")
         DdcConfigWorkloadObservationExporter exporter(@Qualifier("ddcKubernetesObservationService") DdcKubernetesObservationService observer,
@@ -226,6 +243,19 @@ public final class DdcConfigWorkerApplicationConfiguration {
                 return new BindingVO(new DdcTenantContextDTO(tenant.getTenantId(), tenant.getIdentityTenantId(), "system:config-observer"), registered.target());
             }).toList();
             return () -> fixed;
+        }
+        @Bean(name = "ddcServiceObservationExporter", destroyMethod = "close")
+        DdcServiceObservationExporter serviceExporter(
+                @Qualifier("ddcKubernetesObservationService") DdcKubernetesObservationService observer,
+                @Qualifier("ddcServiceObservationRepository") DdcServiceObservationRepository repository,
+                @Qualifier("ddcTenantContextExecutor") DdcTenantContextExecutor tenants,
+                @Qualifier("ddcConfigWorkerSettings") WorkerSettings settings,
+                @Qualifier("ddcServiceObservationBindings") DdcServiceObservationBindings serviceBindings,
+                @Qualifier("ddcPublishClock") Clock clock,
+                @Qualifier("ddcConfigWorkloadObservationExportInterval") Duration interval) {
+            var localBindings = serviceBindings.bindings().stream()
+                    .filter(binding -> settings.clusterId().equals(binding.clusterId())).toList();
+            return new DdcServiceObservationExporter(observer, repository, tenants, localBindings, clock, interval);
         }
         /** Observer validates the real Outbox metadata but cannot claim a committed message. */
         @Bean("outboxCommittedEventListener") OutboxCommittedEventListener noDelivery(OutboxDispatcher dispatcher) {
@@ -284,9 +314,14 @@ public final class DdcConfigWorkerApplicationConfiguration {
     }
 
     private static WorkerSettings settingsFor(String role, Environment environment, RegisteredPolicies policies) {
+        return settingsFor(role, environment, policies, List.of());
+    }
+
+    private static WorkerSettings settingsFor(String role, Environment environment, RegisteredPolicies policies,
+            List<DdcServiceObservationBindingVO> serviceBindings) {
         String prefix = ADMIN + role + ".";
         String cluster = required(environment, prefix + "cluster-id");
-        if (!cluster.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}") || policies.targets().isEmpty()) throw invalid("SCOPE_INVALID");
+        if (!cluster.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")) throw invalid("SCOPE_INVALID");
         var namespaces = new LinkedHashSet<String>(); var deployments = new LinkedHashSet<DeploymentKey>();
         for (var registered : policies.targets()) {
             var target = registered.target();
@@ -294,6 +329,12 @@ public final class DdcConfigWorkerApplicationConfiguration {
             namespaces.add(target.getKubernetesNamespace());
             deployments.add(new DeploymentKey(target.getKubernetesNamespace(), target.getWorkloadName()));
         }
+        boolean observer = "config-observer".equals(role);
+        if (observer) {
+            serviceBindings.stream().filter(binding -> cluster.equals(binding.clusterId()))
+                    .map(DdcServiceObservationBindingVO::kubernetesNamespace).forEach(namespaces::add);
+        }
+        if (namespaces.isEmpty() || (observer && namespaces.size() > 8)) throw invalid("SCOPE_INVALID");
         URI server;
         try { server = URI.create(required(environment, prefix + "api-server")); }
         catch (IllegalArgumentException malformed) { throw invalid("API_ORIGIN_INVALID"); }

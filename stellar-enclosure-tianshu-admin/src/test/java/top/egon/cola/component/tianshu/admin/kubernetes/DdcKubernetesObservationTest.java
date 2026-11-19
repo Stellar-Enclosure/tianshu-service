@@ -15,6 +15,8 @@ import top.egon.cola.component.tianshu.admin.kubernetes.DdcKubernetesApiClient.W
 import top.egon.cola.component.tianshu.admin.kubernetes.DdcKubernetesApiClient.WatchHandle;
 import top.egon.cola.component.tianshu.admin.kubernetes.DdcKubernetesObservationService.StatusEnum;
 import top.egon.cola.component.tianshu.model.config.DdcConfigBaselineVO.TargetBindingVO;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcServiceObservationBindingVO;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcServiceObservationViewVO.EndpointVO;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -52,6 +54,214 @@ class DdcKubernetesObservationTest {
     private static final String DIGEST = "a".repeat(64);
     private static final TargetBindingVO TARGET = new TargetBindingVO("reader-binding", "1", "cluster-a", NAMESPACE,
             "Deployment", "reader", "deployment-uid", "app");
+
+    @Test
+    void serviceProjectionIsLocalAndFreshZeroEndpointsDoesNotInventReachability() {
+        try (var fixture = new Fixture()) {
+            assertThat(fixture.observer.currentServiceView(serviceBinding()).status()).isEqualTo(StatusEnum.INITIALIZING);
+            fixture.items.put(ResourceKind.SERVICE, List.of(service()));
+            fixture.observer.refresh();
+            clearInvocations(fixture.api);
+            var view = fixture.observer.currentServiceView(serviceBinding());
+            assertThat(view.fresh()).isTrue();
+            assertThat(view.endpoints()).isEmpty();
+            assertThat(view.serviceResourceVersion()).isEqualTo("10");
+            assertThat(view.observedAt()).isEqualTo(NOW);
+            assertThat(view.validUntil()).isEqualTo(NOW.plusSeconds(30));
+            verifyNoInteractions(fixture.api);
+        }
+    }
+
+    @Test
+    void serviceProjectionPreservesRawConditionsAndDeduplicatesDualStackWithoutAddresses() {
+        try (var fixture = new Fixture()) {
+            fixture.items.put(ResourceKind.SERVICE, List.of(service()));
+            var ipv4 = endpointSlice("slice-v4", "IPv4", "running-pod", "reader-running", 18080);
+            var ipv6 = endpointSlice("slice-v6", "IPv6", "running-pod", "reader-running", 18080);
+            fixture.items.put(ResourceKind.ENDPOINT_SLICE, List.of(ipv4, ipv6));
+            fixture.observer.refresh();
+            var view = fixture.observer.currentServiceView(serviceBinding());
+            assertThat(view.fresh()).isTrue();
+            assertThat(view.endpoints()).containsExactly(new EndpointVO("running-pod", "reader-running", 18080, true, null, null));
+            assertThat(view.toString()).doesNotContain("10.20.30.40", "2001:db8::1");
+            assertThatThrownBy(() -> view.endpoints().clear()).isInstanceOf(UnsupportedOperationException.class);
+            ((ObjectNode) ipv6.path("endpoints").get(0).path("conditions")).put("ready", false);
+            fixture.session(ResourceKind.ENDPOINT_SLICE).emit(WatchEventType.MODIFIED, ipv6);
+            assertInvalidService(fixture);
+        }
+    }
+
+    @Test
+    void associatedSliceLabelDoesNotAuthorizeForeignOrMissingControllerOwnership() {
+        for (String mutation : List.of("foreign-owner", "missing-owner", "wrong-label", "wrong-owner-api", "two-controllers")) {
+            try (var fixture = serviceFixture()) {
+                var slice = endpointSlice("slice-v4", "IPv4", "running-pod", "reader-running", 18080);
+                var metadata = (ObjectNode) slice.path("metadata");
+                switch (mutation) {
+                    case "foreign-owner" -> ((ObjectNode) metadata.path("ownerReferences").get(0)).put("uid", "foreign-service");
+                    case "missing-owner" -> metadata.remove("ownerReferences");
+                    case "wrong-label" -> ((ObjectNode) metadata.path("labels")).put("kubernetes.io/service-name", "other");
+                    case "wrong-owner-api" -> ((ObjectNode) metadata.path("ownerReferences").get(0)).put("apiVersion", "apps/v1");
+                    default -> ((com.fasterxml.jackson.databind.node.ArrayNode) metadata.path("ownerReferences")).add(metadata.path("ownerReferences").get(0).deepCopy());
+                }
+                fixture.items.put(ResourceKind.ENDPOINT_SLICE, List.of(slice)); fixture.observer.refresh();
+                assertInvalidService(fixture);
+            }
+        }
+    }
+
+    @Test
+    void serviceProjectionRejectsForeignMissingOrRecreatedPodAndUnverifiedWorkloadChain() {
+        for (String mutation : List.of("foreign-namespace", "wrong-name", "wrong-uid", "missing-target", "foreign-workload", "missing-replica", "workload-name", "selector-mismatch")) {
+            try (var fixture = serviceFixture()) {
+                var slice = endpointSlice("slice-v4", "IPv4", "running-pod", "reader-running", 18080);
+                var reference = (ObjectNode) slice.path("endpoints").get(0).path("targetRef");
+                switch (mutation) {
+                    case "foreign-namespace" -> reference.put("namespace", "other");
+                    case "wrong-name" -> reference.put("name", "other");
+                    case "wrong-uid" -> reference.put("uid", "recreated");
+                    case "missing-target" -> ((ObjectNode) slice.path("endpoints").get(0)).remove("targetRef");
+                    case "missing-replica" -> fixture.items.put(ResourceKind.REPLICA_SET, List.of());
+                    case "foreign-workload" -> {
+                        var replica = replicaSet("reader-rs", "replica-uid"); owner(replica, "Deployment", "other", "other-uid");
+                        fixture.items.put(ResourceKind.REPLICA_SET, List.of(replica));
+                    }
+                    case "workload-name" -> {
+                        var replica = replicaSet("reader-rs", "replica-uid"); owner(replica, "Deployment", "wrong-name", "deployment-uid");
+                        fixture.items.put(ResourceKind.REPLICA_SET, List.of(replica));
+                    }
+                    default -> ((ObjectNode) fixture.items.get(ResourceKind.POD).getFirst().path("metadata").path("labels")).put("app", "other");
+                }
+                fixture.items.put(ResourceKind.ENDPOINT_SLICE, List.of(slice)); fixture.observer.refresh();
+                assertInvalidService(fixture);
+            }
+        }
+    }
+
+    @Test
+    void serviceIdentityPortProtocolAndEndpointConditionMismatchNeverYieldFreshEvidence() {
+        for (String mutation : List.of("service-uid", "service-name", "service-port", "service-protocol", "slice-port", "slice-protocol", "condition")) {
+            try (var fixture = serviceFixture()) {
+                var service = (ObjectNode) fixture.items.get(ResourceKind.SERVICE).getFirst();
+                var slice = endpointSlice("slice-v4", "IPv4", "running-pod", "reader-running", 18080);
+                switch (mutation) {
+                    case "service-uid" -> ((ObjectNode) service.path("metadata")).put("uid", "replacement");
+                    case "service-name" -> ((ObjectNode) service.path("metadata")).put("name", "other");
+                    case "service-port" -> ((ObjectNode) service.path("spec").path("ports").get(0)).put("port", 9999);
+                    case "service-protocol" -> ((ObjectNode) service.path("spec").path("ports").get(0)).put("protocol", "UDP");
+                    case "slice-port" -> ((ObjectNode) slice.path("ports").get(0)).put("port", 9999);
+                    case "slice-protocol" -> ((ObjectNode) slice.path("ports").get(0)).put("protocol", "UDP");
+                    default -> ((ObjectNode) slice.path("endpoints").get(0).path("conditions")).put("ready", "true");
+                }
+                fixture.items.put(ResourceKind.ENDPOINT_SLICE, List.of(slice)); fixture.observer.refresh();
+                var view = fixture.observer.currentServiceView(serviceBinding());
+                assertThat(view.fresh()).as(mutation).isFalse(); assertThat(view.endpoints()).isEmpty();
+            }
+        }
+    }
+
+    @Test
+    void namedTargetPortIsVerifiedPerPodAndMissingOrAmbiguousDeclarationFailsClosed() {
+        try (var fixture = serviceFixture()) {
+            ((ObjectNode) fixture.items.get(ResourceKind.SERVICE).getFirst().path("spec").path("ports").get(0)).put("targetPort", "application");
+            var pod = (ObjectNode) fixture.items.get(ResourceKind.POD).getFirst();
+            var container = (ObjectNode) pod.path("spec").path("containers").get(0);
+            container.putArray("ports").addObject().put("name", "application").put("containerPort", 19080).put("protocol", "TCP");
+            var pendingContainer = (ObjectNode) fixture.items.get(ResourceKind.POD).getLast().path("spec").path("containers").get(0);
+            pendingContainer.putArray("ports").addObject().put("name", "application").put("containerPort", 19081).put("protocol", "TCP");
+            var pendingSlice = endpointSlice("slice-pending", "IPv4", "pending-pod", "reader-pending", 19081);
+            ((ObjectNode) pendingSlice.path("endpoints").get(0).path("conditions")).put("ready", false).put("serving", true).put("terminating", true);
+            var unrelatedSlice = endpointSlice("other-service", "IPv4", "unknown-pod", "other", 99);
+            ((ObjectNode) unrelatedSlice.path("metadata").path("labels")).put("kubernetes.io/service-name", "other");
+            ((ObjectNode) unrelatedSlice.path("metadata").path("ownerReferences").get(0)).put("name", "other").put("uid", "other-uid");
+            fixture.items.put(ResourceKind.ENDPOINT_SLICE, List.of(endpointSlice("slice-v4", "IPv4", "running-pod", "reader-running", 19080), pendingSlice, unrelatedSlice));
+            fixture.observer.refresh();
+            assertThat(fixture.observer.currentServiceView(serviceBinding()).endpoints()).containsExactly(
+                    new EndpointVO("pending-pod", "reader-pending", 19081, false, true, true),
+                    new EndpointVO("running-pod", "reader-running", 19080, true, null, null));
+            container.remove("ports");
+            fixture.session(ResourceKind.POD).emit(WatchEventType.MODIFIED, pod); assertInvalidService(fixture);
+            var ports = container.putArray("ports");
+            ports.addObject().put("name", "application").put("containerPort", 19080);
+            ports.addObject().put("name", "application").put("containerPort", 19080);
+            fixture.session(ResourceKind.POD).emit(WatchEventType.MODIFIED, pod); assertInvalidService(fixture);
+        }
+    }
+
+    @Test
+    void serviceProjectionResolvesDefaultTargetPortAndStatefulOwnerWithoutInferringConditions() {
+        try (var fixture = serviceFixture()) {
+            ((ObjectNode) fixture.items.get(ResourceKind.SERVICE).getFirst().path("spec").path("ports").get(0)).remove("targetPort");
+            var stateful = resource("StatefulSet", "reader-stateful", "deployment-uid");
+            fixture.items.put(ResourceKind.STATEFUL_SET, List.of(stateful));
+            var pod = pod("stateful-pod", "reader-stateful-0", false); owner(pod, "StatefulSet", "reader-stateful", "deployment-uid");
+            fixture.items.put(ResourceKind.POD, List.of(pod));
+            var slice = endpointSlice("slice-v4", "IPv4", "stateful-pod", "reader-stateful-0", 80);
+            ((ObjectNode) slice.path("endpoints").get(0)).remove("conditions");
+            fixture.items.put(ResourceKind.ENDPOINT_SLICE, List.of(slice)); fixture.observer.refresh();
+            var view = fixture.observer.currentServiceView(serviceBinding());
+            assertThat(view.fresh()).isTrue();
+            assertThat(view.endpoints()).containsExactly(new EndpointVO("stateful-pod", "reader-stateful-0", 80, null, null, null));
+        }
+    }
+
+    @Test
+    void staleWatchFailureRelistAndClosedServiceProjectionNeverRetainFreshEndpoints() {
+        try (var fixture = serviceFixture()) {
+            fixture.items.put(ResourceKind.ENDPOINT_SLICE, List.of(endpointSlice("slice-v4", "IPv4", "running-pod", "reader-running", 18080)));
+            fixture.observer.refresh();
+            doAnswer(call -> {
+                var view = fixture.observer.currentServiceView(serviceBinding());
+                assertThat(view.status()).isEqualTo(StatusEnum.RELISTING); assertThat(view.endpoints()).isEmpty();
+                return new ListPage("20", null, fixture.items.get(ResourceKind.SERVICE));
+            }).when(fixture.api).list(eq(ResourceKind.SERVICE), eq(NAMESPACE), nullable(String.class), eq(500));
+            fixture.observer.refresh();
+            fixture.clock.advance(Duration.ofSeconds(30));
+            assertThat(fixture.observer.currentServiceView(serviceBinding()).status()).isEqualTo(StatusEnum.STALE);
+            assertThat(fixture.observer.currentServiceView(serviceBinding()).endpoints()).isEmpty();
+            fixture.observer.refresh();
+            fixture.session(ResourceKind.POD).completed.completeExceptionally(new Failure(FailureKind.GONE));
+            assertThat(fixture.observer.currentServiceView(serviceBinding()).reasonCode()).isEqualTo("GONE");
+            assertThat(fixture.observer.currentServiceView(serviceBinding()).endpoints()).isEmpty();
+            fixture.observer.close();
+            assertThat(fixture.observer.currentServiceView(serviceBinding()).status()).isEqualTo(StatusEnum.CLOSED);
+        }
+    }
+
+    private static void assertInvalidService(Fixture fixture) {
+        var view = fixture.observer.currentServiceView(serviceBinding());
+        assertThat(view.status()).isEqualTo(StatusEnum.UNAVAILABLE);
+        assertThat(view.reasonCode()).isEqualTo("INVALID_SERVICE_OBSERVATION"); assertThat(view.endpoints()).isEmpty();
+    }
+
+    private static Fixture serviceFixture() {
+        var fixture = new Fixture(); fixture.items.put(ResourceKind.SERVICE, List.of(service())); return fixture;
+    }
+
+    private static DdcServiceObservationBindingVO serviceBinding() {
+        return new DdcServiceObservationBindingVO(7, "tenant-seven", "business", "namespace", "prod", "reader", "service-binding", 1,
+                "cluster-a", NAMESPACE, "reader-http", "service-uid", "http", 80, "http", "reader", "business", "1.0.0", Set.of("deployment-uid"));
+    }
+
+    private static ObjectNode service() {
+        var service = resource("Service", "reader-http", "service-uid");
+        var spec = service.putObject("spec"); spec.putObject("selector").put("app", "reader");
+        spec.putArray("ports").addObject().put("name", "http").put("protocol", "TCP").put("port", 80).put("targetPort", 18080);
+        return service;
+    }
+
+    private static ObjectNode endpointSlice(String name, String addressType, String podUid, String podName, int port) {
+        var slice = resource("EndpointSlice", name, name + "-uid");
+        var metadata = (ObjectNode) slice.path("metadata"); metadata.putObject("labels").put("kubernetes.io/service-name", "reader-http");
+        metadata.putArray("ownerReferences").addObject().put("apiVersion", "v1").put("kind", "Service")
+                .put("name", "reader-http").put("uid", "service-uid").put("controller", true);
+        slice.put("addressType", addressType); slice.putArray("ports").addObject().put("name", "http").put("protocol", "TCP").put("port", port);
+        var endpoint = slice.putArray("endpoints").addObject();
+        endpoint.putArray("addresses").add("IPv4".equals(addressType) ? "10.20.30.40" : "2001:db8::1");
+        endpoint.putObject("targetRef").put("apiVersion", "v1").put("kind", "Pod").put("namespace", NAMESPACE).put("name", podName).put("uid", podUid);
+        endpoint.putObject("conditions").put("ready", true);
+        return slice;
+    }
 
     @Test
     void initialViewIsUnknownAndLookupNeverFetchesKubernetes() {

@@ -1,5 +1,4 @@
 # DdcAutoConfiguration selects native config delivery and its readiness gate for managed deployments.
 top.egon.cola.component.tianshu.autoconfigure.DdcRedisAutoConfiguration
 top.egon.cola.component.tianshu.autoconfigure.DdcAutoConfiguration
-top.egon.cola.component.tianshu.autoconfigure.DdcRegistryAutoConfiguration
 top.egon.cola.component.tianshu.autoconfigure.DdcAiResourceAutoConfiguration

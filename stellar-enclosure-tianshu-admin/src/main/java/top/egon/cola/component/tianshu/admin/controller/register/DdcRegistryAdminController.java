@@ -5,9 +5,16 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.ResourceType
 import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionResource;
 import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.RequiresPermissions;
 
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
+import top.egon.cola.component.common.core.exception.CommonException;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -25,7 +32,9 @@ import top.egon.cola.component.tianshu.model.management.DdcManagementServiceSnap
 import top.egon.cola.component.yuheng.openapi.annotation.EgonApiCatalog;
 import top.egon.cola.component.yuheng.openapi.annotation.EgonGatewayPolicy;
 
-@RestController
+@Slf4j
+@RestController("ddcRegistryAdminController")
+@RequiredArgsConstructor(onConstructor_ = @Autowired)
 @RequestMapping("/api/v1/tianshu/registry")
 @Tag(name = "tianshu-admin-tianshu-registry-admin-controller", description = "DdcRegistryAdminController 管理接口组")
 @EgonApiCatalog(
@@ -37,17 +46,8 @@ import top.egon.cola.component.yuheng.openapi.annotation.EgonGatewayPolicy;
 )
 public class DdcRegistryAdminController {
 
-    private final DdcManagementFacade facade;
-
-    private final DdcRegistryAdminPageService pageService;
-
-    public DdcRegistryAdminController(
-            DdcManagementFacade facade,
-            DdcRegistryAdminPageService pageService
-    ) {
-        this.facade = facade;
-        this.pageService = pageService;
-    }
+    @Qualifier("ddcManagementFacade") private final DdcManagementFacade facade;
+    @Qualifier("ddcRegistryAdminPageService") private final DdcRegistryAdminPageService pageService;
 
     @Operation(operationId = "tianshu.ddcRegistryAdminController.services")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
@@ -126,19 +126,11 @@ public class DdcRegistryAdminController {
             @RequestParam("protocol") String protocol,
             @RequestParam("serviceName") String serviceName,
             @RequestParam(value = "group", required = false) String group,
-            @RequestParam(value = "version", required = false) String version
+            @RequestParam(value = "version", required = false) String version,
+            @RequestParam(value = "bindingId", required = false) String bindingId
     ) {
-        return ResultRecord.success(facade.getInstances(query(
-                bizCode,
-                null,
-                env,
-                appCode,
-                serviceKind,
-                protocol,
-                serviceName,
-                group,
-                version
-        )));
+        var query = query(bizCode, null, env, appCode, serviceKind, protocol, serviceName, group, version);
+        return ResultRecord.success(bindingId == null ? facade.getInstances(query) : facade.getInstances(query, bindingId));
     }
 
     @Operation(operationId = "tianshu.ddcRegistryAdminController.pageInstances")
@@ -156,15 +148,24 @@ public class DdcRegistryAdminController {
             @RequestParam("serviceName") String serviceName,
             @RequestParam(value = "group", required = false) String group,
             @RequestParam(value = "version", required = false) String version,
+            @RequestParam(value = "bindingId", required = false) String bindingId,
             PageQuery pageQuery
     ) {
-        return DdcAdminPageSupport.result(pageService.pageInstances(
-                query(
-                        bizCode, null, env, appCode, serviceKind,
-                        protocol, serviceName, group, version
-                ),
-                pageQuery
-        ));
+        var query = query(bizCode, null, env, appCode, serviceKind, protocol, serviceName, group, version);
+        return DdcAdminPageSupport.result(bindingId == null ? pageService.pageInstances(query, pageQuery)
+                : pageService.pageInstances(query, pageQuery, bindingId));
+    }
+
+    /** Registry evidence failures have real HTTP semantics; unrelated legacy errors keep their existing envelope. */
+    @ExceptionHandler(CommonException.class)
+    public ResponseEntity<ResultRecord<Void>> registryFailure(CommonException failure) {
+        int httpStatus = switch (failure.getStatus()) {
+            case "TIANSHU_SERVICE_OBSERVATION_UNAVAILABLE" -> 503;
+            case "TIANSHU_SERVICE_BINDING_AMBIGUOUS" -> 409;
+            case "TIANSHU_SERVICE_BINDING_NOT_FOUND" -> 404;
+            default -> 200;
+        };
+        return ResponseEntity.status(httpStatus).body(ResultRecord.failure(failure));
     }
 
     private DdcManagementServiceQuery query(

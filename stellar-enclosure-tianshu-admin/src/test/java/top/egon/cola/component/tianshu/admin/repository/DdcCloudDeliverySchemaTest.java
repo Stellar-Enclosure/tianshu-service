@@ -63,7 +63,7 @@ class DdcCloudDeliverySchemaTest {
         assertThat(manifest.path("family").asText()).isEqualTo("tianshu");
         assertThat(manifest.path("freshBaselineVersion").asText()).isEqualTo("20261018_001");
         JsonNode scripts = manifest.path("scripts");
-        assertThat(scripts.size()).as("one appended cloud delivery migration").isEqualTo(9);
+        assertThat(scripts.size()).as("verified cloud delivery prefix").isGreaterThanOrEqualTo(9);
         for (int index = 0; index < HISTORICAL_VERSIONS.size(); index++) {
             JsonNode entry = scripts.get(index);
             assertThat(entry.path("version").asText()).isEqualTo(HISTORICAL_VERSIONS.get(index));

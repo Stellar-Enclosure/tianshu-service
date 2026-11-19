@@ -3,122 +3,52 @@ package top.egon.cola.component.tianshu.admin.config;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.redisson.api.RedissonClient;
-import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.transaction.PlatformTransactionManager;
-import top.egon.cola.component.tianshu.admin.repository.DdcInstanceRepository;
-import top.egon.cola.component.tianshu.admin.service.notification.DdcNotificationPublisher;
-import top.egon.cola.component.tianshu.admin.security.registration.DdcRegistrationCredentialVerifier;
-import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantAdminProperties;
-import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextExecutor;
-import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantRegistry;
-import top.egon.cola.component.tianshu.admin.service.metadata.DdcScopeGate;
-import top.egon.cola.platform.tianquan.shoubing.starter.autoconfigure.IdpStarterAutoConfiguration;
-import top.egon.cola.platform.tianquan.shoubing.starter.security.impl.DatabaseOAuthRevocationReader;
+import top.egon.cola.component.tianshu.admin.repository.DdcRedisRepository;
+
+import java.util.Arrays;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
 class DdcAdminRedisConfigTest {
-
-    @Test
-    void createsRegistrationVerifierWhenIdpServiceTokenVerifierComesFromAutoConfiguration() {
-        new ApplicationContextRunner()
-                .withConfiguration(AutoConfigurations.of(
-                        IdpStarterAutoConfiguration.class
-                ))
-                .withUserConfiguration(
-                        TestInfrastructure.class,
-                        DdcAdminRedisConfig.class
-                )
-                .withBean("defaultValidator", jakarta.validation.Validator.class,
-                        org.springframework.validation.beanvalidation.LocalValidatorFactoryBean::new)
-                .withBean("identityAuthorityClientResolver",
-                        top.egon.cola.platform.tianquan.shoubing.starter.state.IdentityAuthorityClientResolver.class,
-                        () -> mock(top.egon.cola.platform.tianquan.shoubing.starter.state.IdentityAuthorityClientResolver.class))
-                .withBean("idpObservedVerificationComponent",
-                        top.egon.cola.platform.tianquan.shoubing.starter.security.IdpObservedVerificationComponent.class,
-                        () -> {
-                            var observations = mock(top.egon.cola.platform.tianquan.shoubing.starter.security.IdpObservedVerificationComponent.class);
-                            org.mockito.Mockito.when(observations.enabled()).thenReturn(true);
-                            return observations;
-                        })
-                .withBean("additionalIdpProperties",
-                        top.egon.cola.platform.tianquan.shoubing.starter.autoconfigure.IdpStarterProperties.class,
-                        top.egon.cola.platform.tianquan.shoubing.starter.autoconfigure.IdpStarterProperties::new)
-                .withPropertyValues(
-                        "egon.cola.platform.tianquan.shoubing.enabled=true",
-                        "egon.cola.platform.tianquan.shoubing.trusted-issuers.tenant.issuer=https://tianquan-shoubing.example",
-                        "egon.cola.platform.tianquan.shoubing.trusted-issuers.tenant.jwks-uri=https://tianquan-shoubing.example/oauth2/jwks",
-                        "egon.cola.platform.tianquan.shoubing.trusted-issuers.tenant.realm-key=tenant",
-                        "egon.cola.platform.tianquan.shoubing.trusted-issuers.tenant.realm-type=TENANT",
-                        "egon.cola.platform.tianquan.shoubing.trusted-issuers.tenant.tenant-id=1001",
-                        "egon.cola.platform.tianquan.shoubing.trusted-issuers.tenant.status=ACTIVE",
-                        "egon.cola.platform.tianquan.shoubing.trusted-issuers.tenant.trust-version=1",
-                        "egon.cola.platform.tianquan.shoubing.issuer=https://tianquan-shoubing.example",
-                        "egon.cola.platform.tianquan.shoubing.jwk-set-uri=https://tianquan-shoubing.example/oauth2/jwks",
-                        "egon.cola.platform.tianquan.shoubing.resource-server-id=tianshu-local",
-                        "egon.cola.platform.tianquan.shoubing.resource-uri=https://resource.example/tianshu"
-                )
+    @Test void retainsIndependentCacheWithoutAnyConfigurationLeaseProducer() {
+        RedissonClient redis = mock(RedissonClient.class);
+        new ApplicationContextRunner().withUserConfiguration(DdcAdminRedisConfig.class)
+                .withBean("ddcAdminRedissonClient", RedissonClient.class, () -> redis)
+                .withBean("jacksonObjectMapper", ObjectMapper.class, ObjectMapper::new)
                 .run(context -> {
                     assertThat(context).hasNotFailed();
-                    assertThat(context).hasSingleBean(
-                            DatabaseOAuthRevocationReader.class
-                    );
-                    assertThat(context).hasSingleBean(
-                            DdcRegistrationCredentialVerifier.class
-                    ).hasBean("ddcNonceStore");
+                    assertThat(context).hasSingleBean(DdcRedisRepository.class);
+                    assertThat(context.getBean("redissonClient")).isSameAs(redis);
+                    assertThat(context).doesNotHaveBean("ddcConfigLeaseRedisRepository")
+                            .doesNotHaveBean("ddcConfigLeaseService").doesNotHaveBean("ddcLeaseExpiryScanner")
+                            .doesNotHaveBean("ddcResourceAdmissionRevocationService")
+                            .doesNotHaveBean("ddcServiceRegistryRedisRepository")
+                            .doesNotHaveBean("ddcServiceRegistryService")
+                            .doesNotHaveBean("ddcNotificationPublisher")
+                            .doesNotHaveBean("ddcRegistryEventDeliveryHandler")
+                            .doesNotHaveBean("ddcRegistrationCredentialVerifier");
                 });
     }
 
-    @Configuration(proxyBeanMethods = false)
-    static class TestInfrastructure {
+    @Test void anExistingIndependentCacheDoesNotEnableTheRetiredLeaseStack() {
+        RedissonClient supplied = mock(RedissonClient.class);
+        new ApplicationContextRunner().withUserConfiguration(DdcAdminRedisConfig.class)
+                .withPropertyValues("egon.cola.component.tianshu.admin.redis.enabled=false")
+                .withBean("redissonClient", RedissonClient.class, () -> supplied)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context.getBean("redissonClient")).isSameAs(supplied);
+                    assertThat(context).doesNotHaveBean("ddcAdminRedissonClient")
+                            .doesNotHaveBean("ddcConfigLeaseRedisRepository").doesNotHaveBean("ddcConfigLeaseService")
+                            .doesNotHaveBean("ddcLeaseExpiryScanner");
+                });
+    }
 
-        @Bean("ddcAdminRedissonClient")
-        RedissonClient ddcAdminRedissonClient() {
-            return mock(RedissonClient.class);
-        }
-
-        @Bean("jacksonObjectMapper")
-        ObjectMapper objectMapper() {
-            return new ObjectMapper();
-        }
-
-        @Bean("ddcNotificationPublisher")
-        DdcNotificationPublisher ddcNotificationPublisher() {
-            return mock(DdcNotificationPublisher.class);
-        }
-
-        @Bean
-        DdcInstanceRepository ddcInstanceRepository() {
-            return mock(DdcInstanceRepository.class);
-        }
-
-        @Bean
-        DdcScopeGate ddcScopeGate() {
-            return mock(DdcScopeGate.class);
-        }
-
-        @Bean("egon.cola.component.tianshu.admin.tenancy-top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantAdminProperties")
-        DdcTenantAdminProperties ddcTenantAdminProperties() {
-            return new DdcTenantAdminProperties();
-        }
-
-        @Bean("ddcTenantRegistry")
-        DdcTenantRegistry ddcTenantRegistry() {
-            return mock(DdcTenantRegistry.class);
-        }
-
-        @Bean("ddcTenantContextExecutor")
-        DdcTenantContextExecutor ddcTenantContextExecutor() {
-            return new DdcTenantContextExecutor();
-        }
-
-        @Bean
-        PlatformTransactionManager transactionManager() {
-            return mock(PlatformTransactionManager.class);
-        }
+    @Test void redisConfigurationDeclaresNoLeaseSchedulerOrConfigurationLeaseFactories() {
+        assertThat(Arrays.stream(DdcAdminRedisConfig.class.getDeclaredMethods()).map(java.lang.reflect.Method::getName))
+                .doesNotContain("ddcConfigLeaseRedisRepository", "ddcConfigLeaseService", "ddcLeaseExpiryScanner",
+                        "ddcServiceRegistryRedisRepository", "ddcServiceRegistryService", "ddcRegistrationCredentialVerifier");
     }
 }

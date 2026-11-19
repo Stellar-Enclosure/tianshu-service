@@ -15,6 +15,7 @@ import java.util.stream.Collectors;
 final class DdcCloudDeliveryReadyValidator {
     private static final String VERSION = "20261117_001";
     private static final String NATIVE_ROLLOUT_VERSION = "20261118_001";
+    private static final String SERVICE_OBSERVATION_VERSION = "20261119_001";
     private static final String SCHEMA = "public";
     private static final String BOOT = "ddc_config_boot_binding_t0";
     private static final String RECEIPT = "ddc_config_process_receipt_t0";
@@ -69,6 +70,10 @@ final class DdcCloudDeliveryReadyValidator {
         return manifest.scripts().getLast().version().compareTo(NATIVE_ROLLOUT_VERSION) >= 0;
     }
 
+    static boolean includesServiceObservation(EgonColaDdlManifestBO manifest) {
+        return manifest.scripts().getLast().version().compareTo(SERVICE_OBSERVATION_VERSION) >= 0;
+    }
+
     static void validate(Connection connection) throws SQLException {
         DatabaseMetaData metadata = connection.getMetaData();
         validateTable(metadata, BOOT, BOOT_COLUMNS, Set.of("deleted_at"));
@@ -118,6 +123,51 @@ final class DdcCloudDeliveryReadyValidator {
             }
         }
         require(seen.equals(requiredTypes.keySet()), "native rollout constraints");
+    }
+
+    static void validateServiceObservation(Connection connection) throws SQLException {
+        String table = "ddc_service_observation_t0";
+        validateTable(connection.getMetaData(), table, Set.of("identity_tenant_id", "binding_id", "binding_revision",
+                "binding_fingerprint", "cluster_id", "k8s_namespace", "service_name", "service_uid", "port_name", "service_port",
+                "writer_epoch", "report_seq", "observed_at", "valid_until", "recorded_at", "view_json"),
+                Set.of("deleted_at", "observed_at", "valid_until"));
+        requireJsonb(connection.getMetaData(), table, "view_json", false);
+        String constraints = """
+                SELECT c.conname,c.contype,c.convalidated,c.condeferrable,
+                       COALESCE((to_jsonb(c)->>'conenforced')::boolean,true),
+                       COALESCE(i.indnullsnotdistinct,false),
+                       (SELECT string_agg(a.attname,',' ORDER BY k.ordinality)
+                        FROM unnest(c.conkey) WITH ORDINALITY k(attnum,ordinality)
+                        JOIN pg_catalog.pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=k.attnum)
+                FROM pg_catalog.pg_constraint c LEFT JOIN pg_catalog.pg_index i ON i.indexrelid=c.conindid
+                WHERE c.conrelid='public.ddc_service_observation_t0'::regclass AND c.contype IN ('p','u','c')
+                """;
+        Map<String, String> types = Map.of("pk_ddc_service_observation", "p", "uk_ddc_service_observation_scope", "u",
+                "ck_ddc_service_observation_positive", "c", "ck_ddc_service_observation_identity", "c",
+                "ck_ddc_service_observation_expiry", "c", "ck_ddc_service_observation_view", "c");
+        Set<String> seen = new java.util.HashSet<>();
+        try (var statement = connection.prepareStatement(constraints); var rows = statement.executeQuery()) {
+            while (rows.next()) {
+                String name = rows.getString(1);
+                String type = rows.getString(2);
+                require(type.equals(types.get(name)) && rows.getBoolean(3) && !rows.getBoolean(4)
+                        && rows.getBoolean(5) && seen.add(name), name);
+                if ("p".equals(type)) require("id".equals(rows.getString(7)), name);
+                if ("u".equals(type)) require(rows.getBoolean(6)
+                        && "tenant_id,binding_id,binding_revision,deleted_at".equals(rows.getString(7)), name);
+            }
+        }
+        require(seen.equals(types.keySet()), "service observation constraints");
+        try (var statement = connection.prepareStatement("""
+                SELECT s.seqstart,s.seqincrement,s.seqmin,s.seqmax,s.seqcache,s.seqcycle,t.typname
+                FROM pg_catalog.pg_sequence s JOIN pg_catalog.pg_class c ON c.oid=s.seqrelid
+                JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace JOIN pg_catalog.pg_type t ON t.oid=s.seqtypid
+                WHERE n.nspname='public' AND c.relname='ddc_service_observation_epoch'
+                """); var rows = statement.executeQuery()) {
+            require(rows.next() && rows.getLong(1) == 1 && rows.getLong(2) == 1 && rows.getLong(3) == 1
+                    && rows.getLong(4) == Long.MAX_VALUE && rows.getLong(5) == 1 && !rows.getBoolean(6)
+                    && "int8".equals(rows.getString(7)) && !rows.next(), "service observation epoch");
+        }
     }
 
     private static void validateTable(DatabaseMetaData metadata, String table, Set<String> fields, Set<String> nullable)

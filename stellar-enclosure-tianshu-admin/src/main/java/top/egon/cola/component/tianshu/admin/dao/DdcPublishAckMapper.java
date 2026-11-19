@@ -1,5 +1,9 @@
 package top.egon.cola.component.tianshu.admin.dao;
 
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.batch.BatchSqlSession;
+import org.apache.ibatis.executor.BatchResult;
+import java.util.function.BiPredicate;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.springframework.validation.annotation.Validated;
@@ -8,8 +12,6 @@ import top.egon.cola.component.common.mybatis.extension.EgonColaMapper;
 import top.egon.cola.component.tianshu.admin.model.po.DdcPublishAckPO;
 
 import java.io.Serializable;
-import java.time.LocalDateTime;
-import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 
@@ -35,16 +37,26 @@ public interface DdcPublishAckMapper extends EgonColaMapper<DdcPublishAckPO> {
 
     DdcPublishAckPO selectActiveById(@Param("tenantId") Long tenantId, @Param("id") Long id);
     List<DdcPublishAckPO> selectActiveByIds(@Param("tenantId") Long tenantId, @Param("ids") List<Long> ids);
-    DdcPublishAckPO selectByChangeIdAndInstanceIdAndLeaseId(@Param("tenantId") Long tenantId,
-            @Param("changeId") String changeId, @Param("instanceId") String instanceId, @Param("leaseId") String leaseId);
-    DdcPublishAckPO selectForUpdateByChangeIdAndInstanceIdAndLeaseId(@Param("tenantId") Long tenantId,
-            @Param("changeId") String changeId, @Param("instanceId") String instanceId, @Param("leaseId") String leaseId);
-    int fenceObservedVersion(@Param("tenantId") Long tenantId, @Param("id") Long id,
-            @Param("expectedVersion") Long expectedVersion, @Param("actor") String actor, @Param("now") Instant now);
     List<DdcPublishAckPO> selectByChangeId(@Param("tenantId") Long tenantId, @Param("changeId") String changeId);
-    int markIncompleteTimeout(@Param("tenantId") Long tenantId, @Param("changeId") String changeId,
-            @Param("timeoutStatus") String timeoutStatus, @Param("ackAt") LocalDateTime ackAt, @Param("actor") String actor);
-    int resetTargets(@Param("tenantId") Long tenantId, @Param("changeId") String changeId, @Param("actor") String actor);
-    int resetTarget(@Param("tenantId") Long tenantId, @Param("id") Long id,
-            @Param("expectedVersion") Long expectedVersion, @Param("actor") String actor, @Param("now") java.time.Instant now);
+
+    @Override default int insert(DdcPublishAckPO entity) { throw readOnly(); }
+    @Override default int updateById(DdcPublishAckPO entity) { throw readOnly(); }
+    @Override default int update(DdcPublishAckPO entity, Wrapper<DdcPublishAckPO> wrapper) { throw readOnly(); }
+    @Override default int deleteById(DdcPublishAckPO entity) { throw readOnly(); }
+    @Override default int deleteById(Serializable id) { throw readOnly(); }
+    @Override default int deleteById(Object entity, boolean useFill) { throw readOnly(); }
+    @Override default int delete(Wrapper<DdcPublishAckPO> wrapper) { throw readOnly(); }
+    @Override default int deleteByIds(Collection<?> ids) { throw readOnly(); }
+    @Override default int deleteByIds(Collection<?> ids, boolean useFill) { throw readOnly(); }
+    @Override default int deleteBatchIds(Collection<?> ids) { throw readOnly(); }
+    @Override default List<BatchResult> insert(Collection<DdcPublishAckPO> entities, int batchSize) { throw readOnly(); }
+    @Override default List<BatchResult> updateById(Collection<DdcPublishAckPO> entities, int batchSize) { throw readOnly(); }
+    @Override default List<BatchResult> insertOrUpdate(Collection<DdcPublishAckPO> entities,
+            BiPredicate<BatchSqlSession, DdcPublishAckPO> predicate, int batchSize) { throw readOnly(); }
+    @Override default int deleteVersionedById(DdcPublishAckPO entity) { throw readOnly(); }
+    @Override default int restoreVersionedById(DdcPublishAckPO entity) { throw readOnly(); }
+
+    private static UnsupportedOperationException readOnly() {
+        return new UnsupportedOperationException("TIANSHU_LEGACY_ACK_READ_ONLY");
+    }
 }

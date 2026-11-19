@@ -1,16 +1,18 @@
 package top.egon.cola.component.tianshu.admin.rpc.provider;
 
+import top.egon.cola.component.rpc.tianshu.contract.proto.v1.RevokeResourceAdmissionRequest;
+import top.egon.cola.component.rpc.tianshu.contract.proto.v1.GetConfigClientsRequest;
+import io.grpc.StatusRuntimeException;
+import io.grpc.Status;
 import org.junit.jupiter.api.Test;
 import io.grpc.Context;
 import top.egon.cola.component.tianshu.admin.common.DdcAdminException;
 import top.egon.cola.component.tianshu.admin.security.rpc.DdcServicePrincipal;
 import top.egon.cola.component.tianshu.admin.service.management.DdcManagementFacade;
-import top.egon.cola.component.tianshu.admin.service.lease.DdcResourceAdmissionRevocationService;
 import top.egon.cola.component.tianshu.model.management.DdcManagementConfig;
 import top.egon.cola.component.tianshu.model.management.DdcManagementConfigDeleteRequest;
 import top.egon.cola.component.tianshu.model.management.DdcManagementConfigQuery;
 import top.egon.cola.component.tianshu.model.management.DdcManagementConfigUpsertRequest;
-import top.egon.cola.component.tianshu.model.management.DdcManagementInstanceQuery;
 import top.egon.cola.component.tianshu.model.management.DdcManagementPublishRequest;
 import top.egon.cola.component.tianshu.model.management.DdcManagementPublishResult;
 import top.egon.cola.component.tianshu.model.management.DdcManagementPublishStatus;
@@ -25,8 +27,6 @@ import top.egon.cola.component.tianshu.model.management.DdcManagementServiceCata
 import top.egon.cola.component.tianshu.model.management.DdcManagementServiceKey;
 import top.egon.cola.component.tianshu.model.management.DdcManagementServiceQuery;
 import top.egon.cola.component.tianshu.model.management.DdcManagementServiceSnapshot;
-import top.egon.cola.component.tianshu.model.management.DdcResourceAdmissionRevocationRequest;
-import top.egon.cola.component.tianshu.model.management.DdcResourceAdmissionRevocationResult;
 import top.egon.cola.component.tianshu.error.management.DdcManagementErrorCode;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.GetPublishTaskRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.RetryPublishTaskRequest;
@@ -39,6 +39,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -48,12 +49,10 @@ class DdcManagementRpcProviderTest {
     @Test
     void mapsMissingConfigToAnEmptyFindResponse() {
         DdcManagementFacade facade = mock(DdcManagementFacade.class);
-        DdcResourceAdmissionRevocationService revocations =
-                mock(DdcResourceAdmissionRevocationService.class);
         DdcManagementProtoMapper mapper = new DdcManagementProtoMapper(
                 new DdcCommonProtoMapper(4 * 1024 * 1024), 1024 * 1024);
         DdcManagementRpcProvider provider = new DdcManagementRpcProvider(
-                facade, revocations, mapper);
+                facade, mapper);
         DdcManagementConfigQuery query = new DdcManagementConfigQuery(
                 "biz", "test", "app");
         when(facade.findConfig(query)).thenThrow(
@@ -72,12 +71,10 @@ class DdcManagementRpcProviderTest {
     @Test
     void mapsAndDelegatesAllElevenManagementMethods() {
         DdcManagementFacade facade = mock(DdcManagementFacade.class);
-        DdcResourceAdmissionRevocationService revocations =
-                mock(DdcResourceAdmissionRevocationService.class);
         DdcManagementProtoMapper mapper = new DdcManagementProtoMapper(
                 new DdcCommonProtoMapper(4 * 1024 * 1024), 1024 * 1024);
         DdcManagementRpcProvider provider = new DdcManagementRpcProvider(
-                facade, revocations, mapper);
+                facade, mapper);
         Instant now = Instant.parse("2026-08-09T00:00:00Z");
         DdcManagementConfigQuery find = new DdcManagementConfigQuery(
                 "biz", "test", "app");
@@ -123,8 +120,6 @@ class DdcManagementRpcProviderTest {
                 "change-1", DdcManagementPublishStatus.SUCCESS, 3L,
                 "checksum", 0, 0, 0, 0, 0, 1,
                 List.of(), null, now, now, now);
-        DdcManagementInstanceQuery clients = new DdcManagementInstanceQuery(
-                "biz", "test", "app");
         DdcManagementScopeQuery scopes = new DdcManagementScopeQuery(
                 "biz", "namespace", "test", "app");
         DdcManagementServiceQuery services = new DdcManagementServiceQuery(
@@ -137,16 +132,6 @@ class DdcManagementRpcProviderTest {
                 3L, now, List.of(serviceKey));
         DdcManagementServiceSnapshot snapshot = new DdcManagementServiceSnapshot(
                 serviceKey, 4L, now, List.of());
-        DdcResourceAdmissionRevocationRequest revocation =
-                new DdcResourceAdmissionRevocationRequest(
-                        "permission-tianquan-shoubing-prod",
-                        "permission",
-                        "tianquan-shoubing",
-                        "prod",
-                        7L
-                );
-        DdcResourceAdmissionRevocationResult revocationResult =
-                new DdcResourceAdmissionRevocationResult(2, 3, 2);
         when(facade.findConfig(find)).thenReturn(config);
         when(facade.upsert(trustedUpsert)).thenReturn(config);
         when(facade.publish(trustedPublish)).thenReturn(publishResult);
@@ -155,11 +140,9 @@ class DdcManagementRpcProviderTest {
                 "change-1",
                 "service:management-a [requested=retry-operator]"))
                 .thenReturn(publishResult);
-        when(facade.getConfigClients(clients)).thenReturn(List.of());
         when(facade.getScopeBindings(scopes)).thenReturn(List.of());
         when(facade.getServiceKeys(services)).thenReturn(catalog);
         when(facade.getInstances(services)).thenReturn(snapshot);
-        when(revocations.revoke(revocation)).thenReturn(revocationResult);
 
         principal().bind(Context.current()).run(() -> {
             assertThat(provider.findConfig(mapper.toFindRequest(find)).getConfig())
@@ -177,12 +160,12 @@ class DdcManagementRpcProviderTest {
                     .setRequestedOperator("retry-operator")
                     .build()).getResult())
                     .isEqualTo(mapper.toPublishResult(publishResult));
-            assertThat(provider.getConfigClients(mapper.toConfigClientsRequest(clients))
-                    .getClientsCount()).isZero();
-            assertThat(provider.revokeResourceAdmission(
-                    mapper.toResourceAdmissionRevocationRequest(revocation)))
-                    .isEqualTo(mapper.toResourceAdmissionRevocationResponse(
-                            revocationResult));
+            assertThatThrownBy(() -> provider.getConfigClients(GetConfigClientsRequest.getDefaultInstance()))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class, failure ->
+                            assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNIMPLEMENTED));
+            assertThatThrownBy(() -> provider.revokeResourceAdmission(RevokeResourceAdmissionRequest.getDefaultInstance()))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class, failure ->
+                            assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNIMPLEMENTED));
             assertThat(provider.getScopeBindings(mapper.toScopeBindingsRequest(scopes))
                     .getBindingsCount()).isZero();
             assertThat(provider.getServiceKeys(mapper.toServiceKeysRequest(services)))
@@ -199,22 +182,18 @@ class DdcManagementRpcProviderTest {
         verify(facade).retry(
                 "change-1",
                 "service:management-a [requested=retry-operator]");
-        verify(facade).getConfigClients(clients);
         verify(facade).getScopeBindings(scopes);
         verify(facade).getServiceKeys(services);
         verify(facade).getInstances(services);
-        verify(revocations).revoke(revocation);
     }
 
     @Test
     void mapsAndDelegatesReadOnlyBusinessCatalogMethods() {
         DdcManagementFacade facade = mock(DdcManagementFacade.class);
-        DdcResourceAdmissionRevocationService revocations =
-                mock(DdcResourceAdmissionRevocationService.class);
         DdcManagementProtoMapper mapper = new DdcManagementProtoMapper(
                 new DdcCommonProtoMapper(4 * 1024 * 1024), 1024 * 1024);
         DdcManagementRpcProvider provider = new DdcManagementRpcProvider(
-                facade, revocations, mapper);
+                facade, mapper);
         DdcManagementBiz biz = new DdcManagementBiz(
                 "business-1", "retail", "Retail", true);
         DdcManagementApp app = new DdcManagementApp(
@@ -257,8 +236,8 @@ class DdcManagementRpcProviderTest {
     @Test
     void providerBoundaryDoesNotDependOnPersistenceOrRedissonTypes() {
         assertThat(List.of(
-                DdcConfigRpcProvider.class,
-                DdcRegistryRpcProvider.class,
+                DdcAiResourceRpcProvider.class,
+                DdcSiResourceRpcProvider.class,
                 DdcManagementRpcProvider.class
         )).allSatisfy(type -> {
             assertThat(type.getDeclaredFields()).allSatisfy(field ->

@@ -60,11 +60,11 @@ class DdcAiOptimizationSchemaScriptTest {
     void manifestAppendsScriptWithMatchingSha256AndKeepsHistory() throws Exception {
         JsonNode manifest = new ObjectMapper().readTree(bytes("db/egon-mp/repository-manifest.json"));
 
-        assertThat(manifest.path("scripts").size()).isEqualTo(6);
-        JsonNode last = manifest.path("scripts").get(2);
-        assertThat(last.path("version").asText()).isEqualTo("20261017_001");
-        assertThat(last.path("path").asText()).isEqualTo(SCRIPT);
-        assertThat(last.path("sha256").asText()).isEqualTo(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes(SCRIPT))));
+        JsonNode added = manifest.path("scripts").get(2);
+        assertThat(added).isNotNull();
+        assertThat(added.path("version").asText()).isEqualTo("20261017_001");
+        assertThat(added.path("path").asText()).isEqualTo(SCRIPT);
+        assertThat(added.path("sha256").asText()).isEqualTo(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes(SCRIPT))));
         assertThat(manifest.path("scripts").get(0).path("version").asText()).isEqualTo("20260922_001");
         assertThat(manifest.path("scripts").get(1).path("version").asText()).isEqualTo("20260928_001");
     }

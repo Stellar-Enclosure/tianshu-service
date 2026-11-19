@@ -21,6 +21,7 @@ import org.springframework.mock.env.MockEnvironment;
 import top.egon.cola.component.tianshu.admin.DynamicConfigCenterAdminApplication;
 import top.egon.cola.component.tianshu.admin.config.DdcConfigPublicationPolicyConfiguration.RegisteredPolicies;
 import top.egon.cola.component.tianshu.admin.config.DdcConfigPublicationPolicyConfiguration.RegisteredTargetVO;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcServiceObservationBindingVO;
 import top.egon.cola.component.tianshu.model.config.DdcConfigBaselineVO.TargetBindingVO;
 import top.egon.cola.component.tianshu.model.config.DdcConfigScopeVO;
 
@@ -28,6 +29,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -46,6 +49,23 @@ class DdcConfigWorkerApplicationTest {
     @Test
     void observerUsesADifferentExplicitNonWebRootWithoutTheAdminScan() throws Exception {
         assertWorkerRoot("config-observer", "ObserverApplication");
+    }
+
+    @Test
+    void theObserverScopeIncludesOnlyThisClustersApprovedConfigAndServiceNamespaces() throws Throwable {
+        var env = observerSettingsEnvironment();
+        var local = serviceBinding("cluster-a", "service-apps");
+        var remote = serviceBinding("cluster-b", "remote-apps");
+        var noConfigs = new RegisteredPolicies(Map.of(), List.of());
+
+        assertThat(observerNamespaces(env, noConfigs, List.of(local, remote))).isEqualTo(Set.of("service-apps"));
+        assertThat(observerNamespaces(env, policies("cluster-a"), List.of(local, remote)))
+                .isEqualTo(Set.of("apps-prod", "service-apps"));
+        assertThatThrownBy(() -> observerNamespaces(env, noConfigs, List.of(remote)))
+                .hasMessage("TIANSHU_CONFIG_WORKER_SCOPE_INVALID");
+        var excessive = IntStream.range(0, 9).mapToObj(i -> serviceBinding("cluster-a", "extra-" + i)).toList();
+        assertThatThrownBy(() -> observerNamespaces(env, noConfigs, excessive))
+                .hasMessage("TIANSHU_CONFIG_WORKER_SCOPE_INVALID");
     }
 
     @Test
@@ -203,6 +223,31 @@ class DdcConfigWorkerApplicationTest {
                 .withProperty(PREFIX + "config-publisher.api-server", "https://127.0.0.1:44443")
                 .withProperty(PREFIX + "config-publisher.api-ca-file", scratch.resolve("ca.crt").toString())
                 .withProperty(PREFIX + "config-publisher.api-token-file", scratch.resolve("token").toString());
+    }
+
+    private MockEnvironment observerSettingsEnvironment() throws Exception {
+        settingsEnvironment();
+        return new MockEnvironment().withProperty(PREFIX + "config-observer.cluster-id", "cluster-a")
+                .withProperty(PREFIX + "config-observer.api-server", "https://127.0.0.1:44443")
+                .withProperty(PREFIX + "config-observer.api-ca-file", scratch.resolve("ca.crt").toString())
+                .withProperty(PREFIX + "config-observer.api-token-file", scratch.resolve("token").toString());
+    }
+
+    private static DdcServiceObservationBindingVO serviceBinding(String cluster, String namespace) {
+        return new DdcServiceObservationBindingVO(1L, "identity-1", "biz", "default", "staging", "app", namespace,
+                1L, cluster, namespace, "service", "service-uid", "http", 8080, "http", "service", "", "v1",
+                Set.of("workload-uid"));
+    }
+
+    private static Object observerNamespaces(MockEnvironment environment, RegisteredPolicies policies,
+            List<DdcServiceObservationBindingVO> services) throws Throwable {
+        var method = Class.forName(CONFIGURATION).getDeclaredMethod("settingsFor", String.class,
+                org.springframework.core.env.Environment.class, RegisteredPolicies.class, List.class);
+        method.setAccessible(true);
+        Object settings = invoke(method, "config-observer", environment, policies, services);
+        var namespaces = settings.getClass().getDeclaredMethod("namespaces");
+        namespaces.setAccessible(true);
+        return namespaces.invoke(settings);
     }
 
     private static RegisteredPolicies policies(String cluster) {

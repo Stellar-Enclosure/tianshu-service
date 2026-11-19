@@ -1,6 +1,18 @@
 package top.egon.cola.component.tianshu.admin.service.management;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.slf4j.MDC;
+import top.egon.cola.component.common.core.exception.CommonException;
+import top.egon.cola.component.tianshu.admin.config.DdcServiceObservationBindings;
+import top.egon.cola.component.tianshu.admin.kubernetes.DdcKubernetesObservationService.StatusEnum;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcServiceObservationBindingVO;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcServiceObservationViewVO;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcServiceObservationViewVO.EndpointVO;
+import top.egon.cola.component.tianshu.admin.repository.DdcServiceObservationRepository;
+import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantRegistry;
+import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantBindingDTO;
+import top.egon.cola.component.tianshu.model.management.DdcManagementServiceQuery;
 import org.junit.jupiter.api.Test;
 import top.egon.cola.component.tianshu.admin.common.DdcAdminException;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishAckBO;
@@ -11,13 +23,11 @@ import top.egon.cola.component.tianshu.admin.model.vo.DdcConfigVO;
 import top.egon.cola.component.tianshu.admin.repository.DdcPublishAckRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcPublishTaskRepository;
 import top.egon.cola.component.tianshu.admin.service.config.DdcConfigService;
-import top.egon.cola.component.tianshu.admin.service.lease.DdcInstanceAdminService;
 import top.egon.cola.component.tianshu.admin.service.metadata.DdcNamespaceEnvAppBindingService;
 import top.egon.cola.component.tianshu.admin.service.metadata.DdcAppService;
 import top.egon.cola.component.tianshu.admin.service.metadata.DdcBizService;
 import top.egon.cola.component.tianshu.admin.service.metadata.DdcScopeGate;
 import top.egon.cola.component.tianshu.admin.service.publish.DdcPublishService;
-import top.egon.cola.component.tianshu.admin.service.registry.DdcServiceRegistryService;
 import top.egon.cola.component.tianshu.error.management.DdcManagementErrorCode;
 import top.egon.cola.component.tianshu.model.management.DdcManagementConfig;
 import top.egon.cola.component.tianshu.model.management.DdcManagementConfigDeleteRequest;
@@ -32,9 +42,13 @@ import top.egon.cola.component.tianshu.model.management.DdcManagementPublishStat
 import top.egon.cola.component.tianshu.model.management.DdcManagementPublishTask;
 import top.egon.cola.component.tianshu.model.management.DdcManagementScopeQuery;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -42,6 +56,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -61,6 +77,12 @@ class DdcManagementFacadeTest {
 
     private DdcAppService appService;
 
+    private static final Instant NOW = Instant.parse("2026-11-19T12:00:00Z");
+    private DdcServiceObservationBindings serviceBindings;
+    private DdcServiceObservationRepository serviceObservations;
+    private DdcTenantRegistry tenants;
+    private DdcScopeGate scopeGate;
+
     @BeforeEach
     void setUp() {
         configService = mock(DdcConfigService.class);
@@ -69,19 +91,22 @@ class DdcManagementFacadeTest {
         bindingService = mock(DdcNamespaceEnvAppBindingService.class);
         bizService = mock(DdcBizService.class);
         appService = mock(DdcAppService.class);
-        facade = new DdcManagementFacade(
-                configService,
-                mock(DdcPublishService.class),
-                publishTaskRepository,
-                publishAckRepository,
-                mock(DdcInstanceAdminService.class),
-                mock(DdcServiceRegistryService.class),
-                mock(DdcScopeGate.class),
-                null,
-                bindingService,
-                bizService,
-                appService
-        );
+        serviceBindings = mock(DdcServiceObservationBindings.class);
+        serviceObservations = mock(DdcServiceObservationRepository.class);
+        tenants = mock(DdcTenantRegistry.class);
+        scopeGate = mock(DdcScopeGate.class);
+        facade = new DdcManagementFacade(configService, mock(DdcPublishService.class), publishTaskRepository,
+                publishAckRepository, scopeGate, bindingService, bizService, appService, serviceBindings,
+                serviceObservations, tenants, Clock.fixed(NOW, ZoneOffset.UTC));
+        MDC.put("tenantId", "7");
+        MDC.put("userId", "operator-1");
+        when(tenants.requireEnabledTenant(7L)).thenReturn(DdcTenantBindingDTO.builder()
+                .tenantId(7L).identityTenantId("identity-7").enabled(true).build());
+    }
+
+    @AfterEach
+    void clearContext() {
+        MDC.clear();
     }
 
     @Test
@@ -287,6 +312,162 @@ class DdcManagementFacadeTest {
             assertThat(value.enabled()).isTrue();
         });
         verify(bindingService).list("biz", "namespace", "test", "app");
+    }
+
+    @Test
+    void currentRegistryUsesOnlyApprovedServiceAndFreshEndpointFacts() {
+        var binding = serviceBinding("binding-a", 7L, "identity-7", "logical-ns");
+        when(serviceBindings.bindings()).thenReturn(List.of(binding));
+        var view = fresh(List.of(new EndpointVO("pod-a", "orders-a", 8080, null, true, false)));
+        when(serviceObservations.findCurrent(any(), eq(binding))).thenReturn(Optional.of(view));
+
+        var snapshot = facade.getInstances(serviceQuery("logical-ns"));
+        assertThat(snapshot.generation()).isZero();
+        assertThat(snapshot.observedAt()).isEqualTo(NOW.minusSeconds(5));
+        assertThat(snapshot.serviceKey().serviceId()).isEqualTo("binding-a");
+        assertThat(snapshot.serviceKey().serviceKind()).isEqualTo("HTTP_PROVIDER");
+        assertThat(snapshot.instances()).singleElement().satisfies(endpoint -> {
+            assertThat(endpoint.host()).isNull();
+            assertThat(endpoint.leaseId()).isNull();
+            assertThat(endpoint.registeredAt()).isNull();
+            assertThat(endpoint.lastHeartbeatAt()).isNull();
+            assertThat(endpoint.expireAt()).isNull();
+            assertThat(endpoint.secure()).isFalse();
+            assertThat(endpoint.status()).isEqualTo("UNKNOWN");
+            assertThat(endpoint.port()).isEqualTo(8080);
+            assertThat(endpoint.metadata()).containsEntry("observationSource", "KUBERNETES")
+                    .containsEntry("kubernetesNamespace", "apps-prod")
+                    .containsEntry("serviceUid", "service-uid")
+                    .containsEntry("serving", "true").containsEntry("terminating", "false")
+                    .doesNotContainKeys("ready", "leaseId", "token", "Authorization");
+        });
+        verify(scopeGate).assertEnabledFresh("retail", "orders", "prod", "logical-ns");
+        var trusted = org.mockito.ArgumentCaptor.forClass(
+                top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextDTO.class);
+        verify(serviceObservations).findCurrent(trusted.capture(), eq(binding));
+        assertThat(trusted.getValue().tenantId()).isEqualTo(7L);
+        assertThat(trusted.getValue().identityTenantId()).isEqualTo("identity-7");
+        verifyNoMoreInteractions(serviceObservations);
+    }
+
+    @Test
+    void catalogFiltersLogicalNamespaceFromApprovedInventoryAndNeverUsesPhysicalNamespaceAsOwner() {
+        var binding = serviceBinding("binding-a", 7L, "identity-7", "logical-ns");
+        when(serviceBindings.bindings()).thenReturn(List.of(binding));
+        when(serviceObservations.findCurrent(any(), eq(binding))).thenReturn(Optional.of(fresh(List.of())));
+        assertThat(facade.getServiceKeys(serviceQuery("logical-ns")).services()).hasSize(1);
+        assertThat(facade.getServiceKeys(serviceQuery("apps-prod")).services()).isEmpty();
+        verify(serviceObservations).findCurrent(any(), eq(binding));
+        verifyNoMoreInteractions(serviceObservations);
+    }
+
+    @Test
+    void ambiguousLogicalTupleRequiresExactApprovedBindingId() {
+        var first = serviceBinding("binding-a", 7L, "identity-7", "logical-ns");
+        var second = serviceBinding("binding-b", 7L, "identity-7", "other-logical-ns");
+        when(serviceBindings.bindings()).thenReturn(List.of(first, second));
+        assertRegistryFailure(() -> facade.getInstances(serviceQuery(null)), 409,
+                "TIANSHU_SERVICE_BINDING_AMBIGUOUS");
+        verifyNoInteractions(serviceObservations);
+        when(serviceObservations.findCurrent(any(), eq(second))).thenReturn(Optional.of(fresh(List.of())));
+        assertThat(facade.getInstances(serviceQuery(null), "binding-b").serviceKey().serviceId()).isEqualTo("binding-b");
+        assertRegistryFailure(() -> facade.getInstances(serviceQuery(null), "unapproved"), 404,
+                "TIANSHU_SERVICE_BINDING_NOT_FOUND");
+    }
+
+    @Test
+    void missingStaleExpiredOrFutureObservationNeverFallsBackToLegacyOrEmptySuccess() {
+        var binding = serviceBinding("binding-a", 7L, "identity-7", "logical-ns");
+        when(serviceBindings.bindings()).thenReturn(List.of(binding));
+        for (var missing : List.of(Optional.<DdcServiceObservationViewVO>empty(),
+                Optional.of(new DdcServiceObservationViewVO(StatusEnum.STALE, "STALE", NOW.minusSeconds(30),
+                        NOW.minusSeconds(1), null, List.of())),
+                Optional.of(new DdcServiceObservationViewVO(StatusEnum.FRESH, null, NOW.minusSeconds(30),
+                        NOW, "rv-1", List.of())),
+                Optional.of(new DdcServiceObservationViewVO(StatusEnum.FRESH, null, NOW.plusSeconds(1),
+                        NOW.plusSeconds(20), "rv-1", List.of())))) {
+            when(serviceObservations.findCurrent(any(), eq(binding))).thenReturn(missing);
+            assertRegistryFailure(() -> facade.getInstances(serviceQuery(null)), 503,
+                    "TIANSHU_SERVICE_OBSERVATION_UNAVAILABLE");
+            assertRegistryFailure(() -> facade.getServiceKeys(serviceQuery(null)), 503,
+                    "TIANSHU_SERVICE_OBSERVATION_UNAVAILABLE");
+        }
+    }
+
+    @Test
+    void repositoryFailureExposesStableFaultWithoutRawCause() {
+        var binding = serviceBinding("binding-a", 7L, "identity-7", "logical-ns");
+        when(serviceBindings.bindings()).thenReturn(List.of(binding));
+        when(serviceObservations.findCurrent(any(), eq(binding))).thenThrow(new IllegalStateException("secret-db-uri"));
+        assertThatThrownBy(() -> facade.getInstances(serviceQuery(null))).isInstanceOfSatisfying(CommonException.class,
+                error -> {
+                    assertThat(error.getStatus()).isEqualTo("TIANSHU_SERVICE_OBSERVATION_UNAVAILABLE");
+                    assertThat(error.getCause()).isNull();
+                    assertThat(error.getMessage()).doesNotContain("secret-db-uri");
+                });
+    }
+
+    @Test
+    void unregisteredTenantOrMismatchedIdentityCannotReadAnotherOwnersServiceFacts() {
+        when(serviceBindings.bindings()).thenReturn(List.of(serviceBinding("foreign", 8L, "identity-8", "logical-ns")));
+        assertRegistryFailure(() -> facade.getInstances(serviceQuery(null)), 503,
+                "TIANSHU_SERVICE_OBSERVATION_UNAVAILABLE");
+        when(serviceBindings.bindings()).thenReturn(List.of(serviceBinding("wrong", 7L, "identity-8", "logical-ns")));
+        assertRegistryFailure(() -> facade.getInstances(serviceQuery(null)), 503,
+                "TIANSHU_SERVICE_OBSERVATION_UNAVAILABLE");
+        MDC.remove("tenantId");
+        assertRegistryFailure(() -> facade.getInstances(serviceQuery(null)), 503,
+                "TIANSHU_SERVICE_OBSERVATION_UNAVAILABLE");
+        verifyNoInteractions(serviceObservations);
+    }
+
+    @Test
+    void aKnownEmptyServiceIsDistinctFromUnknownObservationAndCatalogCannotHideOneUnknownMember() {
+        var first = serviceBinding("binding-a", 7L, "identity-7", "logical-ns");
+        var second = serviceBinding("binding-b", 7L, "identity-7", "logical-ns");
+        when(serviceBindings.bindings()).thenReturn(List.of(first, second));
+        when(serviceObservations.findCurrent(any(), eq(first))).thenReturn(Optional.of(fresh(List.of())));
+        when(serviceObservations.findCurrent(any(), eq(second))).thenReturn(Optional.empty());
+        assertThat(facade.getInstances(serviceQuery(null), "binding-a").instances()).isEmpty();
+        assertRegistryFailure(() -> facade.getServiceKeys(serviceQuery(null)), 503,
+                "TIANSHU_SERVICE_OBSERVATION_UNAVAILABLE");
+    }
+
+    @Test
+    void disabledScopeOrAuthorityReadFailureIsRejectedBeforeReadingCurrentServiceFacts() {
+        var binding = serviceBinding("binding-a", 7L, "identity-7", "logical-ns");
+        when(serviceBindings.bindings()).thenReturn(List.of(binding));
+        var denied = new CommonException(top.egon.cola.component.tianshu.error.DdcErrorStatus.SCOPE_DISABLED);
+        org.mockito.Mockito.doThrow(denied).when(scopeGate).assertEnabledFresh("retail", "orders", "prod", "logical-ns");
+        assertThatThrownBy(() -> facade.getInstances(serviceQuery(null))).isSameAs(denied);
+        org.mockito.Mockito.doThrow(new IllegalStateException("private-authority-store"))
+                .when(scopeGate).assertEnabledFresh("retail", "orders", "prod", "logical-ns");
+        assertRegistryFailure(() -> facade.getInstances(serviceQuery(null)), 503,
+                "TIANSHU_SERVICE_OBSERVATION_UNAVAILABLE");
+        verifyNoInteractions(serviceObservations);
+    }
+
+    private DdcManagementServiceQuery serviceQuery(String logicalNamespace) {
+        return new DdcManagementServiceQuery("retail", logicalNamespace, "prod", "orders", "HTTP_PROVIDER",
+                "http", "orders-api", "default", "1.0.0");
+    }
+
+    private DdcServiceObservationBindingVO serviceBinding(String id, long tenant, String identity, String namespace) {
+        return new DdcServiceObservationBindingVO(tenant, identity, "retail", namespace, "prod", "orders", id,
+                1L, "cluster-1", "apps-prod", "orders-public", "service-uid", "http", 80, "http", "orders-api",
+                "default", "1.0.0", Set.of("workload-uid"));
+    }
+
+    private DdcServiceObservationViewVO fresh(List<EndpointVO> endpoints) {
+        return new DdcServiceObservationViewVO(StatusEnum.FRESH, null, NOW.minusSeconds(5), NOW.plusSeconds(25),
+                "rv-123", endpoints);
+    }
+
+    private void assertRegistryFailure(Runnable action, int code, String status) {
+        assertThatThrownBy(action::run).isInstanceOfSatisfying(CommonException.class, error -> {
+            assertThat(error.getCode()).isEqualTo(code);
+            assertThat(error.getStatus()).isEqualTo(status);
+        });
     }
 
     private DdcConfigVO config(

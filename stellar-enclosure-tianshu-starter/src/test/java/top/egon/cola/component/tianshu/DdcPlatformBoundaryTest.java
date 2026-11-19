@@ -6,13 +6,10 @@ import org.springframework.lang.Nullable;
 import top.egon.cola.component.tianshu.api.client.DdcConfigClient;
 import top.egon.cola.component.tianshu.api.client.DdcManagementClient;
 import top.egon.cola.component.tianshu.format.DdcChecksum;
-import top.egon.cola.component.tianshu.listener.config.DdcConfigChangeListener;
-import top.egon.cola.component.tianshu.listener.registry.DdcRegistrySubscriptionCoordinator;
 import top.egon.cola.component.tianshu.model.instance.DdcInstanceIdentity;
 import top.egon.cola.component.tianshu.model.lease.DdcLeaseSession;
 import top.egon.cola.component.tianshu.model.registry.DdcServiceKey;
 import top.egon.cola.component.tianshu.service.binding.DdcFieldBindingService;
-import top.egon.cola.component.tianshu.service.lifecycle.DdcRuntimeCoordinator;
 import top.egon.cola.component.tianshu.redis.DdcRedisClientFactory;
 import top.egon.cola.component.tianshu.state.DdcLocalConfigState;
 
@@ -46,7 +43,6 @@ class DdcPlatformBoundaryTest {
                     "environment",
                     "error",
                     "format",
-                    "listener",
                     "model",
                     "observability",
                     "redis",
@@ -126,14 +122,8 @@ class DdcPlatformBoundaryTest {
                 .isEqualTo("top.egon.cola.component.tianshu.format");
         assertThat(DdcFieldBindingService.class.getPackageName())
                 .isEqualTo("top.egon.cola.component.tianshu.service.binding");
-        assertThat(DdcRuntimeCoordinator.class.getPackageName())
-                .isEqualTo("top.egon.cola.component.tianshu.service.lifecycle");
         assertThat(DdcRedisClientFactory.class.getPackageName())
                 .isEqualTo("top.egon.cola.component.tianshu.redis");
-        assertThat(DdcConfigChangeListener.class.getPackageName())
-                .isEqualTo("top.egon.cola.component.tianshu.listener.config");
-        assertThat(DdcRegistrySubscriptionCoordinator.class.getPackageName())
-                .isEqualTo("top.egon.cola.component.tianshu.listener.registry");
         assertThat(DdcLocalConfigState.class.getPackageName())
                 .isEqualTo("top.egon.cola.component.tianshu.state");
     }

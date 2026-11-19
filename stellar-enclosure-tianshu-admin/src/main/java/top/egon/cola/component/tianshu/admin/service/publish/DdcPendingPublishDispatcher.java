@@ -1,7 +1,6 @@
 package top.egon.cola.component.tianshu.admin.service.publish;
 
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -9,25 +8,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
-import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.validation.annotation.Validated;
 import top.egon.cola.component.common.core.validation.ValidationUtils;
 import top.egon.cola.component.outbox.api.OutboxMessage;
 import top.egon.cola.component.outbox.api.TransactionalOutbox;
 import top.egon.cola.component.tianshu.admin.common.DdcAdminException;
-import top.egon.cola.component.tianshu.admin.config.DdcAdminProperties;
-import top.egon.cola.component.tianshu.admin.config.DdcOutboxConfiguration.DdcConfigDispatchOutboxRouteDTO;
 import top.egon.cola.component.tianshu.admin.config.DdcOutboxConfiguration.DdcConfigRolloutOutboxRouteDTO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishTaskBO;
 import top.egon.cola.component.tianshu.admin.model.convertor.DdcConfigDispatchEventConverter;
-import top.egon.cola.component.tianshu.admin.repository.DdcConfigItemRepository;
-import top.egon.cola.component.tianshu.admin.repository.DdcConfigVersionRepository;
-import top.egon.cola.component.tianshu.admin.repository.DdcPublishTaskRepository;
-import top.egon.cola.component.tianshu.admin.repository.DdcPublishAckRepository;
-import top.egon.cola.component.tianshu.admin.repository.DdcRedisRepository;
-import top.egon.cola.component.tianshu.model.event.DdcConfigDispatchPreparedEvent;
-
-import java.time.Clock;
 
 /** Enqueues the fixed native wake-up inside the caller's local publication transaction. */
 @Slf4j
@@ -39,15 +27,6 @@ public class DdcPendingPublishDispatcher {
     @Qualifier("transactionalOutbox") private final TransactionalOutbox outbox;
     @Qualifier("ddcConfigRolloutOutboxRoute") private final DdcConfigRolloutOutboxRouteDTO route;
     @Qualifier("egonColaValidationUtils") private final ValidationUtils validation;
-
-    /** Historical construction is source-compatible; it cannot restore Redis delivery. */
-    public DdcPendingPublishDispatcher(DdcConfigItemRepository items, DdcConfigVersionRepository versions,
-            DdcPublishTaskRepository tasks, DdcPublishAckRepository acks, DdcRedisRepository redis,
-            DdcPublishStateTransitionService transitions, DdcConfigDispatchEventConverter events,
-            TransactionalOutbox outbox, DdcConfigDispatchOutboxRouteDTO oldRoute,
-            TransactionTemplate transactions, Clock clock, ValidationUtils validation, DdcAdminProperties properties) {
-        this(events, outbox, new DdcConfigRolloutOutboxRouteDTO("tianshu.config-rollout", "1"), validation);
-    }
 
     public DdcPublishTaskBO enqueueNative(@Valid @NotNull DdcPublishTaskBO task) {
         if (!TransactionSynchronizationManager.isActualTransactionActive() || !isNative(task)
@@ -72,11 +51,4 @@ public class DdcPendingPublishDispatcher {
                 && task.getPlatformEvidence().path("schemaVersion").intValue() == 1
                 && task.getPlatformEvidence().path("targets").isArray();
     }
-
-    public DdcPublishTaskBO dispatch(@NotBlank String changeId) { throw retired(); }
-    DdcPublishTaskBO dispatch(DdcPublishTaskBO task) { throw retired(); }
-    public boolean deliverPrepared(@Valid DdcConfigDispatchPreparedEvent event) { return false; }
-    public void failPrepared(@Valid DdcConfigDispatchPreparedEvent event, @NotBlank String stage,
-            @NotBlank String message) { throw retired(); }
-    private static DdcAdminException retired() { return new DdcAdminException("TIANSHU_LEGACY_CONFIG_DISPATCH_RETIRED"); }
 }

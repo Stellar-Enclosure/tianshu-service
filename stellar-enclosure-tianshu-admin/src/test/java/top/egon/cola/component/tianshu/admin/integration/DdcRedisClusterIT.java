@@ -1,8 +1,6 @@
 package top.egon.cola.component.tianshu.admin.integration;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -15,38 +13,23 @@ import org.testcontainers.containers.Container;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
 import org.testcontainers.containers.wait.strategy.Wait;
-import top.egon.cola.component.tianshu.admin.service.notification.DdcNotificationPublisher;
-import top.egon.cola.component.tianshu.admin.repository.DdcConfigLeaseRedisRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcRedisRepository;
-import top.egon.cola.component.tianshu.admin.repository.DdcServiceRegistryRedisRepository;
+import top.egon.cola.component.tianshu.admin.security.rpc.RedisDdcNonceStore;
 import top.egon.cola.component.tianshu.redis.DdcRedisClientFactory;
 import top.egon.cola.component.tianshu.model.config.DdcPublishMessage;
-import top.egon.cola.component.tianshu.model.registry.DdcServiceLeaseRequest;
-import top.egon.cola.component.tianshu.model.lease.DdcLeaseOperationStatus;
-import top.egon.cola.component.tianshu.model.lease.DdcLeaseRole;
-import top.egon.cola.component.tianshu.model.registry.DdcServiceKind;
-import top.egon.cola.component.tianshu.model.registry.DdcServiceInstance;
-import top.egon.cola.component.tianshu.model.registry.DdcServiceKey;
-import top.egon.cola.component.tianshu.model.instance.DdcInstanceIdentity;
-import top.egon.cola.component.tianshu.model.lease.DdcLeaseSession;
 
 import java.time.Duration;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static top.egon.cola.component.tianshu.admin.security.registration.DdcRegistrationTestFixture.identity;
-import static org.awaitility.Awaitility.await;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class DdcRedisClusterIT {
 
     private static final String REDIS_IMAGE = "redis:7.4-alpine";
-
-    private static final Instant NOW = Instant.parse("2026-07-26T00:00:00Z");
 
     private final Network network = Network.newNetwork();
 
@@ -98,21 +81,8 @@ class DdcRedisClusterIT {
     }
 
     @Test
-    void configAndLeaseLifecycleCompletesWithoutCrossSlot() {
+    void administrativeConfigCacheRoundTripsWithoutCrossSlot() {
         DdcRedisRepository configs = new DdcRedisRepository(redisson, new ObjectMapper());
-        DdcConfigLeaseRedisRepository leases = new DdcConfigLeaseRedisRepository(
-                redisson,
-                new ObjectMapper()
-        );
-        DdcInstanceIdentity identity = new DdcInstanceIdentity(
-                "config-client-1", "retail", "demo", "test",
-                "127.0.0.1", 8080, "100", "5.2.3"
-        );
-        DdcLeaseSession session = new DdcLeaseSession(
-                identity.instanceId(), "lease-1", DdcLeaseRole.CONFIG_CLIENT,
-                1, 1, NOW, NOW.plusSeconds(1)
-        );
-
         configs.writeConfig("demo", "test", "default", "switch", "on", 1L);
         configs.publish(message());
         assertThat(configs.readConfigValue(
@@ -121,46 +91,16 @@ class DdcRedisClusterIT {
         assertThat(configs.readConfigVersion(
                 "demo", "test", "default", "switch"
         )).isEqualTo(1L);
-
-        leases.register(identity, session, NOW, identity(NOW.plusSeconds(5)));
-        assertThat(leases.activeTargets(
-                "demo", "test", "default", NOW
-        )).hasSize(1);
-        await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
-                assertThat(leases.removeExpiredProjection(
-                        "demo", "test", "default",
-                        identity.instanceId(), session.leaseId(), NOW.plusSeconds(2)
-                )).isTrue()
-        );
-        assertThat(leases.activeTargets(
-                "demo", "test", "default", NOW.plusSeconds(2)
-        )).isEmpty();
     }
 
     @Test
-    void serviceRegistrationHeartbeatAndDeregistrationCompleteWithoutCrossSlot() {
-        DdcServiceRegistryRedisRepository registry =
-                new DdcServiceRegistryRedisRepository(
-                        redisson,
-                        new ObjectMapper().registerModule(new JavaTimeModule()),
-                        org.mockito.Mockito.mock(DdcNotificationPublisher.class)
-                );
-        DdcServiceInstance instance = instance();
-
-        registry.register(instance, identity(NOW.plusSeconds(60)));
-        assertThat(registry.getInstances(instance.serviceKey(), NOW).instances())
-                .extracting(DdcServiceInstance::instanceId)
-                .containsExactly(instance.instanceId());
-        assertThat(registry.heartbeat(
-                serviceLease(instance),
-                identity(NOW.plusSeconds(60)),
-                NOW.plusSeconds(1)
-        ).status())
-                .isEqualTo(DdcLeaseOperationStatus.RENEWED);
-        assertThat(registry.deregister(serviceLease(instance), NOW.plusSeconds(2)).status())
-                .isEqualTo(DdcLeaseOperationStatus.DELETED);
-        assertThat(registry.getInstances(instance.serviceKey(), NOW.plusSeconds(2)).instances())
-                .isEmpty();
+    void nonceAdmissionSeparatesCredentialsAndRejectsReplayAcrossStores() {
+        var first = new RedisDdcNonceStore(redisson);
+        var second = new RedisDdcNonceStore(redisson);
+        var ttl = Duration.ofSeconds(30);
+        assertThat(first.markIfAbsent("credential-a", "nonce-1", ttl)).isTrue();
+        assertThat(second.markIfAbsent("credential-a", "nonce-1", ttl)).isFalse();
+        assertThat(second.markIfAbsent("credential-b", "nonce-1", ttl)).isTrue();
     }
 
     private GenericContainer<?> node(int index) {
@@ -218,32 +158,4 @@ class DdcRedisClusterIT {
         return message;
     }
 
-    private DdcServiceInstance instance() {
-        DdcServiceKey serviceKey = new DdcServiceKey(
-                "pay-biz",
-                "orders-app",
-                "test",
-                "default",
-                DdcServiceKind.RPC_PROVIDER,
-                "order.v1.OrderQueryService",
-                "default",
-                "1.0.0",
-                "grpc"
-        );
-        return new DdcServiceInstance(
-                "provider-1", "service-lease-1", serviceKey,
-                "127.0.0.1", 19090, false, Map.of("zone", "east"),
-                30, 10, NOW, NOW, NOW.plusSeconds(30), "ONLINE", 0L,
-                "resource-1", 7L, "credential-1", NOW.plusSeconds(60)
-        );
-    }
-
-    private DdcServiceLeaseRequest serviceLease(DdcServiceInstance instance) {
-        DdcServiceLeaseRequest request = new DdcServiceLeaseRequest();
-        request.setServiceKey(instance.serviceKey());
-        request.setInstanceId(instance.instanceId());
-        request.setLeaseId(instance.leaseId());
-        request.setRegistrationToken("test-registration-token");
-        return request;
-    }
 }

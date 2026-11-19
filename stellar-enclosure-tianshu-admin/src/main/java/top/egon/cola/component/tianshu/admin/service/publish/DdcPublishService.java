@@ -24,13 +24,10 @@ import top.egon.cola.component.tianshu.admin.repository.DdcConfigItemRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcConfigVersionRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcOperationLogRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcPublishTaskRepository;
-import top.egon.cola.component.tianshu.admin.repository.DdcPublishAckRepository;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextDTO;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantRegistry;
 import top.egon.cola.component.tianshu.admin.service.config.DdcYamlConfigValidator;
-import top.egon.cola.component.tianshu.admin.service.lease.DdcConfigLeaseService;
 import top.egon.cola.component.tianshu.format.DdcChecksum;
-import top.egon.cola.component.tianshu.model.config.DdcAckRequest;
 import top.egon.cola.component.tianshu.model.config.DdcConfigScopeVO;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 
@@ -60,18 +57,6 @@ public class DdcPublishService {
     @Qualifier("ddcConfigManifestFactory") private final DdcConfigManifestFactory manifests;
     @Qualifier("ddcConfigPublicationPolicyResolver") private final DdcConfigManifestFactory.PublicationPolicyResolver policies;
     @Qualifier("ddcTenantRegistry") private final DdcTenantRegistry tenants;
-
-    /** Historical callers still compile; an absent trusted native policy always fails closed. */
-    public DdcPublishService(DdcConfigItemRepository items, DdcConfigVersionRepository versions,
-            DdcPublishTaskRepository tasks, DdcPublishAckRepository acks, DdcOperationLogRepository audit,
-            DdcPendingPublishDispatcher dispatcher, DdcConfigLeaseService leases, PublishResourceLockRegistry locks,
-            PublishCompletionWaiterRegistry waiters, DdcPublishStateTransitionService transitions,
-            PublishFailureRecorder recovery, DdcAdminProperties properties, DdcYamlConfigValidator yaml,
-            TransactionTemplate transaction, Clock clock) {
-        this(items, versions, tasks, audit, dispatcher, recovery, properties, yaml, transaction, clock,
-                new DdcConfigManifestFactory(new com.fasterxml.jackson.databind.ObjectMapper()),
-                (tenant, scope) -> { throw new DdcAdminException("TIANSHU_CONFIG_PUBLICATION_POLICY_UNAVAILABLE"); }, null);
-    }
 
     public DdcPublishResultVO publish(@Valid DdcPublishRequest request, String operator) {
         validate(request);
@@ -168,10 +153,6 @@ public class DdcPublishService {
         });
         if (task == null) { throw new DdcAdminException("TIANSHU_CONFIG_PUBLICATION_UNAVAILABLE"); }
         return DdcPublishResultVO.from(task);
-    }
-
-    public DdcPublishResultVO ack(DdcAckRequest ignored) {
-        throw new DdcAdminException("TIANSHU_LEGACY_CONFIG_ACK_RETIRED");
     }
 
     private void validateReplay(DdcTenantContextDTO tenant, DdcPublishTaskBO task, DdcPublishRequest request, long timeout) {

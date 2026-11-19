@@ -170,8 +170,52 @@ class DdcI18nTopologyUpgradeTest {
         verify(newTopologyReady).run();
     }
 
+    @Test void serviceObservationPromotesOnlyTheVerifiedTenScriptPredecessorAndBothHistories() throws Exception {
+        servicePredecessor();
+        upgrade().serviceObservation().upgrade();
+        assertThat(store.rows.get("public").getLast().version()).isEqualTo("20261119_001");
+        assertThat(store.rows.get("public")).allMatch(row -> row.fingerprint().equals(CURRENT));
+        assertThat(store.rows.get("egon_outbox")).allMatch(row -> row.fingerprint().equals(CURRENT));
+        assertThat(store.tableChecks).allSatisfy(sql -> assertThat(sql).contains("public.ddc_service_observation_t0")
+                .doesNotContain("ddc_config_workload_observation_t0"));
+        verify(oldTopologyReady).run();
+        verify(newTopologyReady).run();
+    }
+
+    @Test void serviceObservationRejectsEveryRewrittenPredecessorBeforeOpeningDatabase() throws Exception {
+        for (int index = 0; index < 10; index++) {
+            servicePredecessor();
+            var scripts = new ArrayList<>(tianshu.scripts());
+            var original = scripts.get(index);
+            scripts.set(index, new EgonColaDdlManifestBO.ScriptBO(original.version(), original.path(), "0".repeat(64)));
+            tianshu = new EgonColaDdlManifestBO("tianshu", scripts, "20261018_001");
+            assertThatThrownBy(() -> upgrade().serviceObservation().upgrade()).hasMessageContaining("PREDECESSOR_MANIFEST_MISMATCH");
+        }
+        verifyNoInteractions(store.source, runner, oldOutboxReady, oldTopologyReady, newTopologyReady);
+    }
+
+    @Test void serviceObservationResumesAnUncertainFingerprintPromotionWithoutRewritingSql() throws Exception {
+        servicePredecessor();
+        store.failPublicUpdate = true;
+        assertThatThrownBy(() -> upgrade().serviceObservation().upgrade()).hasMessageContaining("HISTORY_CAS_FAILED");
+        assertThat(store.rows.get("public")).allMatch(row -> row.fingerprint().equals(OLD));
+        store.failPublicUpdate = false;
+        upgrade().serviceObservation().upgrade();
+        clearInvocations(runner, oldOutboxReady, oldTopologyReady, newTopologyReady);
+        upgrade().serviceObservation().upgrade();
+        verifyNoInteractions(runner, oldOutboxReady, oldTopologyReady);
+        verify(newTopologyReady).run();
+    }
+
+    private void servicePredecessor() throws Exception {
+        tianshu = DdcPersistenceMigrationCli.manifestForMode(DdcPersistenceMigrationCli.Mode.UPGRADE_SERVICE_OBSERVATION,
+                manifest("db/egon-mp/repository-manifest.json"));
+        store.rows.put("public", history(tianshu, 3, false, OLD));
+    }
+
     private void cloudPredecessor() throws Exception {
-        tianshu = manifest("db/egon-mp/repository-manifest.json");
+        tianshu = DdcPersistenceMigrationCli.manifestForMode(DdcPersistenceMigrationCli.Mode.UPGRADE_CLOUD_DELIVERY,
+                manifest("db/egon-mp/repository-manifest.json"));
         store.rows.put("public", history(tianshu, 3, false, OLD));
     }
 
@@ -333,7 +377,7 @@ class DdcI18nTopologyUpgradeTest {
     @Test
     @EnabledIfEnvironmentVariable(named = "TIANSHU_CLOUD_UPGRADE_IT_ENABLED", matches = "true")
     void privatePostgresqlCloudUpgradeResumesAndAtomicallyPromotesBothRealHistories() throws Exception {
-        Properties fixture = privateFixture();
+        Properties fixture = privateFixture("TIANSHU_CLOUD_UPGRADE_IT_CONFIG", "tianshu_step18_upgrade");
         var primary = new DriverManagerDataSource(fixture.getProperty("jdbcUrl"),
                 fixture.getProperty("username"), fixture.getProperty("password"));
         // This test never drops a schema or a database. The external private harness owns teardown/reset.
@@ -356,15 +400,16 @@ class DdcI18nTopologyUpgradeTest {
                     "TIANSHU_DB_PASSWORD", fixture.getProperty("password"))));
             new YamlPropertySourceLoader().load("tianshu-persistence", new ClassPathResource("egon-tianshu-persistence.yml"))
                     .forEach(environment.getPropertySources()::addLast);
-            var current = Binder.get(environment).bind(EgonColaShardingProperties.PREFIX, Bindable.of(EgonColaShardingProperties.class)).orElseThrow(() -> new IllegalStateException("Missing Tianshu sharding properties"));
-            var previous = Binder.get(environment).bind(EgonColaShardingProperties.PREFIX, Bindable.of(EgonColaShardingProperties.class)).orElseThrow(() -> new IllegalStateException("Missing Tianshu sharding properties"));
+            var mode = DdcPersistenceMigrationCli.Mode.UPGRADE_CLOUD_DELIVERY;
+            var current = DdcPersistenceMigrationCli.propertiesForMode(mode, fixtureTopology(environment));
+            var previous = DdcPersistenceMigrationCli.propertiesForMode(mode, fixtureTopology(environment));
             var loader = new EgonColaShardingYamlLoader(new EgonColaShardingStrategyFactory(validation, Map.of(
                     "STANDARD_TENANT_ID", new EgonColaStandardTenantIdShardingStrategy(),
                     "SINGLE", new EgonColaSingleTableShardingStrategy())), new DefaultResourceLoader(), environment);
             var validator = new EgonColaShardingTopologyValidator(validation);
             var topology = validator.validate(current, loader.load(current));
             var prior = DdcPersistenceMigrationCli.priorCloudDeliveryTopology(current, previous, topology, loader, validator);
-            var full = manifest("db/egon-mp/repository-manifest.json");
+            var full = DdcPersistenceMigrationCli.manifestForMode(mode, manifest("db/egon-mp/repository-manifest.json"));
             var predecessor = new EgonColaDdlManifestBO(full.family(), full.scripts().subList(0, 8), full.freshBaselineVersion());
             var actualRunner = new EgonColaPostgreDdlRunner(validation, new PathMatchingResourcePatternResolver(),
                     Clock.systemUTC(), Duration.ofSeconds(3), Duration.ofSeconds(30));
@@ -417,8 +462,77 @@ class DdcI18nTopologyUpgradeTest {
         }
     }
 
-    private static Properties privateFixture() throws Exception {
-        String configured = System.getenv("TIANSHU_CLOUD_UPGRADE_IT_CONFIG");
+    @Test
+    @EnabledIfEnvironmentVariable(named = "TIANSHU_SERVICE_OBSERVATION_UPGRADE_IT_ENABLED", matches = "true")
+    void privatePostgresqlServiceUpgradeReplaysFromTheTenScriptPredecessor() throws Exception {
+        String database = "tianshu_step33_upgrade";
+        Properties fixture = privateFixture("TIANSHU_SERVICE_OBSERVATION_UPGRADE_IT_CONFIG", database);
+        var primary = new DriverManagerDataSource(fixture.getProperty("jdbcUrl"),
+                fixture.getProperty("username"), fixture.getProperty("password"));
+        try (var connection = primary.getConnection(); var command = connection.createStatement();
+             var row = command.executeQuery("SELECT current_database(), pg_is_in_recovery(), current_setting('server_version_num')::int, "
+                     + "to_regclass('public.ddl_history') IS NULL, to_regclass('egon_outbox.ddl_history') IS NULL")) {
+            assertThat(row.next()).isTrue();
+            assertThat(row.getString(1)).isEqualTo(database);
+            assertThat(row.getBoolean(2)).isFalse();
+            assertThat(row.getInt(3)).isEqualTo(180003);
+            assertThat(row.getBoolean(4)).isTrue();
+            assertThat(row.getBoolean(5)).isTrue();
+        }
+        try (var validators = Validation.buildDefaultValidatorFactory()) {
+            var validation = new ValidationUtils(validators.getValidator());
+            var environment = new StandardEnvironment();
+            environment.getPropertySources().addFirst(new MapPropertySource("private-service-upgrade-fixture", Map.of(
+                    "TIANSHU_JDBC_URL", fixture.getProperty("jdbcUrl"), "TIANSHU_DB_USERNAME", fixture.getProperty("username"),
+                    "TIANSHU_DB_PASSWORD", fixture.getProperty("password"))));
+            new YamlPropertySourceLoader().load("tianshu-persistence", new ClassPathResource("egon-tianshu-persistence.yml"))
+                    .forEach(environment.getPropertySources()::addLast);
+            var loader = new EgonColaShardingYamlLoader(new EgonColaShardingStrategyFactory(validation, Map.of(
+                    "STANDARD_TENANT_ID", new EgonColaStandardTenantIdShardingStrategy(),
+                    "SINGLE", new EgonColaSingleTableShardingStrategy())), new DefaultResourceLoader(), environment);
+            var validator = new EgonColaShardingTopologyValidator(validation);
+            var current = fixtureTopology(environment);
+            var topology = validator.validate(current, loader.load(current));
+            var previous = DdcPersistenceMigrationCli.priorServiceObservationTopology(
+                    current, fixtureTopology(environment), topology, loader, validator);
+            var priorProperties = DdcPersistenceMigrationCli.propertiesForMode(
+                    DdcPersistenceMigrationCli.Mode.UPGRADE_NATIVE_CONFIG_ROLLOUT, fixtureTopology(environment));
+            assertThat(previous.fingerprint()).isEqualTo(validator.validate(priorProperties, loader.load(priorProperties)).fingerprint());
+            var full = manifest("db/egon-mp/repository-manifest.json");
+            var predecessor = DdcPersistenceMigrationCli.manifestForMode(
+                    DdcPersistenceMigrationCli.Mode.UPGRADE_NATIVE_CONFIG_ROLLOUT, full);
+            var runner = new EgonColaPostgreDdlRunner(validation, new PathMatchingResourcePatternResolver(),
+                    Clock.systemUTC(), Duration.ofSeconds(3), Duration.ofSeconds(30));
+            runner.run(List.of(new EgonColaDdlTargetBO("tianshu_0", "public", EgonColaDdlTargetBO.RoleEnum.MASTER_DATA,
+                    primary, predecessor, previous.fingerprint())));
+            runner.run(List.of(new EgonColaDdlTargetBO("tianshu_0", "egon_outbox", EgonColaDdlTargetBO.RoleEnum.MASTER_DATA,
+                    primary, outbox, previous.fingerprint())));
+            assertThat(realHistory(primary, "public")).containsExactlyElementsOf(history(predecessor, 3, true, previous.fingerprint()));
+
+            Path target = protectedTargetConfiguration(fixture);
+            try {
+                var command = new String[]{"upgrade-service-observation", "--target-config", target.toString()};
+                DdcPersistenceMigrationCli.main(command);
+                var upgraded = realHistory(primary, "public");
+                var outboxRows = realHistory(primary, "egon_outbox");
+                assertThat(upgraded).containsExactlyElementsOf(history(full, 3, true, topology.fingerprint()));
+                assertThat(outboxRows).containsExactlyElementsOf(history(outbox, 0, true, topology.fingerprint()));
+                DdcPersistenceMigrationCli.main(command);
+                assertThat(realHistory(primary, "public")).containsExactlyElementsOf(upgraded);
+                assertThat(realHistory(primary, "egon_outbox")).containsExactlyElementsOf(outboxRows);
+            } finally {
+                Files.deleteIfExists(target);
+            }
+        }
+    }
+
+    private static EgonColaShardingProperties fixtureTopology(StandardEnvironment environment) {
+        return Binder.get(environment).bind(EgonColaShardingProperties.PREFIX, Bindable.of(EgonColaShardingProperties.class))
+                .orElseThrow(() -> new IllegalStateException("Missing Tianshu sharding properties"));
+    }
+
+    private static Properties privateFixture(String propertyName, String database) throws Exception {
+        String configured = System.getenv(propertyName);
         assertThat(configured).as("explicit enabled run requires a private fixture config").isNotBlank();
         Path path = Path.of(configured);
         assertThat(path.isAbsolute() && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(path)).isTrue();
@@ -427,8 +541,9 @@ class DdcI18nTopologyUpgradeTest {
         Properties fixture = new Properties();
         try (var input = Files.newInputStream(path)) { fixture.load(input); }
         assertThat(fixture.getProperty("allowSchemaChanges")).isEqualTo("true");
-        assertThat(fixture.getProperty("expectedDatabase")).isEqualTo("tianshu_step18_upgrade");
-        assertThat(fixture.getProperty("jdbcUrl")).matches("jdbc:postgresql://127\\.0\\.0\\.1:[0-9]{1,5}/tianshu_step18_upgrade(?:\\?[^\\r\\n]*)?");
+        assertThat(fixture.getProperty("expectedDatabase")).isEqualTo(database);
+        assertThat(fixture.getProperty("jdbcUrl")).matches("jdbc:postgresql://127\\.0\\.0\\.1:[0-9]{1,5}/"
+                + java.util.regex.Pattern.quote(database) + "(?:\\?[^\\r\\n]*)?");
         assertThat(fixture.getProperty("username")).isNotBlank();
         assertThat(fixture.getProperty("password")).isNotNull();
         return fixture;

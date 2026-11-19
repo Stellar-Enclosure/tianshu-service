@@ -10,6 +10,7 @@ import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import top.egon.cola.component.common.mybatis.autoconfigure.EgonColaMybatisPlusProperties;
 import top.egon.cola.component.common.mybatis.business.EgonColaTenantIdProvider;
 import top.egon.cola.component.common.mybatis.interceptor.EgonColaTenantIdGuardInnerInterceptor;
+import top.egon.cola.component.tianshu.admin.dao.DdcServiceObservationMapper;
 
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
@@ -83,8 +84,13 @@ class DdcMapperLifecycleGuardContractTest {
                 if (statement.getSqlCommandType() != SqlCommandType.SELECT) { continue; }
                 checked++;
                 try {
-                    guard.beforeQuery(null, statement, parameters, RowBounds.DEFAULT, null, statement.getBoundSql(parameters));
-                    parser.parse(statement.getBoundSql(parameters).getSql(), false);
+                    var mapperParameters = new HashMap<>(parameters);
+                    if (name.startsWith(DdcServiceObservationMapper.class.getName() + ".")) {
+                        mapperParameters.put("key", new DdcServiceObservationMapper.TargetKeyVO(1001L, "approved-service", 1L));
+                    }
+                    var bound = statement.getBoundSql(mapperParameters);
+                    guard.beforeQuery(null, statement, mapperParameters, RowBounds.DEFAULT, null, bound);
+                    parser.parse(bound.getSql(), false);
                 } catch (RuntimeException failure) {
                     Throwable cause = failure;
                     while (cause.getCause() != null) { cause = cause.getCause(); }

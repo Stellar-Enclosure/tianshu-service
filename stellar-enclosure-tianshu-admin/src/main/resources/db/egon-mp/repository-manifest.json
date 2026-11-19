@@ -50,6 +50,11 @@
       "version": "20261118_001",
       "path": "db/egon-mp/V20261118_001__tianshu_native_config_rollout.sql",
       "sha256": "0e2711e9aa749579ff3e0685f93aa031a00514c01bff2bfc78f3cde4b487ada8"
+    },
+    {
+      "version": "20261119_001",
+      "path": "db/egon-mp/V20261119_001__tianshu_service_observation.sql",
+      "sha256": "637634475e14ced4476be91b148bb091fd85c25446144d9be5f76be74668e19c"
     }
   ],
   "freshBaselineVersion": "20261018_001"

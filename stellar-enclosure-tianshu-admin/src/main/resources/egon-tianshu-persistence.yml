@@ -54,6 +54,7 @@ egon:
             ddc_config_version: { type: STANDARD_TENANT_ID }
             ddc_config_process_receipt: { type: STANDARD_TENANT_ID }
             ddc_config_workload_observation: { type: STANDARD_TENANT_ID }
+            ddc_service_observation: { type: STANDARD_TENANT_ID }
             ddc_config_boot_binding_t0: { type: SINGLE, data-source: tianshu_0, schema: public }
             ddc_publish_task: { type: STANDARD_TENANT_ID }
             ddc_publish_ack: { type: STANDARD_TENANT_ID }

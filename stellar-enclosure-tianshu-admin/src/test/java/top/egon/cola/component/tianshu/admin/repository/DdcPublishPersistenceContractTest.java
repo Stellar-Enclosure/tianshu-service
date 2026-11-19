@@ -4,9 +4,21 @@ import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import org.apache.ibatis.builder.xml.XMLMapperBuilder;
 import org.apache.ibatis.session.Configuration;
+import org.apache.ibatis.executor.Executor;
+import org.apache.ibatis.session.RowBounds;
 import org.apache.ibatis.type.BaseTypeHandler;
 import org.apache.ibatis.type.JdbcType;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
+import org.springframework.context.annotation.CommonAnnotationBeanPostProcessor;
+import top.egon.cola.component.common.mybatis.autoconfigure.EgonColaMybatisPlusProperties;
+import top.egon.cola.component.common.mybatis.interceptor.EgonColaTenantIdGuardInnerInterceptor;
+import top.egon.cola.component.tianshu.admin.dao.DdcPublishAckMapper;
+import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishAckBO;
+import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishTaskBO;
+import top.egon.cola.component.tianshu.admin.model.convertor.DdcPublishAckConverter;
+import top.egon.cola.component.tianshu.admin.model.po.DdcPublishAckPO;
+import top.egon.cola.component.tianshu.admin.repository.impl.DdcPublishAckRepositoryImpl;
 import top.egon.cola.component.tianshu.admin.model.convertor.DdcRuntimeMetadataTypeHandler;
 import top.egon.cola.component.common.mybatis.extension.EgonColaMapper;
 import top.egon.cola.component.common.mybatis.extension.EgonColaRepository;
@@ -19,9 +31,14 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Set;
 import java.util.Map;
+import java.util.Locale;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -42,8 +59,14 @@ class DdcPublishPersistenceContractTest {
             assertThat(po.getSuperclass()).isEqualTo(EgonModel.class);
             assertThat(po.getAnnotation(TableName.class).value()).isEqualTo(table(name));
             assertThat(EgonModel.class.isAssignableFrom(bo)).isFalse();
-            assertThat(EgonColaMapper.class.isAssignableFrom(mapper)).isTrue();
-            assertThat(EgonColaRepository.class.isAssignableFrom(implementation)).isTrue();
+            assertThat(EgonColaMapper.class.isAssignableFrom(mapper)).isEqualTo(!name.equals("DdcInstance"));
+            if (name.equals("DdcPublishAck") || name.equals("DdcInstance")) {
+                assertThat(EgonColaRepository.class.isAssignableFrom(implementation)).isFalse();
+                assertThat(Arrays.stream(implementation.getMethods()).map(java.lang.reflect.Method::getName))
+                        .doesNotContain("save", "saveBatch", "updateById");
+            } else {
+                assertThat(EgonColaRepository.class.isAssignableFrom(implementation)).isTrue();
+            }
         }
         assertThat(fieldNames(requiredType(BASE + "model.po.DdcPublishTaskPO")))
                 .contains("changeId", "configId", "targetVersion", "attemptCount", "ackCount", "status");
@@ -82,217 +105,92 @@ class DdcPublishPersistenceContractTest {
     }
 
     @Test
-    void operationalMapperSqlUsesLogicalTablesAndPreservesLifecycleStatePredicates() throws Exception {
+    void operationalMapperSqlKeepsTenantReadsAndRetiresAllLegacyAckAndTaskWriters() throws Exception {
         for (String name : TABLES) {
-            String mapperName = name + "Mapper";
-            String xml = mapper(mapperName + ".xml").toLowerCase(java.util.Locale.ROOT);
-            String table = table(name);
-            assertThat(xml).contains("from " + table, "tenant_id", "deleted_at is null", "selectactivebyid",
-                    "selectactivebyids", "deleteversionedbyid")
-                    .doesNotContain("from " + table + "_t0", "update " + table + "_t0", "<delete");
+            String xml = mapper(name + "Mapper.xml").toLowerCase(Locale.ROOT);
+            assertThat(xml).contains("from " + table(name), "tenant_id", "deleted_at is null")
+                    .doesNotContain("from " + table(name) + "_t0", "update " + table(name) + "_t0", "<delete");
+            if (name.equals("DdcInstance")) {
+                assertThat(xml).contains("selectbyinstanceid", "selectbyscope", "selectpage", "countpage")
+                        .doesNotContain("selectbystatusandleaseexpireatlessthanequal", "selectbyscopeandstatus");
+            } else {
+                assertThat(xml).contains("selectactivebyid", "selectactivebyids");
+            }
+            if (name.equals("DdcPublishAck") || name.equals("DdcInstance")) {
+                assertThat(xml).doesNotContain("<update", "<insert");
+            }
         }
-        String taskXml = mapper("DdcPublishTaskMapper.xml").toLowerCase(java.util.Locale.ROOT);
-        assertThat(taskXml).contains("selectforupdatebychangeid", "for update", "claimstaleforrecovery",
-                "updated_at &lt;", "attempt_count", "status", "failure_stage", "error_message");
-        String ackXml = mapper("DdcPublishAckMapper.xml").toLowerCase(java.util.Locale.ROOT);
-        assertThat(ackXml).contains("selectforupdatebychangeidandinstanceidandleaseid", "for update",
-                "lease_id is null", "markincompletetimeout", "ack_status is null", "resettargets");
-        String instanceXml = mapper("DdcInstanceMapper.xml").toLowerCase(java.util.Locale.ROOT);
-        assertThat(instanceXml).contains("markofflineifleasematches", "markresourceadmissionoffline",
-                "runtime_metadata", "resource_server_id", "resource_version", "admission_expires_at");
-    }
-
-    @Test
-    void everyOperationalMapperXmlRegistersItsDeclaredCommands() throws Exception {
-        Configuration configuration = operationalMappers();
-        for (String name : TABLES) {
-            String namespace = BASE + "dao." + name + "Mapper";
-            assertThat(configuration.hasStatement(namespace + ".selectActiveById")).isTrue();
-            assertThat(configuration.hasStatement(namespace + ".selectActiveByIds")).isTrue();
-            assertThat(configuration.hasStatement(namespace + ".deleteVersionedById")).isTrue();
-        }
-        assertThat(configuration.hasStatement(BASE + "dao.DdcPublishTaskMapper.transitionToPublishing")).isTrue();
-        assertThat(configuration.hasStatement(BASE + "dao.DdcPublishAckMapper.markIncompleteTimeout")).isTrue();
-        assertThat(configuration.hasStatement(BASE + "dao.DdcInstanceMapper.markResourceAdmissionOffline")).isTrue();
-    }
-
-    @Test
-    void mapperSqlRetainsTenantStateCasLeaseAndNullPredicates() throws Exception {
-        Configuration configuration = operationalMappers();
-        Map<String, Object> ackParameters = new HashMap<>();
-        ackParameters.put("tenantId", 101L);
-        ackParameters.put("changeId", "123");
-        ackParameters.put("instanceId", "instance-1");
-        ackParameters.put("leaseId", null);
-        String ackSql = configuration.getMappedStatement(BASE
-                        + "dao.DdcPublishAckMapper.selectForUpdateByChangeIdAndInstanceIdAndLeaseId")
-                .getBoundSql(ackParameters).getSql().toLowerCase(java.util.Locale.ROOT);
-        Map<String, Object> taskParameters = new HashMap<>();
-        taskParameters.put("tenantId", 101L);
-        taskParameters.put("task", top.egon.cola.component.tianshu.admin.model.bo.DdcPublishTaskBO.builder()
-                .id(9L).version(7L).changeId("123").build());
-        taskParameters.put("dispatchableStatuses", List.of("PENDING", "PUBLISHING"));
-        taskParameters.put("pendingStatus", "PENDING");
-        taskParameters.put("publishingStatus", "PUBLISHING");
-        taskParameters.put("dispatchedAt", java.time.LocalDateTime.of(2026, 9, 28, 10, 0));
-        taskParameters.put("actor", "system:test");
-        String transitionSql = configuration.getMappedStatement(BASE + "dao.DdcPublishTaskMapper.transitionToPublishing")
-                .getBoundSql(taskParameters).getSql().toLowerCase(java.util.Locale.ROOT);
-
-        assertThat(ackSql).contains("tenant_id = ?", "change_id = ?", "instance_id = ?", "lease_id is null",
-                "deleted_at is null", "for update");
-        assertThat(transitionSql).contains("tenant_id = ?", "id = ?", "version = ?", "change_id = ?", "deleted_at is null",
-                "status in", "attempt_count = case", "version = version + 1");
-    }
-
-    @Test
-    void replicaAckLookupAndObservedVersionFencesPassTheStarterGuards() throws Exception {
         var configuration = operationalMappers();
-        configuration.setEnvironment(new org.apache.ibatis.mapping.Environment("test",
-                new org.mybatis.spring.transaction.SpringManagedTransactionFactory(), org.mockito.Mockito.mock(javax.sql.DataSource.class)));
-        var properties = new top.egon.cola.component.common.mybatis.autoconfigure.EgonColaMybatisPlusProperties();
-        var tenantGuard = new top.egon.cola.component.common.mybatis.interceptor.EgonColaTenantIdGuardInnerInterceptor(
-                () -> "system:test", properties);
-        new org.springframework.context.annotation.CommonAnnotationBeanPostProcessor()
-                .postProcessBeforeInitialization(tenantGuard, "sqlGuard");
-        var routeGuard = new top.egon.cola.component.common.mybatis.interceptor.EgonColaLocalWriteGuardInnerInterceptor(
-                query -> new top.egon.cola.component.common.mybatis.routing.EgonColaRouteResult(
-                        List.of(new top.egon.cola.component.common.mybatis.routing.EgonColaPhysicalTargetBO(
-                                "primary", "public", query.logicalTable())), "a".repeat(64)),
-                tenantGuard, org.mockito.Mockito.mock(top.egon.cola.component.common.mybatis.routing.EgonColaTwoLevelRouteStrategy.class), Map.of());
-        var readParameters = Map.<String, Object>of("tenantId", 101L, "changeId", "change", "instanceId", "instance", "leaseId", "lease");
-        var read = configuration.getMappedStatement(BASE + "dao.DdcPublishAckMapper.selectByChangeIdAndInstanceIdAndLeaseId");
-        assertThat(read.getBoundSql(readParameters).getSql().toLowerCase(java.util.Locale.ROOT))
-                .doesNotContain("for update", "for share");
-        org.slf4j.MDC.put("tenantId", "101"); org.slf4j.MDC.put("userId", "system:test");
-        try {
-            tenantGuard.beforeQuery(org.mockito.Mockito.mock(org.apache.ibatis.executor.Executor.class), read,
-                    readParameters, org.apache.ibatis.session.RowBounds.DEFAULT, null, read.getBoundSql(readParameters));
-            for (String mapper : List.of("DdcPublishTaskMapper", "DdcPublishAckMapper")) {
-                var statement = configuration.getMappedStatement(BASE + "dao." + mapper + ".fenceObservedVersion");
-                var parameters = Map.<String, Object>of("tenantId", 101L, "id", 9L, "expectedVersion", 7L,
-                        "actor", "system:test", "now", java.time.Instant.parse("2026-10-28T00:00:00Z"));
-                String sql = statement.getBoundSql(parameters).getSql().toLowerCase(java.util.Locale.ROOT);
-                assertThat(sql).contains("tenant_id = ?", "id = ?", "version = ?", "version = version + 1", "deleted_at is null");
-                var handler = configuration.newStatementHandler(org.mockito.Mockito.mock(org.apache.ibatis.executor.Executor.class),
-                        statement, parameters, org.apache.ibatis.session.RowBounds.DEFAULT, null, statement.getBoundSql(parameters));
-                tenantGuard.beforePrepare(handler, null, null);
-                routeGuard.beforePrepare(handler, null, null);
-            }
-            var reset = configuration.getMappedStatement(BASE + "dao.DdcPublishAckMapper.resetTarget");
-            var resetParameters = Map.<String, Object>of("tenantId", 101L, "id", 9L, "expectedVersion", 7L,
-                    "actor", "system:test", "now", java.time.Instant.parse("2026-10-28T00:00:00Z"));
-            var resetHandler = configuration.newStatementHandler(org.mockito.Mockito.mock(org.apache.ibatis.executor.Executor.class),
-                    reset, resetParameters, org.apache.ibatis.session.RowBounds.DEFAULT, null, reset.getBoundSql(resetParameters));
-            routeGuard.beforePrepare(resetHandler, null, null);
-        } finally {
-            org.slf4j.MDC.remove("tenantId"); org.slf4j.MDC.remove("userId");
+        for (String method : List.of("fenceObservedVersion", "fenceDispatchTargets", "updateAckSummary", "claimStaleForRecovery",
+                "transitionToPublishing", "updateCounters", "transitionToTerminal", "resetForRetry", "markRetryLeaseExpired")) {
+            assertThat(configuration.hasStatement(BASE + "dao.DdcPublishTaskMapper." + method)).as(method).isFalse();
         }
+        for (String method : List.of("selectForUpdateByChangeIdAndInstanceIdAndLeaseId", "fenceObservedVersion",
+                "markIncompleteTimeout", "resetTargets", "resetTarget", "deleteVersionedById")) {
+            assertThat(configuration.hasStatement(BASE + "dao.DdcPublishAckMapper." + method)).as(method).isFalse();
+        }
+        assertThat(configuration.hasStatement(BASE + "dao.DdcPublishTaskMapper.updateNativeEvidence")).isTrue();
+        assertThat(configuration.hasStatement(BASE + "dao.DdcPublishTaskMapper.resetNativeForRetry")).isTrue();
     }
 
     @Test
-    void ackSummaryConditionsUseOneTenantAndPrimaryGroupForEveryReferencedTable() throws Exception {
+    void historicalAckReadKeepsTenantAndChangeSelectorsWithoutRowLocksOrStateMutation() throws Exception {
         var configuration = operationalMappers();
-        configuration.setEnvironment(new org.apache.ibatis.mapping.Environment("test",
-                new org.mybatis.spring.transaction.SpringManagedTransactionFactory(), mock(javax.sql.DataSource.class)));
-        var properties = new top.egon.cola.component.common.mybatis.autoconfigure.EgonColaMybatisPlusProperties();
-        var tenantGuard = new top.egon.cola.component.common.mybatis.interceptor.EgonColaTenantIdGuardInnerInterceptor(() -> "system:test", properties);
-        new org.springframework.context.annotation.CommonAnnotationBeanPostProcessor().postProcessBeforeInitialization(tenantGuard, "sqlGuard");
-        var routeGuard = new top.egon.cola.component.common.mybatis.interceptor.EgonColaLocalWriteGuardInnerInterceptor(
-                query -> new top.egon.cola.component.common.mybatis.routing.EgonColaRouteResult(
-                        List.of(new top.egon.cola.component.common.mybatis.routing.EgonColaPhysicalTargetBO("primary", "public", query.logicalTable())), "a".repeat(64)),
-                tenantGuard, mock(top.egon.cola.component.common.mybatis.routing.EgonColaTwoLevelRouteStrategy.class), Map.of());
-        var task = top.egon.cola.component.tianshu.admin.model.bo.DdcPublishTaskBO.builder()
-                .id(9L).version(7L).changeId("change").status("PUBLISHING").configItemId(21L).targetVersion(2L).build();
-        var statement = configuration.getMappedStatement(BASE + "dao.DdcPublishTaskMapper.updateAckSummary");
-        var parser = new org.apache.shardingsphere.infra.parser.ShardingSphereSQLParserEngine(
-                org.apache.shardingsphere.infra.spi.type.typed.TypedSPILoader.getService(
-                        org.apache.shardingsphere.database.connector.core.type.DatabaseType.class, "PostgreSQL"),
-                new org.apache.shardingsphere.sql.parser.engine.api.CacheOption(16, 64),
-                new org.apache.shardingsphere.sql.parser.engine.api.CacheOption(16, 64));
-        org.slf4j.MDC.put("tenantId", "101"); org.slf4j.MDC.put("userId", "system:test");
+        var read = configuration.getMappedStatement(BASE + "dao.DdcPublishAckMapper.selectByChangeId");
+        var parameters = Map.<String, Object>of("tenantId", 101L, "changeId", "change");
+        assertThat(read.getBoundSql(parameters).getSql().toLowerCase(Locale.ROOT))
+                .contains("tenant_id = ?", "change_id = ?", "deleted_at is null").doesNotContain("for update", "for share");
+        var properties = new EgonColaMybatisPlusProperties();
+        var guard = new EgonColaTenantIdGuardInnerInterceptor(() -> "history-reader", properties);
+        new CommonAnnotationBeanPostProcessor().postProcessBeforeInitialization(guard, "sqlGuard");
+        MDC.put("tenantId", "101");
         try {
-            for (String publication : List.of("ANY", "PUBLISHED", "UNPUBLISHED")) {
-                var summary = new top.egon.cola.component.tianshu.admin.model.bo.DdcPublishAckSummaryBO(
-                        2, publication.equals("ANY") ? 1 : 2, 0, 0, 0,
-                        publication.equals("PUBLISHED") ? "SUCCESS" : null, null, null, publication);
-                var parameters = Map.<String, Object>of("tenantId", 101L, "task", task, "summary", summary,
-                        "updatedAt", java.time.LocalDateTime.of(2026, 10, 28, 0, 0), "actor", "system:test",
-                        "now", java.time.Instant.parse("2026-10-28T00:00:00Z"));
-                String sql = statement.getBoundSql(parameters).getSql();
-                assertThat(parser.parse(sql, false)).isNotNull();
-                assertThat(sql.toLowerCase(java.util.Locale.ROOT)).contains("t.tenant_id = ?", "t.id = ?", "t.version = ?",
-                        "a.tenant_id = ?", "a.deleted_at is null").doesNotContain("for update");
-                var executor = mock(org.apache.ibatis.executor.Executor.class);
-                var invocation = new org.apache.ibatis.plugin.Invocation(executor,
-                        org.apache.ibatis.executor.Executor.class.getMethod("update", org.apache.ibatis.mapping.MappedStatement.class, Object.class),
-                        new Object[]{statement, parameters});
-                org.assertj.core.api.Assertions.assertThatCode(() ->
-                        new top.egon.cola.component.common.mybatis.interceptor.EgonColaOriginalSqlGuardInterceptor(properties).intercept(invocation))
-                        .doesNotThrowAnyException();
-                var handler = configuration.newStatementHandler(executor, statement, parameters,
-                        org.apache.ibatis.session.RowBounds.DEFAULT, null, statement.getBoundSql(parameters));
-                org.assertj.core.api.Assertions.assertThatCode(() -> routeGuard.beforePrepare(handler, null, null)).doesNotThrowAnyException();
-            }
-            var parameters = new HashMap<String, Object>();
-            parameters.put("tenantId", 101L);
-            parameters.put("task", task);
-            parameters.put("targets", List.of(new top.egon.cola.component.tianshu.model.config.DdcPublishTarget("one", "lease"),
-                    new top.egon.cola.component.tianshu.model.config.DdcPublishTarget("two", null)));
-            parameters.put("targetCount", 2);
-            parameters.put("activeStatuses", List.of("PENDING", "PUBLISHING"));
-            parameters.put("dispatchableStatuses", List.of("PENDING", "PUBLISHING"));
-            parameters.put("retryableStatuses", List.of("FAILED", "TIMEOUT"));
-            parameters.put("actor", "system:test");
-            parameters.put("now", java.time.Instant.parse("2026-10-28T00:00:00Z"));
-            for (String operation : List.of("fenceDispatchTargets", "claimStaleForRecovery", "transitionToPublishing", "transitionToTerminal", "resetForRetry", "markRetryLeaseExpired")) {
-                var update = configuration.getMappedStatement(BASE + "dao.DdcPublishTaskMapper." + operation);
-                String sql = update.getBoundSql(parameters).getSql();
-                assertThat(parser.parse(sql, false)).isNotNull();
-                assertThat(sql.toLowerCase(java.util.Locale.ROOT)).contains("tenant_id = ?", "id = ?", "version = ?")
-                        .doesNotContain("for update");
-                if (operation.equals("fenceDispatchTargets")) {
-                    assertThat(sql.toLowerCase(java.util.Locale.ROOT)).contains("count(*)", "a.instance_id = ?", "a.lease_id is null");
-                }
-                var executor = mock(org.apache.ibatis.executor.Executor.class);
-                var invocation = new org.apache.ibatis.plugin.Invocation(executor,
-                        org.apache.ibatis.executor.Executor.class.getMethod("update", org.apache.ibatis.mapping.MappedStatement.class, Object.class),
-                        new Object[]{update, parameters});
-                org.assertj.core.api.Assertions.assertThatCode(() ->
-                        new top.egon.cola.component.common.mybatis.interceptor.EgonColaOriginalSqlGuardInterceptor(properties).intercept(invocation))
-                        .doesNotThrowAnyException();
-                var handler = configuration.newStatementHandler(executor, update, parameters,
-                        org.apache.ibatis.session.RowBounds.DEFAULT, null, update.getBoundSql(parameters));
-                org.assertj.core.api.Assertions.assertThatCode(() -> routeGuard.beforePrepare(handler, null, null)).doesNotThrowAnyException();
-            }
+            assertThatCode(() -> guard.beforeQuery(mock(Executor.class), read, parameters, RowBounds.DEFAULT,
+                    null, read.getBoundSql(parameters))).doesNotThrowAnyException();
         } finally {
-            org.slf4j.MDC.remove("tenantId"); org.slf4j.MDC.remove("userId");
+            MDC.remove("tenantId");
         }
     }
 
     @Test
-    void twoWritersCannotFenceTheSameObservedAcknowledgementVersion() throws Exception {
-        var mapper = org.mockito.Mockito.mock(top.egon.cola.component.tianshu.admin.dao.DdcPublishAckMapper.class);
-        var won = new java.util.concurrent.atomic.AtomicBoolean();
-        org.mockito.Mockito.when(mapper.fenceObservedVersion(org.mockito.ArgumentMatchers.eq(101L),
-                org.mockito.ArgumentMatchers.eq(9L), org.mockito.ArgumentMatchers.eq(7L),
-                org.mockito.ArgumentMatchers.eq("system:test"), org.mockito.ArgumentMatchers.any()))
-                .thenAnswer(call -> won.compareAndSet(false, true) ? 1 : 0);
-        var repository = new top.egon.cola.component.tianshu.admin.repository.impl.DdcPublishAckRepositoryImpl(mapper,
-                org.mockito.Mockito.mock(top.egon.cola.component.tianshu.admin.model.convertor.DdcPublishAckConverter.class),
-                new top.egon.cola.component.common.mybatis.autoconfigure.EgonColaMybatisPlusProperties(),
-                org.mockito.Mockito.mock(top.egon.cola.component.common.mybatis.model.EgonColaIdentifierGenerator.class));
-        var ack = top.egon.cola.component.tianshu.admin.model.bo.DdcPublishAckBO.builder().id(9L).version(7L).build();
-        try (var workers = java.util.concurrent.Executors.newFixedThreadPool(2)) {
-            java.util.concurrent.Callable<Boolean> fence = () -> {
-                org.slf4j.MDC.put("tenantId", "101"); org.slf4j.MDC.put("userId", "system:test");
-                try { return repository.fenceObservedVersion(ack); }
-                finally { org.slf4j.MDC.remove("tenantId"); org.slf4j.MDC.remove("userId"); }
-            };
-            var first = workers.submit(fence); var second = workers.submit(fence);
-            assertThat(List.of(first.get(10, java.util.concurrent.TimeUnit.SECONDS),
-                    second.get(10, java.util.concurrent.TimeUnit.SECONDS))).containsExactlyInAnyOrder(true, false);
+    void nativeTaskUpdatesRetainExactVersionRevisionAttemptAndNativeEvidenceFences() throws Exception {
+        var configuration = operationalMappers();
+        var task = DdcPublishTaskBO.builder().id(9L).version(7L).changeId("change")
+                .configItemId(5L).targetVersion(2L).attemptCount(1).build();
+        Map<String, Object> parameters = new HashMap<>();
+        parameters.put("tenantId", 101L);
+        parameters.put("task", task);
+        parameters.put("evidence", JsonNodeFactory.instance.objectNode());
+        parameters.put("nativeStatus", "PLATFORM_APPLIED");
+        parameters.put("failureStage", null);
+        parameters.put("changedAt", LocalDateTime.of(2026, 11, 19, 0, 0));
+        parameters.put("actor", "native-publisher");
+        parameters.put("now", Instant.parse("2026-11-19T00:00:00Z"));
+        parameters.put("operator", "operator");
+        for (String operation : List.of("updateNativeEvidence", "resetNativeForRetry")) {
+            String sql = configuration.getMappedStatement(BASE + "dao.DdcPublishTaskMapper." + operation)
+                    .getBoundSql(parameters).getSql().toLowerCase(Locale.ROOT);
+            assertThat(sql).contains("tenant_id = ?", "id = ?", "change_id = ?", "config_id = ?", "target_version = ?",
+                    "version = ?", "attempt_count = ?", "deleted_at is null", "platform_evidence is not null", "version = version + 1");
         }
+    }
+
+    @Test
+    void historyRepositoryUsesOnlyTheMappedTenantAndCannotObtainAnIdOrWriteCapability() {
+        var mapper = mock(DdcPublishAckMapper.class);
+        var converter = mock(DdcPublishAckConverter.class);
+        var row = DdcPublishAckPO.builder().id(9L).tenantId(101L).changeId("change").build();
+        var archived = DdcPublishAckBO.builder().id(9L).changeId("change").ackStatus("SUCCESS").build();
+        when(mapper.selectByChangeId(101L, "change")).thenReturn(List.of(row));
+        when(converter.toTargetList(List.of(row))).thenReturn(List.of(archived));
+        var repository = new DdcPublishAckRepositoryImpl(mapper, converter);
+        MDC.put("tenantId", "101");
+        try {
+            assertThat(repository.findByChangeId("change")).containsExactly(archived);
+        } finally {
+            MDC.remove("tenantId");
+        }
+        verify(mapper).selectByChangeId(101L, "change");
     }
 
     private Configuration operationalMappers() throws Exception {

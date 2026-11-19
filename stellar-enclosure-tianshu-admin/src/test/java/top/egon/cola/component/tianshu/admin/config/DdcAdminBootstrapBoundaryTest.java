@@ -15,10 +15,7 @@ import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Import;
 import org.springframework.util.ClassUtils;
-import top.egon.cola.component.rpc.annotation.EgonRpcProvider;
 import top.egon.cola.component.rpc.config.EgonRpcProperties;
-import top.egon.cola.component.tianshu.admin.rpc.provider.DdcConfigRpcProvider;
-import top.egon.cola.component.tianshu.admin.rpc.provider.DdcRegistryRpcProvider;
 
 import java.nio.file.Path;
 import java.util.Map;
@@ -56,9 +53,6 @@ class DdcAdminBootstrapBoundaryTest {
     void deliveredOpenApiMetadataDoesNotBringTheRetiredHttpRegistrationRuntime() {
         assertThat(ClassUtils.isPresent("top.egon.cola.component.tianshu.http.registration.DdcHttpRegistrationRuntime",
                 getClass().getClassLoader())).isFalse();
-        // Only the consumer's bootstrap exits here; providers still serve their unretired consumers.
-        assertThat(DdcConfigRpcProvider.class.isAnnotationPresent(EgonRpcProvider.class)).isTrue();
-        assertThat(DdcRegistryRpcProvider.class.isAnnotationPresent(EgonRpcProvider.class)).isTrue();
     }
 
     @TestConfiguration(value = "ddcAdminBootstrapBoundaryTestConfiguration", proxyBeanMethods = false)

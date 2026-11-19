@@ -10,7 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 绑定 Tianshu Starter 的作用域、Redis、实例和一致性配置。 Binds scope, Redis, instance, and consistency settings for the Tianshu starter.
+ * 绑定原生交付、AI 工作区和受控兼容属性。 Binds native delivery, AI workspace and bounded compatibility settings.
  */
 @ConfigurationProperties(prefix = "egon.cola.component.tianshu", ignoreInvalidFields = true)
 public class DdcProperties {
@@ -93,19 +93,9 @@ public class DdcProperties {
     private Redis redis = new Redis();
 
     /**
-     * 配置客户端实例租约设置。 Configuration-client instance lease settings.
-     */
-    private Instance instance = new Instance();
-
-    /**
      * 服务注册客户端设置。 Service-registry client settings.
      */
     private Registry registry = new Registry();
-
-    /**
-     * 刷新一致性与对账设置。 Refresh consistency and reconciliation settings.
-     */
-    private Consistency consistency = new Consistency();
 
     /**
      * 返回是否启用 Tianshu。 Returns whether Tianshu is enabled.
@@ -262,24 +252,6 @@ public class DdcProperties {
     }
 
     /**
-     * 返回客户端实例配置。 Returns the client instance settings.
-     *
-     * @return 实例配置。 instance settings
-     */
-    public Instance getInstance() {
-        return instance;
-    }
-
-    /**
-     * 替换客户端实例配置组。 Replaces the client instance settings group.
-     *
-     * @param instance 实例配置。 instance settings
-     */
-    public void setInstance(Instance instance) {
-        this.instance = instance;
-    }
-
-    /**
      * 返回服务注册配置。 Returns the service-registry settings.
      *
      * @return 服务注册配置。 service-registry settings
@@ -295,24 +267,6 @@ public class DdcProperties {
      */
     public void setRegistry(Registry registry) {
         this.registry = registry;
-    }
-
-    /**
-     * 返回一致性配置。 Returns the consistency settings.
-     *
-     * @return 一致性配置。 consistency settings
-     */
-    public Consistency getConsistency() {
-        return consistency;
-    }
-
-    /**
-     * 替换一致性配置组。 Replaces the consistency settings group.
-     *
-     * @param consistency 一致性配置。 consistency settings
-     */
-    public void setConsistency(Consistency consistency) {
-        this.consistency = consistency;
     }
 
     /**
@@ -502,193 +456,6 @@ public class DdcProperties {
          */
         public void setDatabase(int database) {
             this.database = database;
-        }
-    }
-
-    /**
-     * 定义配置客户端实例标识、心跳周期和租约时长。 Defines the configuration-client instance identifier, heartbeat interval, and lease duration.
-     */
-    public static class Instance {
-
-        /**
-         * 可选显式实例标识。 Optional explicit instance identifier.
-         */
-        private String id;
-
-        /**
-         * 实例心跳发送间隔秒数。 Interval in seconds between instance heartbeats.
-         */
-        private int heartbeatIntervalSeconds = 10;
-
-        /**
-         * 管理端授予的实例租约时长秒数。 Instance lease duration in seconds granted by the management service.
-         */
-        private int leaseSeconds = 30;
-
-        /**
-         * 返回显式实例标识。 Returns the explicit instance identifier.
-         *
-         * @return 实例标识。 instance identifier
-         */
-        public String getId() {
-            return id;
-        }
-
-        /**
-         * 设置显式实例标识。 Sets the explicit instance identifier.
-         *
-         * @param id 实例标识。 instance identifier
-         */
-        public void setId(String id) {
-            this.id = id;
-        }
-
-        /**
-         * 返回心跳间隔秒数。 Returns the heartbeat interval in seconds.
-         *
-         * @return 心跳间隔秒数。 heartbeat interval in seconds
-         */
-        public int getHeartbeatIntervalSeconds() {
-            return heartbeatIntervalSeconds;
-        }
-
-        /**
-         * 设置心跳间隔秒数。 Sets the heartbeat interval in seconds.
-         *
-         * @param heartbeatIntervalSeconds 心跳间隔秒数。 heartbeat interval in seconds
-         */
-        public void setHeartbeatIntervalSeconds(int heartbeatIntervalSeconds) {
-            this.heartbeatIntervalSeconds = heartbeatIntervalSeconds;
-        }
-
-        /**
-         * 返回租约时长秒数。 Returns the lease duration in seconds.
-         *
-         * @return 租约时长秒数。 lease duration in seconds
-         */
-        public int getLeaseSeconds() {
-            return leaseSeconds;
-        }
-
-        /**
-         * 设置租约时长秒数。 Sets the lease duration in seconds.
-         *
-         * @param leaseSeconds 租约时长秒数。 lease duration in seconds
-         */
-        public void setLeaseSeconds(int leaseSeconds) {
-            this.leaseSeconds = leaseSeconds;
-        }
-
-        /**
-         * 校验心跳间隔为正且严格小于租约时长。 Validates that the heartbeat interval is positive and strictly shorter than the lease.
-         *
-         * @throws IllegalArgumentException 心跳与租约时序无效时抛出。 thrown when heartbeat and lease timing is invalid
-         */
-        public void validate() {
-            if (heartbeatIntervalSeconds <= 0
-                    || heartbeatIntervalSeconds >= leaseSeconds) {
-                throw new IllegalArgumentException(
-                        "egon.cola.component.tianshu.instance.heartbeat-interval-seconds "
-                                + "must be positive and less than lease-seconds"
-                );
-            }
-        }
-
-        /**
-         * 设置旧版“心跳超时”属性，并将其映射到租约时长。 Sets the legacy heartbeat-timeout property by mapping it to lease duration.
-         *
-         * @param heartbeatTimeoutSeconds 兼容旧配置的超时秒数。 timeout seconds from legacy configuration
-         * @deprecated 请改用 {@link #setLeaseSeconds(int)}。 Use {@link #setLeaseSeconds(int)} instead.
-         */
-        @Deprecated(forRemoval = true)
-        public void setHeartbeatTimeoutSeconds(int heartbeatTimeoutSeconds) {
-            this.leaseSeconds = heartbeatTimeoutSeconds;
-        }
-
-        /**
-         * 返回映射到租约时长的旧版“心跳超时”值。 Returns the legacy heartbeat-timeout value mapped from lease duration.
-         *
-         * @return 兼容旧配置的超时秒数。 timeout seconds for legacy configuration
-         * @deprecated 请改用 {@link #getLeaseSeconds()}。 Use {@link #getLeaseSeconds()} instead.
-         */
-        @Deprecated(forRemoval = true)
-        public int getHeartbeatTimeoutSeconds() {
-            return leaseSeconds;
-        }
-    }
-
-    /**
-     * 定义启动失败策略以及后台配置对账行为。 Defines startup failure policy and background configuration reconciliation behavior.
-     */
-    public static class Consistency {
-
-        /**
-         * 初始注册或拉取失败时是否立即阻止启动。 Whether initial registration or pull failure immediately aborts startup.
-         */
-        private boolean failFast = true;
-
-        /**
-         * 是否启用后台配置对账。 Whether background configuration reconciliation is enabled.
-         */
-        private boolean reconcileEnabled = true;
-
-        /**
-         * 后台配置对账周期秒数。 Background configuration reconciliation interval in seconds.
-         */
-        private int reconcileIntervalSeconds = 30;
-
-        /**
-         * 返回是否启用快速失败。 Returns whether fail-fast behavior is enabled.
-         *
-         * @return 快速失败标志。 fail-fast flag
-         */
-        public boolean isFailFast() {
-            return failFast;
-        }
-
-        /**
-         * 设置初始失败时是否快速失败。 Sets whether initial failures use fail-fast behavior.
-         *
-         * @param failFast 快速失败标志。 fail-fast flag
-         */
-        public void setFailFast(boolean failFast) {
-            this.failFast = failFast;
-        }
-
-        /**
-         * 返回是否启用后台配置对账。 Returns whether background configuration reconciliation is enabled.
-         *
-         * @return 对账启用标志。 reconciliation enabled flag
-         */
-        public boolean isReconcileEnabled() {
-            return reconcileEnabled;
-        }
-
-        /**
-         * 设置是否启用后台配置对账。 Sets whether background configuration reconciliation is enabled.
-         *
-         * @param reconcileEnabled 对账启用标志。 reconciliation enabled flag
-         */
-        public void setReconcileEnabled(boolean reconcileEnabled) {
-            this.reconcileEnabled = reconcileEnabled;
-        }
-
-        /**
-         * 返回配置对账周期秒数。 Returns the configuration reconciliation interval in seconds.
-         *
-         * @return 对账周期秒数。 reconciliation interval in seconds
-         */
-        public int getReconcileIntervalSeconds() {
-            return reconcileIntervalSeconds;
-        }
-
-        /**
-         * 设置配置对账周期秒数。 Sets the configuration reconciliation interval in seconds.
-         *
-         * @param reconcileIntervalSeconds 对账周期秒数。 reconciliation interval in seconds
-         */
-        public void setReconcileIntervalSeconds(int reconcileIntervalSeconds) {
-            this.reconcileIntervalSeconds = reconcileIntervalSeconds;
         }
     }
 

@@ -32,6 +32,16 @@ import static org.mockito.Mockito.when;
 
 class DdcAiStarterAutoConfigurationTest {
 
+    @Test
+    void supportedSdkClasspathContainsOnlyExplicitRedisRuntime() {
+        var loader = DdcAiStarterAutoConfigurationTest.class.getClassLoader();
+        assertThat(loader.getResource("org/redisson/api/RedissonClient.class")).isNotNull();
+        assertThat(loader.getResource("org/redisson/spring/starter/RedissonAutoConfigurationV2.class")).isNull();
+        assertThat(loader.getResource("org/redisson/spring/starter/RedissonAutoConfigurationV4.class")).isNull();
+        assertThat(loader.getResource("org/springframework/data/redis/core/RedisTemplate.class")).isNull();
+        assertThat(loader.getResource("org/redisson/spring/data/connection/RedissonConnectionFactory.class")).isNull();
+    }
+
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(DdcAiStarterAutoConfiguration.class));
 

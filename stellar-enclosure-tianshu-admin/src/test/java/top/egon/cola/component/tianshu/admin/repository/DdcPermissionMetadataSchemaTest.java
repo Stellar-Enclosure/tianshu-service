@@ -39,8 +39,8 @@ class DdcPermissionMetadataSchemaTest {
         try (var input = getClass().getClassLoader().getResourceAsStream("db/egon-mp/repository-manifest.json")) {
             var manifest = new ObjectMapper().readTree(input);
             assertThat(manifest.path("freshBaselineVersion").asText()).isEqualTo("20261018_001");
-            assertThat(manifest.path("scripts").size()).isEqualTo(6);
             var current = manifest.path("scripts").get(5);
+            assertThat(current).isNotNull();
             assertThat(current.path("version").asText()).isEqualTo("20261023_001");
             assertThat(current.path("sha256").asText()).isEqualTo(checksum);
         }

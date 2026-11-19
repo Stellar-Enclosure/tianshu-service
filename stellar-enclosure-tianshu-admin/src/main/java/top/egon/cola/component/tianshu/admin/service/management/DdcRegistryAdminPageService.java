@@ -1,5 +1,9 @@
 package top.egon.cola.component.tianshu.admin.service.management;
 
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import top.egon.cola.component.common.core.pojo.PageQuery;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcPageResult;
@@ -11,7 +15,9 @@ import top.egon.cola.component.tianshu.model.management.DdcManagementServiceQuer
 import java.util.Comparator;
 import java.util.List;
 
-@Service
+@Slf4j
+@Service("ddcRegistryAdminPageService")
+@RequiredArgsConstructor(onConstructor_ = @Autowired)
 public class DdcRegistryAdminPageService {
 
     private static final Comparator<String> TEXT =
@@ -39,11 +45,7 @@ public class DdcRegistryAdminPageService {
                     DdcManagementServiceInstance::instanceId, TEXT
             );
 
-    private final DdcManagementFacade facade;
-
-    public DdcRegistryAdminPageService(DdcManagementFacade facade) {
-        this.facade = facade;
-    }
+    @Qualifier("ddcManagementFacade") private final DdcManagementFacade facade;
 
     public DdcPageResult<DdcManagementServiceKey> pageServices(
             DdcManagementServiceQuery query,
@@ -58,8 +60,13 @@ public class DdcRegistryAdminPageService {
             DdcManagementServiceQuery query,
             PageQuery pageQuery
     ) {
-        List<DdcManagementServiceInstance> records = facade.getInstances(query)
-                .instances().stream().sorted(INSTANCE_ORDER).toList();
+        return pageInstances(query, pageQuery, null);
+    }
+
+    public DdcPageResult<DdcManagementServiceInstance> pageInstances(
+            DdcManagementServiceQuery query, PageQuery pageQuery, String bindingId) {
+        var snapshot = bindingId == null ? facade.getInstances(query) : facade.getInstances(query, bindingId);
+        List<DdcManagementServiceInstance> records = snapshot.instances().stream().sorted(INSTANCE_ORDER).toList();
         return DdcAdminPageSupport.slice(records, pageQuery);
     }
 }

@@ -19,19 +19,21 @@ import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantAdminProp
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantBindingDTO;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextExecutor;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantRegistry;
-import top.egon.cola.component.tianshu.admin.service.config.DdcConfigFacade;
+import top.egon.cola.component.tianshu.admin.service.management.DdcManagementFacade;
+import top.egon.cola.component.tianshu.model.management.DdcManagementConfigQuery;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.AiSkillDraftUpload;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.AiSkillPublishRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.AiUsageReport;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.AiUsageReportBatch;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.AiResourceQuery;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.DdcAiResourceServiceGrpc;
-import top.egon.cola.component.rpc.tianshu.contract.proto.v1.DdcConfigRuntimeServiceGrpc;
+import top.egon.cola.component.rpc.tianshu.contract.proto.v1.DdcManagementServiceGrpc;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.DdcSiResourceGrpcServiceGrpc;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.DdcScope;
-import top.egon.cola.component.rpc.tianshu.contract.proto.v1.PullConfigRequest;
-import top.egon.cola.component.rpc.tianshu.contract.proto.v1.PullConfigResponse;
+import top.egon.cola.component.rpc.tianshu.contract.proto.v1.FindConfigRequest;
+import top.egon.cola.component.rpc.tianshu.contract.proto.v1.FindConfigResponse;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.ResolveSiResourceRequest;
+import top.egon.cola.component.rpc.tianshu.contract.proto.v1.UpsertConfigRequest;
 import top.egon.cola.component.rpc.tianshu.mapping.DdcRpcStatusExceptionMapper;
 import top.egon.cola.component.rpc.tianshu.security.DdcRpcCanonicalRequest;
 import top.egon.cola.component.rpc.tianshu.security.DdcRpcMetadataKeys;
@@ -55,7 +57,7 @@ class DdcRpcServerInterceptorTest {
     private static final String SECRET = "sdk-secret";
 
     private final DdcRpcRequestSigner signer = new DdcRpcRequestSigner();
-    private final DdcConfigFacade facade = mock(DdcConfigFacade.class);
+    private final DdcManagementFacade facade = mock(DdcManagementFacade.class);
     private final AtomicReference<DdcServicePrincipal> principal =
             new AtomicReference<>();
 
@@ -69,21 +71,21 @@ class DdcRpcServerInterceptorTest {
     @BeforeEach
     void setUp() {
         DdcAdminProperties properties = properties(List.of(
-                credential(List.of("CONFIG_PULL"), List.of("app-a"))));
+                managementCredential("MANAGEMENT_CONFIG_READ")));
         interceptor = interceptor(properties, new InMemoryDdcNonceStore(100));
     }
 
     @Test
     void authenticatesDeterministicRequestAndExposesPrincipalContext() {
-        PullConfigRequest request = request("biz-a", "dev", "app-a");
+        FindConfigRequest request = request("biz-a", "dev", "app-a");
         MDC.put("tenantId", "999");
         MDC.put("userId", "system:outer");
 
-        RecordingServerCall<PullConfigRequest, PullConfigResponse> call =
+        RecordingServerCall<FindConfigRequest, FindConfigResponse> call =
                 invoke(request, signed(request, NOW.toEpochMilli(), "nonce-1"));
 
         assertThat(call.status()).isNull();
-        verify(facade).pull("biz-a", "dev", "app-a");
+        verify(facade).findConfig(new DdcManagementConfigQuery("biz-a", "dev", "app-a"));
         assertThat(principal.get().credentialId()).isEqualTo("sdk-a");
         assertThat(principal.get().tenantId()).isEqualTo(101L);
         assertThat(principal.get().identityTenantId()).isEqualTo("tenant-a");
@@ -106,7 +108,7 @@ class DdcRpcServerInterceptorTest {
 
         var call = invoke(method, request,
                 signed(method.getFullMethodName(), request, NOW.toEpochMilli(), "native-no-hmac-fallback"),
-                ignored -> facade.pull("must", "not", "run"));
+                ignored -> facade.findConfig(new DdcManagementConfigQuery("must", "not", "run")));
 
         assertThat(call.status()).isNotNull();
         assertThat(call.status().getCode()).isEqualTo(Status.Code.UNAVAILABLE);
@@ -115,7 +117,7 @@ class DdcRpcServerInterceptorTest {
 
     @Test
     void rejectsMissingMalformedAndExpiredAuthenticationBeforeFacade() {
-        PullConfigRequest request = request("biz-a", "dev", "app-a");
+        FindConfigRequest request = request("biz-a", "dev", "app-a");
 
         assertRejected(request, new Metadata(), Status.Code.UNAUTHENTICATED,
                 "TIANSHU_SIGNATURE_REQUIRED");
@@ -146,7 +148,7 @@ class DdcRpcServerInterceptorTest {
                 "TIANSHU_SIGNATURE_REQUIRED");
 
         Metadata wrongTenant = signed(102L,
-                DdcConfigRuntimeServiceGrpc.getPullConfigMethod().getFullMethodName(),
+                DdcManagementServiceGrpc.getFindConfigMethod().getFullMethodName(),
                 request, NOW.toEpochMilli(), "nonce-wrong-tenant");
         assertRejected(request, wrongTenant, Status.Code.UNAUTHENTICATED,
                 "TIANSHU_SIGNATURE_INVALID");
@@ -163,7 +165,7 @@ class DdcRpcServerInterceptorTest {
 
     @Test
     void rejectsBadHashBadSignatureAndReplayBeforeFacade() {
-        PullConfigRequest request = request("biz-a", "dev", "app-a");
+        FindConfigRequest request = request("biz-a", "dev", "app-a");
         Metadata badHash = signed(request, NOW.toEpochMilli(), "nonce-hash");
         badHash.removeAll(DdcRpcMetadataKeys.CONTENT_SHA256);
         badHash.put(DdcRpcMetadataKeys.CONTENT_SHA256, "0".repeat(64));
@@ -178,10 +180,10 @@ class DdcRpcServerInterceptorTest {
                 "TIANSHU_SIGNATURE_INVALID");
 
         Metadata replay = signed(request, NOW.toEpochMilli(), "nonce-replay");
-        RecordingServerCall<PullConfigRequest, PullConfigResponse> first =
+        RecordingServerCall<FindConfigRequest, FindConfigResponse> first =
                 invoke(request, replay);
         assertThat(first.status()).isNull();
-        RecordingServerCall<PullConfigRequest, PullConfigResponse> second =
+        RecordingServerCall<FindConfigRequest, FindConfigResponse> second =
                 invoke(request, replay);
         assertThat(second.status().getCode())
                 .isEqualTo(Status.Code.UNAUTHENTICATED);
@@ -191,9 +193,9 @@ class DdcRpcServerInterceptorTest {
     @Test
     void rejectsWrongOperationScopeAndUnknownMethodBeforeFacade() {
         DdcAdminProperties wrongOperationProperties = properties(List.of(
-                credential(List.of("PUBLISH_ACK"), List.of("app-a"))));
+                managementCredential("MANAGEMENT_CONFIG_WRITE")));
         interceptor = interceptor(wrongOperationProperties, new InMemoryDdcNonceStore(100));
-        PullConfigRequest allowedScope = request("biz-a", "dev", "app-a");
+        FindConfigRequest allowedScope = request("biz-a", "dev", "app-a");
         assertRejected(
                 allowedScope,
                 signed(allowedScope, NOW.toEpochMilli(), "wrong-operation"),
@@ -202,9 +204,9 @@ class DdcRpcServerInterceptorTest {
         );
 
         DdcAdminProperties scopedProperties = properties(List.of(
-                credential(List.of("CONFIG_PULL"), List.of("app-a"))));
+                managementCredential("MANAGEMENT_CONFIG_READ")));
         interceptor = interceptor(scopedProperties, new InMemoryDdcNonceStore(100));
-        PullConfigRequest wrongScope = request("biz-a", "dev", "app-b");
+        FindConfigRequest wrongScope = request("biz-a", "dev", "app-b");
         assertRejected(
                 wrongScope,
                 signed(wrongScope, NOW.toEpochMilli(), "wrong-scope"),
@@ -227,7 +229,7 @@ class DdcRpcServerInterceptorTest {
                 value,
                 signed(unknown.getFullMethodName(), value,
                         NOW.toEpochMilli(), "unknown-method"),
-                ignored -> facade.pull("must", "not", "run")
+                ignored -> facade.findConfig(new DdcManagementConfigQuery("must", "not", "run"))
         );
         assertThat(unknownCall.status().getCode())
                 .isEqualTo(Status.Code.PERMISSION_DENIED);
@@ -238,20 +240,13 @@ class DdcRpcServerInterceptorTest {
     @Test
     void failsClosedForNonceStoreOutageOnWriteRequests() {
         DdcAdminProperties properties = properties(List.of(
-                credential(List.of("SDK_REGISTER"), List.of("app-a"))));
+                managementCredential("MANAGEMENT_CONFIG_WRITE")));
         interceptor = interceptor(properties, (credentialId, nonce, ttl) -> {
             throw new IllegalStateException("redis-secret");
         });
-        var method = DdcConfigRuntimeServiceGrpc.getRegisterConfigClientMethod();
-        var request = top.egon.cola.component.rpc.tianshu.contract.proto.v1
-                .RegisterConfigClientRequest.newBuilder()
+        var method = DdcManagementServiceGrpc.getUpsertConfigMethod();
+        var request = UpsertConfigRequest.newBuilder()
                 .setScope(scope("biz-a", "dev", "app-a"))
-                .setInstanceId("instance-1")
-                .setHost("127.0.0.1")
-                .setPid("1")
-                .setSdkVersion("1.0.0")
-                .setLeaseSeconds(30)
-                .setHeartbeatIntervalSeconds(10)
                 .build();
 
         RecordingServerCall<?, ?> call = invoke(
@@ -259,7 +254,7 @@ class DdcRpcServerInterceptorTest {
                 request,
                 signed(method.getFullMethodName(), request,
                         NOW.toEpochMilli(), "nonce-store-down"),
-                ignored -> facade.pull("must", "not", "run")
+                ignored -> facade.findConfig(new DdcManagementConfigQuery("must", "not", "run"))
         );
 
         assertThat(call.status().getCode()).isEqualTo(Status.Code.UNAVAILABLE);
@@ -271,18 +266,18 @@ class DdcRpcServerInterceptorTest {
     @Test
     void preservesReadAvailabilityWhenNonceStoreIsTemporarilyUnavailable() {
         DdcAdminProperties properties = properties(List.of(
-                credential(List.of("CONFIG_PULL"), List.of("app-a"))));
+                managementCredential("MANAGEMENT_CONFIG_READ")));
         interceptor = interceptor(properties, (credentialId, nonce, ttl) -> {
             throw new IllegalStateException("redis unavailable");
         });
-        PullConfigRequest request = request("biz-a", "dev", "app-a");
+        FindConfigRequest request = request("biz-a", "dev", "app-a");
 
-        RecordingServerCall<PullConfigRequest, PullConfigResponse> call =
+        RecordingServerCall<FindConfigRequest, FindConfigResponse> call =
                 invoke(request, signed(
                         request, NOW.toEpochMilli(), "read-store-down"));
 
         assertThat(call.status()).isNull();
-        verify(facade).pull("biz-a", "dev", "app-a");
+        verify(facade).findConfig(new DdcManagementConfigQuery("biz-a", "dev", "app-a"));
     }
 
     @Test
@@ -298,7 +293,7 @@ class DdcRpcServerInterceptorTest {
                 deniedNamespace,
                 signed(method.getFullMethodName(), deniedNamespace,
                         NOW.toEpochMilli(), "ai-namespace-denied"),
-                ignored -> facade.pull("must", "not", "run")
+                ignored -> facade.findConfig(new DdcManagementConfigQuery("must", "not", "run"))
         );
 
         assertThat(deniedCall.status()).as("ungranted namespace must be rejected")
@@ -313,7 +308,7 @@ class DdcRpcServerInterceptorTest {
                 emptyGrantNamespace,
                 signed(method.getFullMethodName(), emptyGrantNamespace,
                         NOW.toEpochMilli(), "ai-namespace-empty-grant"),
-                ignored -> facade.pull("must", "not", "run")
+                ignored -> facade.findConfig(new DdcManagementConfigQuery("must", "not", "run"))
         );
 
         assertThat(emptyGrantCall.status()).as("empty namespace grant must be rejected")
@@ -327,27 +322,25 @@ class DdcRpcServerInterceptorTest {
                 missingRoot,
                 signed(method.getFullMethodName(), missingRoot,
                         NOW.toEpochMilli(), "ai-root-id-missing"),
-                ignored -> facade.pull("must", "not", "run")
+                ignored -> facade.findConfig(new DdcManagementConfigQuery("must", "not", "run"))
         );
         assertThat(missingRootCall.status().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
         assertThat(errorCode(missingRootCall)).isEqualTo("TIANSHU_INVALID_REQUEST");
         verifyNoInteractions(facade);
     }
 
-    private RecordingServerCall<PullConfigRequest, PullConfigResponse> invoke(
-            PullConfigRequest request,
+    private RecordingServerCall<FindConfigRequest, FindConfigResponse> invoke(
+            FindConfigRequest request,
             Metadata headers) {
         return invoke(
-                DdcConfigRuntimeServiceGrpc.getPullConfigMethod(),
+                DdcManagementServiceGrpc.getFindConfigMethod(),
                 request,
                 headers,
                 message -> {
                     principal.set(DdcServicePrincipal.current());
-                    facade.pull(
-                            message.getScope().getBizCode(),
-                            message.getScope().getEnv(),
-                            message.getScope().getAppCode()
-                    );
+                    var requestScope = message.getScope();
+                    facade.findConfig(new DdcManagementConfigQuery(
+                            requestScope.getBizCode(), requestScope.getEnv(), requestScope.getAppCode()));
                 }
         );
     }
@@ -381,11 +374,11 @@ class DdcRpcServerInterceptorTest {
     }
 
     private void assertRejected(
-            PullConfigRequest request,
+            FindConfigRequest request,
             Metadata headers,
             Status.Code status,
             String errorCode) {
-        RecordingServerCall<PullConfigRequest, PullConfigResponse> call =
+        RecordingServerCall<FindConfigRequest, FindConfigResponse> call =
                 invoke(request, headers);
         assertThat(call.status().getCode()).isEqualTo(status);
         assertThat(errorCode(call)).isEqualTo(errorCode);
@@ -398,11 +391,11 @@ class DdcRpcServerInterceptorTest {
     }
 
     private Metadata signed(
-            PullConfigRequest request,
+            FindConfigRequest request,
             long timestamp,
             String nonce) {
         return signed(
-                DdcConfigRuntimeServiceGrpc.getPullConfigMethod()
+                DdcManagementServiceGrpc.getFindConfigMethod()
                         .getFullMethodName(),
                 request,
                 timestamp,
@@ -450,7 +443,7 @@ class DdcRpcServerInterceptorTest {
                 .addReports(usage("orders-api")).addReports(usage("billing-api")).build();
         RecordingServerCall<?, ?> mixedCall = invoke(report, mixed,
                 signed(report.getFullMethodName(), mixed, NOW.toEpochMilli(), "ai-report-mixed"),
-                ignored -> facade.pull("must", "not", "run"));
+                ignored -> facade.findConfig(new DdcManagementConfigQuery("must", "not", "run")));
         assertThat(mixedCall.status().getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
 
         AiUsageReportBatch granted = AiUsageReportBatch.newBuilder()
@@ -467,7 +460,7 @@ class DdcRpcServerInterceptorTest {
                 .setResourceKey("refund").setResourceId("7").setExpectedRevision("1").build();
         RecordingServerCall<?, ?> uploadCall = invoke(upload, foreignUpload,
                 signed(upload.getFullMethodName(), foreignUpload, NOW.toEpochMilli(), "ai-upload-denied"),
-                ignored -> facade.pull("must", "not", "run"));
+                ignored -> facade.findConfig(new DdcManagementConfigQuery("must", "not", "run")));
         assertThat(uploadCall.status().getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
 
         var publish = DdcAiResourceServiceGrpc.getPublishSkillDraftMethod();
@@ -492,7 +485,7 @@ class DdcRpcServerInterceptorTest {
 
         RecordingServerCall<?, ?> call = invoke(report, batch,
                 signed(report.getFullMethodName(), batch, NOW.toEpochMilli(), "ai-report-nonce-down"),
-                ignored -> facade.pull("must", "not", "run"));
+                ignored -> facade.findConfig(new DdcManagementConfigQuery("must", "not", "run")));
 
         assertThat(call.status().getCode()).isEqualTo(Status.Code.UNAVAILABLE);
         assertThat(errorCode(call)).isEqualTo("TIANSHU_NONCE_STORE_UNAVAILABLE");
@@ -507,7 +500,7 @@ class DdcRpcServerInterceptorTest {
 
         RecordingServerCall<?, ?> call = invoke(report, empty,
                 signed(report.getFullMethodName(), empty, NOW.toEpochMilli(), "ai-report-empty"),
-                ignored -> facade.pull("must", "not", "run"));
+                ignored -> facade.findConfig(new DdcManagementConfigQuery("must", "not", "run")));
 
         assertThat(call.status().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
     }
@@ -577,11 +570,17 @@ class DdcRpcServerInterceptorTest {
         return credential;
     }
 
-    private PullConfigRequest request(
+    private DdcAdminProperties.Credential managementCredential(String operation) {
+        DdcAdminProperties.Credential credential = credential(List.of(operation), List.of("app-a"));
+        credential.setClientType("MANAGEMENT");
+        return credential;
+    }
+
+    private FindConfigRequest request(
             String bizCode,
             String env,
             String appCode) {
-        return PullConfigRequest.newBuilder()
+        return FindConfigRequest.newBuilder()
                 .setScope(scope(bizCode, env, appCode))
                 .build();
     }

@@ -1,29 +1,19 @@
 package top.egon.cola.component.tianshu.admin.security.rpc;
 
 import com.google.protobuf.Message;
-import top.egon.cola.component.rpc.tianshu.contract.proto.v1.AcknowledgePublishRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.AiResourceQuery;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.AiSkillDraftUpload;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.AiSkillPublishRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.AiUsageReportBatch;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.DeleteConfigRequest;
-import top.egon.cola.component.rpc.tianshu.contract.proto.v1.DeregisterServiceRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.FindConfigRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.GetConfigClientsRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.GetInstancesRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.GetScopeBindingsRequest;
-import top.egon.cola.component.rpc.tianshu.contract.proto.v1.GetServiceInstancesRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.GetServiceKeysRequest;
-import top.egon.cola.component.rpc.tianshu.contract.proto.v1.GetServicesRequest;
-import top.egon.cola.component.rpc.tianshu.contract.proto.v1.HeartbeatConfigClientRequest;
-import top.egon.cola.component.rpc.tianshu.contract.proto.v1.HeartbeatServiceRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.ListSiCatalogRequest;
-import top.egon.cola.component.rpc.tianshu.contract.proto.v1.OfflineConfigClientRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.PublishConfigRequest;
-import top.egon.cola.component.rpc.tianshu.contract.proto.v1.PullConfigRequest;
-import top.egon.cola.component.rpc.tianshu.contract.proto.v1.RegisterConfigClientRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.RegisterManagedSiRequest;
-import top.egon.cola.component.rpc.tianshu.contract.proto.v1.RegisterServiceRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.ResolveSiResourceRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.SemanticSearchSiRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.UpsertConfigRequest;
@@ -34,10 +24,6 @@ import top.egon.cola.component.rpc.tianshu.contract.proto.v1.UpsertConfigRequest
  */
 public final class DdcRpcScopeExtractor {
 
-    private static final String CONFIG =
-            "egon.tianshu.v1.DdcConfigRuntimeService/";
-    private static final String REGISTRY =
-            "egon.tianshu.v1.DdcServiceRegistryService/";
     private static final String MANAGEMENT =
             "egon.tianshu.v1.DdcManagementService/";
     private static final String AI_RESOURCE =
@@ -52,30 +38,6 @@ public final class DdcRpcScopeExtractor {
                     "fullMethodName and request are required");
         }
         return switch (fullMethodName) {
-            case CONFIG + "RegisterConfigClient" -> configScope(
-                    type(request, RegisterConfigClientRequest.class).getScope());
-            case CONFIG + "HeartbeatConfigClient" -> configScope(
-                    type(request, HeartbeatConfigClientRequest.class).getScope());
-            case CONFIG + "OfflineConfigClient" -> configScope(
-                    type(request, OfflineConfigClientRequest.class).getScope());
-            case CONFIG + "PullConfig" -> configScope(
-                    type(request, PullConfigRequest.class).getScope());
-            case CONFIG + "AcknowledgePublish" -> configScope(
-                    type(request, AcknowledgePublishRequest.class).getScope());
-            case REGISTRY + "RegisterService" -> registryScope(
-                    type(request, RegisterServiceRequest.class)
-                            .getServiceKey().getScope());
-            case REGISTRY + "HeartbeatService" -> registryScope(
-                    type(request, HeartbeatServiceRequest.class)
-                            .getServiceKey().getScope());
-            case REGISTRY + "DeregisterService" -> registryScope(
-                    type(request, DeregisterServiceRequest.class)
-                            .getServiceKey().getScope());
-            case REGISTRY + "GetServiceInstances" -> registryScope(
-                    type(request, GetServiceInstancesRequest.class)
-                            .getServiceKey().getScope());
-            case REGISTRY + "GetServices" -> registryQuery(
-                    type(request, GetServicesRequest.class));
             case MANAGEMENT + "FindConfig" -> managementScope(
                     type(request, FindConfigRequest.class).getScope());
             case MANAGEMENT + "UpsertConfig" -> managementScope(
@@ -136,16 +98,6 @@ public final class DdcRpcScopeExtractor {
             default -> throw new IllegalArgumentException(
                     "Unknown Tianshu RPC method");
         };
-    }
-
-    private Scope configScope(
-            top.egon.cola.component.rpc.tianshu.contract.proto.v1.DdcScope scope) {
-        return required("SDK", scope);
-    }
-
-    private Scope registryScope(
-            top.egon.cola.component.rpc.tianshu.contract.proto.v1.DdcScope scope) {
-        return required("REGISTRY", scope);
     }
 
     private Scope managementScope(
@@ -216,19 +168,6 @@ public final class DdcRpcScopeExtractor {
                 scope.getEnv(),
                 scope.getBizCode(),
                 null
-        );
-    }
-
-    private Scope registryQuery(GetServicesRequest request) {
-        if (!request.hasQuery()) {
-            throw new IllegalArgumentException("service query is required");
-        }
-        var query = request.getQuery();
-        return new Scope(
-                "REGISTRY",
-                query.hasAppCode() ? query.getAppCode() : null,
-                query.hasEnv() ? query.getEnv() : null,
-                query.hasBizCode() ? query.getBizCode() : null
         );
     }
 

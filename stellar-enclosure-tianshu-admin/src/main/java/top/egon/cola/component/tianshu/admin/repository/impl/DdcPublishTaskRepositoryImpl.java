@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Repository;
@@ -16,12 +17,10 @@ import top.egon.cola.component.common.mybatis.model.EgonColaIdentifierGenerator;
 import top.egon.cola.component.tianshu.admin.common.DdcAdminException;
 import top.egon.cola.component.tianshu.admin.dao.DdcPublishTaskMapper;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishTaskBO;
-import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishAckSummaryBO;
 import top.egon.cola.component.tianshu.admin.model.convertor.DdcPublishTaskConverter;
 import top.egon.cola.component.tianshu.admin.model.po.DdcPublishTaskPO;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcPageResult;
 import top.egon.cola.component.tianshu.admin.repository.DdcPublishTaskRepository;
-import top.egon.cola.component.tianshu.model.config.DdcPublishTarget;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -30,7 +29,7 @@ import java.util.Optional;
 
 @Slf4j
 @Repository("ddcPublishTaskRepository")
-@RequiredArgsConstructor
+@RequiredArgsConstructor(onConstructor_ = @Autowired)
 @Validated
 public class DdcPublishTaskRepositoryImpl extends EgonColaRepository<DdcPublishTaskMapper, DdcPublishTaskPO>
         implements DdcPublishTaskRepository {
@@ -69,29 +68,8 @@ public class DdcPublishTaskRepositoryImpl extends EgonColaRepository<DdcPublishT
     public int resetNativeForRetry(DdcPublishTaskBO task, String operator, LocalDateTime changedAt) {
         return mapper.resetNativeForRetry(tenantId(), task, operator, changedAt, actor(), auditTime());
     }
-    @Override public boolean fenceObservedVersion(DdcPublishTaskBO task) {
-        return mapper.fenceObservedVersion(tenantId(), task.getId(), task.getVersion(), actor(),
-                java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS)) == 1;
-    }
-    @Override public boolean fenceDispatchTargets(DdcPublishTaskBO task, List<DdcPublishTarget> targets) {
-        return mapper.fenceDispatchTargets(tenantId(), task, targets, targets.size(), actor(),
-                java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS)) == 1;
-    }
-    @Override public int updateAckSummary(DdcPublishTaskBO task, DdcPublishAckSummaryBO summary, LocalDateTime updatedAt) {
-        return mapper.updateAckSummary(tenantId(), task, summary, updatedAt, actor(),
-                java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS));
-    }
     @Override public List<DdcPublishTaskBO> findAll() {
         return converter.toTargetList(mapper.selectAll(tenantId()));
-    }
-    @Override public List<DdcPublishTaskBO> findByStatusIn(Collection<String> statuses) {
-        return statuses == null || statuses.isEmpty() ? List.of()
-                : converter.toTargetList(mapper.selectByStatusIn(tenantId(), statuses));
-    }
-    @Override public List<DdcPublishTaskBO> findByStatusInAndUpdatedAtBefore(
-            Collection<String> statuses, LocalDateTime updatedAt) {
-        return statuses == null || statuses.isEmpty() ? List.of()
-                : converter.toTargetList(mapper.selectByStatusInAndUpdatedAtBefore(tenantId(), statuses, updatedAt));
     }
     @Override public DdcPageResult<DdcPublishTaskBO> search(String bizCode, String env, String appCode,
             String status, String changeId, PageQuery pageQuery) {
@@ -102,46 +80,6 @@ public class DdcPublishTaskRepositoryImpl extends EgonColaRepository<DdcPublishT
         return DdcPageResult.<DdcPublishTaskBO>builder().records(records)
                 .total(mapper.countSearch(tenant, bizCode, env, appCode, status, changeId))
                 .pageNo(page.pageNo()).pageSize(page.pageSize()).build();
-    }
-    @Override public int claimStaleForRecovery(DdcPublishTaskBO task, Collection<String> activeStatuses,
-            LocalDateTime staleBefore, LocalDateTime claimedAt) {
-        return activeStatuses == null || activeStatuses.isEmpty() ? 0
-                : mapper.claimStaleForRecovery(tenantId(), task, activeStatuses, staleBefore, claimedAt, actor(), auditTime());
-    }
-    @Override public Optional<DdcPublishTaskBO> findFirstByBizCodeAndEnvAndAppCodeAndResourceNameAndStatusIn(
-            String bizCode, String env, String appCode, String resourceName, Collection<String> statuses) {
-        return statuses == null || statuses.isEmpty() ? Optional.empty()
-                : Optional.ofNullable(mapper.selectFirstByScopeAndResourceAndStatusIn(
-                        tenantId(), bizCode, env, appCode, resourceName, statuses)).map(converter::toTarget);
-    }
-    @Override public int transitionToPublishing(DdcPublishTaskBO task, Collection<String> dispatchableStatuses,
-            String pendingStatus, String publishingStatus, LocalDateTime dispatchedAt) {
-        return dispatchableStatuses == null || dispatchableStatuses.isEmpty() ? 0
-                : mapper.transitionToPublishing(tenantId(), task, dispatchableStatuses,
-                        pendingStatus, publishingStatus, dispatchedAt, actor(), auditTime());
-    }
-    @Override public int updateCounters(String changeId, int ackCount, int failedCount, int ignoredCount,
-            int timeoutCount, LocalDateTime updatedAt) {
-        return mapper.updateCounters(tenantId(), changeId, ackCount, failedCount, ignoredCount,
-                timeoutCount, updatedAt, actor());
-    }
-    @Override public int transitionToTerminal(DdcPublishTaskBO task, String terminalStatus, LocalDateTime completedAt,
-            String failureStage, String errorMessage, Collection<String> activeStatuses) {
-        return activeStatuses == null || activeStatuses.isEmpty() ? 0
-                : mapper.transitionToTerminal(tenantId(), task, terminalStatus, completedAt,
-                        failureStage, errorMessage, activeStatuses, actor(), auditTime());
-    }
-    @Override public int resetForRetry(DdcPublishTaskBO task, String pendingStatus, String operator,
-            LocalDateTime updatedAt, Collection<String> retryableStatuses) {
-        return retryableStatuses == null || retryableStatuses.isEmpty() ? 0
-                : mapper.resetForRetry(tenantId(), task, pendingStatus, operator,
-                        updatedAt, retryableStatuses, actor(), auditTime());
-    }
-    @Override public int markRetryLeaseExpired(DdcPublishTaskBO task, String failedStatus, LocalDateTime completedAt,
-            String failureStage, String errorMessage, Collection<String> retryableStatuses) {
-        return retryableStatuses == null || retryableStatuses.isEmpty() ? 0
-                : mapper.markRetryLeaseExpired(tenantId(), task, failedStatus, completedAt,
-                        failureStage, errorMessage, retryableStatuses, actor(), auditTime());
     }
 
     @Override public DdcPublishTaskBO insert(DdcPublishTaskBO command) {
@@ -158,12 +96,6 @@ public class DdcPublishTaskRepositoryImpl extends EgonColaRepository<DdcPublishT
         return converter.toTarget(row);
     }
 
-    @Override public DdcPublishTaskBO update(DdcPublishTaskBO command) {
-        DdcPublishTaskPO row = converter.toSource(command);
-        if (!updateById(row)) throw new DdcAdminException("publish task version changed");
-        return converter.toTarget(row);
-    }
-
     private boolean businessKeyConflict(Throwable failure) {
         for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
             String message = cause.getMessage();
@@ -175,5 +107,12 @@ public class DdcPublishTaskRepositoryImpl extends EgonColaRepository<DdcPublishT
 
     private java.time.Instant auditTime() {
         return java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+    }
+
+    @Override public Optional<DdcPublishTaskBO> findFirstByBizCodeAndEnvAndAppCodeAndResourceNameAndStatusIn(
+            String bizCode, String env, String appCode, String resourceName, Collection<String> statuses) {
+        return statuses == null || statuses.isEmpty() ? Optional.empty()
+                : Optional.ofNullable(mapper.selectFirstByScopeAndResourceAndStatusIn(
+                        tenantId(), bizCode, env, appCode, resourceName, statuses)).map(converter::toTarget);
     }
 }

@@ -14,6 +14,8 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import top.egon.cola.component.common.core.exception.CommonException;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -54,13 +56,13 @@ class DdcRegistryAdminPageServiceTest {
     void pagesInstancesInStableStatusAndEndpointOrder() {
         DdcManagementServiceKey key = service("yuheng", "svc");
         DdcManagementServiceInstance a = instance(
-                "instance-a", "192.168.1.1", 19000, "ONLINE"
+                "instance-a", null, 19000, "UNKNOWN"
         );
         DdcManagementServiceInstance b = instance(
-                "instance-b", "192.168.1.2", 19001, "ONLINE"
+                "instance-b", null, 19001, "UNKNOWN"
         );
         DdcManagementServiceInstance c = instance(
-                "instance-c", "192.168.1.1", 19000, "SUSPECT"
+                "instance-c", null, 19000, "UNKNOWN"
         );
         when(facade.getInstances(query)).thenReturn(
                 new DdcManagementServiceSnapshot(
@@ -72,9 +74,20 @@ class DdcRegistryAdminPageServiceTest {
                 query, new PageQuery(1, 2)
         );
 
-        assertThat(page.getRecords()).containsExactly(a, b);
+        assertThat(page.getRecords()).containsExactly(a, c);
         assertThat(page.getTotal()).isEqualTo(3);
         verify(facade).getInstances(query);
+    }
+
+    @Test
+    void pagesTheExplicitBindingAndNeverConvertsAnObservationFailureToEmptySuccess() {
+        when(facade.getInstances(query, "binding-a")).thenReturn(
+                new DdcManagementServiceSnapshot(service("yuheng", "binding-a"), 0L, Instant.EPOCH, List.of()));
+        assertThat(service.pageInstances(query, new PageQuery(1, 10), "binding-a").getRecords()).isEmpty();
+        verify(facade).getInstances(query, "binding-a");
+        var failure = new CommonException(503, "TIANSHU_SERVICE_OBSERVATION_UNAVAILABLE", "unavailable", true, null);
+        when(facade.getServiceKeys(query)).thenThrow(failure);
+        assertThatThrownBy(() -> service.pageServices(query, new PageQuery(1, 10))).isSameAs(failure);
     }
 
     private DdcManagementServiceKey service(
@@ -94,8 +107,8 @@ class DdcRegistryAdminPageServiceTest {
             String status
     ) {
         return new DdcManagementServiceInstance(
-                instanceId, "lease-" + instanceId, host, port, false,
-                Map.of(), status, Instant.EPOCH, Instant.EPOCH, Instant.EPOCH
+                instanceId, null, host, port, false,
+                Map.of("observationSource", "KUBERNETES"), status, null, null, null
         );
     }
 }

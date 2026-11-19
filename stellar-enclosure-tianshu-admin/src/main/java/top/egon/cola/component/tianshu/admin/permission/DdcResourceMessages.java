@@ -173,9 +173,17 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.P
 @PermissionMessage(pageCode = "tianshu.permissions", key = "api.i18nSourceImport.receipt", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "i18nSourceImport: receipt"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "api.instance.list", defaultLocale = "en-US",
-        defaults = @LocalizedText(locale = "en-US", text = "instance: list"))
+        defaults = @LocalizedText(locale = "en-US", text = "List current workload observations"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "api.instance.page", defaultLocale = "en-US",
-        defaults = @LocalizedText(locale = "en-US", text = "instance: page"))
+        defaults = @LocalizedText(locale = "en-US", text = "Page current workload observations"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "api.instance.historyList", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "List archived instance records"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "api.instance.historyPage", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Page archived instance records"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.currentPods", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Observed pods"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.validUntil", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Observation expiry"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "api.namespace.delete", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "namespace: delete"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "api.namespace.list", defaultLocale = "en-US",

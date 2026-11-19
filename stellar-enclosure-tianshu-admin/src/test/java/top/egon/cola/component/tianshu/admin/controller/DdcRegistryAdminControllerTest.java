@@ -5,6 +5,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import top.egon.cola.component.common.core.pojo.PageQuery;
+import top.egon.cola.component.common.core.exception.CommonException;
 import top.egon.cola.component.tianshu.admin.config.DdcGlobalExceptionHandler;
 import top.egon.cola.component.tianshu.admin.controller.register.DdcRegistryAdminController;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcPageResult;
@@ -22,6 +23,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -45,7 +47,7 @@ class DdcRegistryAdminControllerTest {
     void returnsServiceCatalogThroughJwtAdminPath() throws Exception {
         when(facade.getServiceKeys(any())).thenReturn(
                 new DdcManagementServiceCatalog(
-                        7L,
+                        0L,
                         Instant.parse("2026-07-28T04:00:00Z"),
                         List.of(key())
                 )
@@ -60,7 +62,7 @@ class DdcRegistryAdminControllerTest {
                         .param("protocol", "grpc"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data.generation").value(7))
+                .andExpect(jsonPath("$.data.generation").value(0))
                 .andExpect(jsonPath("$.data.services[0].serviceName")
                         .value("egon.yuheng.test.v1.EchoService"));
     }
@@ -70,19 +72,16 @@ class DdcRegistryAdminControllerTest {
         when(facade.getInstances(any())).thenReturn(
                 new DdcManagementServiceSnapshot(
                         key(),
-                        8L,
+                        0L,
                         Instant.parse("2026-07-28T04:00:01Z"),
                         List.of(new DdcManagementServiceInstance(
                                 "rpc-provider-local-1",
-                                "lease-1",
-                                "192.168.6.186",
+                                null,
+                                null,
                                 19101,
                                 false,
-                                Map.of("buildId", "local-rpc-build"),
-                                "ONLINE",
-                                Instant.parse("2026-07-28T03:59:00Z"),
-                                Instant.parse("2026-07-28T04:00:00Z"),
-                                Instant.parse("2026-07-28T04:01:00Z")
+                                Map.of("observationSource", "KUBERNETES"),
+                                "UNKNOWN", null, null, null
                         ))
                 )
         );
@@ -100,7 +99,7 @@ class DdcRegistryAdminControllerTest {
                         .param("group", "default")
                         .param("version", "1.0.0"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.generation").value(8))
+                .andExpect(jsonPath("$.data.generation").value(0))
                 .andExpect(jsonPath("$.data.instances[0].instanceId")
                         .value("rpc-provider-local-1"))
                 .andExpect(jsonPath("$.data.instances[0].port")
@@ -133,7 +132,7 @@ class DdcRegistryAdminControllerTest {
                 .record(key()).total(1).pageNo(1).pageSize(10).build());
         when(facade.getServiceKeys(any())).thenReturn(
                 new DdcManagementServiceCatalog(
-                        7L, Instant.EPOCH, List.of(key())
+                        0L, Instant.EPOCH, List.of(key())
                 )
         );
 
@@ -155,9 +154,9 @@ class DdcRegistryAdminControllerTest {
     void returnsPagedInstances() throws Exception {
         DdcManagementServiceInstance instance =
                 new DdcManagementServiceInstance(
-                        "rpc-provider-local-1", "lease-1", "192.168.6.186",
-                        19101, false, Map.of(), "ONLINE",
-                        Instant.EPOCH, Instant.EPOCH, Instant.EPOCH
+                        "rpc-provider-local-1", null, null,
+                        19101, false, Map.of("observationSource", "KUBERNETES"), "UNKNOWN",
+                        null, null, null
                 );
         when(pageService.pageInstances(
                 any(DdcManagementServiceQuery.class), any(PageQuery.class)
@@ -188,6 +187,50 @@ class DdcRegistryAdminControllerTest {
                 .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.code").value(56000))
                 .andExpect(jsonPath("$.status").value("TIANSHU_INVALID_REQUEST"));
+    }
+
+    @Test
+    void forwardsOptionalBindingIdWithoutChangingTheLogicalTuple() throws Exception {
+        when(facade.getInstances(any(), eq("approved-binding"))).thenReturn(
+                new DdcManagementServiceSnapshot(key(), 0L, Instant.EPOCH, List.of()));
+        mockMvc.perform(get("/api/v1/tianshu/registry/instances")
+                        .param("bizCode", "pay-biz").param("appCode", "orders-app").param("env", "dev")
+                        .param("serviceKind", "RPC_PROVIDER").param("protocol", "grpc")
+                        .param("serviceName", "EchoService").param("bindingId", "approved-binding"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.instances").isEmpty());
+        verify(facade).getInstances(any(), eq("approved-binding"));
+        when(pageService.pageInstances(any(), any(), eq("approved-binding"))).thenReturn(
+                DdcPageResult.<DdcManagementServiceInstance>builder().records(List.of()).total(0).pageNo(1).pageSize(10).build());
+        mockMvc.perform(get("/api/v1/tianshu/registry/instances/page")
+                        .param("bizCode", "pay-biz").param("appCode", "orders-app").param("env", "dev")
+                        .param("serviceKind", "RPC_PROVIDER").param("protocol", "grpc")
+                        .param("serviceName", "EchoService").param("bindingId", "approved-binding")
+                        .param("pageNo", "1").param("pageSize", "10"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.page.total").value(0));
+        verify(pageService).pageInstances(any(), any(), eq("approved-binding"));
+    }
+
+    @Test
+    void evidenceErrorsUseExplicitHttpStatusesAndStableSafeEnvelope() throws Exception {
+        for (var entry : Map.of(503, "TIANSHU_SERVICE_OBSERVATION_UNAVAILABLE",
+                409, "TIANSHU_SERVICE_BINDING_AMBIGUOUS", 404, "TIANSHU_SERVICE_BINDING_NOT_FOUND").entrySet()) {
+            org.mockito.Mockito.doThrow(new CommonException(entry.getKey(), entry.getValue(), entry.getValue(), true, null))
+                    .when(facade).getInstances(any());
+            mockMvc.perform(get("/api/v1/tianshu/registry/instances")
+                            .param("bizCode", "pay-biz").param("appCode", "orders-app").param("env", "dev")
+                            .param("serviceKind", "RPC_PROVIDER").param("protocol", "grpc").param("serviceName", "EchoService"))
+                    .andExpect(status().is(entry.getKey())).andExpect(jsonPath("$.success").value(false))
+                    .andExpect(jsonPath("$.status").value(entry.getValue()));
+        }
+    }
+
+    @Test
+    void pagedObservationFailureIsNotAnEmptySuccessfulPage() throws Exception {
+        when(pageService.pageServices(any(), any())).thenThrow(new CommonException(503,
+                "TIANSHU_SERVICE_OBSERVATION_UNAVAILABLE", "TIANSHU_SERVICE_OBSERVATION_UNAVAILABLE", true, null));
+        mockMvc.perform(get("/api/v1/tianshu/registry/services/page").param("pageNo", "1").param("pageSize", "10"))
+                .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.records").doesNotExist());
     }
 
     private DdcManagementServiceKey key() {

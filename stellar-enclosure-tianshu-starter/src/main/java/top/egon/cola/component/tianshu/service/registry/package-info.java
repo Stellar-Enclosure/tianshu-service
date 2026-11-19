@@ -1,12 +1,6 @@
 /**
- * Tianshu 服务键构造与注册快照读取协作能力，为注册客户端和监听器提供同步服务。
- * 本包不调度订阅、不持有活动注册；监听与状态分别依赖本包并位于 {@code listener.registry} 和 {@code state}。
- *
- * <p>Synchronous services for Tianshu service-key construction and registry snapshot loading.
- * Subscription scheduling and active-registration state are excluded; {@code listener.registry}
- * and {@code state} depend on these services.</p>
+ * 仅保留尚未切换消费者依赖的服务键值构造，不装配服务发现、订阅或租约运行时。
+ * <p>Retains service-key construction for remaining compile-time consumers without discovery, subscription, or lease runtime.</p>
  */
-@NonNullApi
+@org.springframework.lang.NonNullApi
 package top.egon.cola.component.tianshu.service.registry;
-
-import org.springframework.lang.NonNullApi;

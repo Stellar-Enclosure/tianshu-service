@@ -388,12 +388,15 @@ class DdcSiPersistenceIT {
             try (InputStream in = getClass().getClassLoader().getResourceAsStream(MANIFEST_PATH)) {
                 manifest = new ObjectMapper().readValue(in, EgonColaDdlManifestBO.class);
             }
-            assertThat(manifest.scripts().getLast().version()).isEqualTo("20261118_001");
-            assertThat(manifest.scripts().getLast().path())
-                    .isEqualTo("db/egon-mp/V20261118_001__tianshu_native_config_rollout.sql");
-            // The native rollout migration owns fixed public SINGLE relations, outside this SI schema fixture.
+            var fixedPublicScripts = manifest.scripts().subList(manifest.scripts().size() - 2, manifest.scripts().size());
+            assertThat(fixedPublicScripts).extracting(EgonColaDdlManifestBO.ScriptBO::version)
+                    .containsExactly("20261118_001", "20261119_001");
+            assertThat(fixedPublicScripts).extracting(EgonColaDdlManifestBO.ScriptBO::path).containsExactly(
+                    "db/egon-mp/V20261118_001__tianshu_native_config_rollout.sql",
+                    "db/egon-mp/V20261119_001__tianshu_service_observation.sql");
+            // These two migrations own fixed public relations, outside this SI random-schema fixture.
             manifest = new EgonColaDdlManifestBO(manifest.family(),
-                    manifest.scripts().subList(0, manifest.scripts().size() - 1), manifest.freshBaselineVersion());
+                    manifest.scripts().subList(0, manifest.scripts().size() - 2), manifest.freshBaselineVersion());
             var ddlRunner = new EgonColaPostgreDdlRunner(new ValidationUtils(vf.getValidator()),
                     new PathMatchingResourcePatternResolver(), Clock.systemUTC(),
                     Duration.ofSeconds(10), Duration.ofSeconds(30));

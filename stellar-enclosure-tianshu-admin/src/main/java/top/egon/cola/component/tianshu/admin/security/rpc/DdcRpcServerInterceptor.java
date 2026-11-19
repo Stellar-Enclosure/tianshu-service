@@ -365,9 +365,7 @@ public final class DdcRpcServerInterceptor implements ServerInterceptor {
 
     private boolean write(DdcRpcOperation operation) {
         return switch (operation) {
-            case CONFIG_PULL,
-                 REGISTRY_READ,
-                 MANAGEMENT_CONFIG_READ,
+            case MANAGEMENT_CONFIG_READ,
                  MANAGEMENT_TASK_READ,
                  MANAGEMENT_INSTANCE_READ,
                  MANAGEMENT_SCOPE_READ,

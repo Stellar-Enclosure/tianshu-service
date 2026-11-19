@@ -1,142 +1,140 @@
 package top.egon.cola.component.tianshu.admin.service.lease;
 
+import jakarta.validation.constraints.NotBlank;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.validation.annotation.Validated;
 import top.egon.cola.component.common.core.pojo.PageQuery;
-import top.egon.cola.component.tianshu.admin.model.bo.DdcInstanceBO;
+import top.egon.cola.component.common.mybatis.business.EgonColaTenantIdProvider;
+import top.egon.cola.component.tianshu.admin.kubernetes.DdcKubernetesObservationService.StatusEnum;
+import top.egon.cola.component.tianshu.admin.kubernetes.DdcKubernetesObservationService.WorkloadViewVO;
 import top.egon.cola.component.tianshu.admin.model.convertor.DdcInstanceResultConverter;
-import top.egon.cola.component.tianshu.admin.model.enums.InstanceStatus;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcInstanceResult;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcPageResult;
 import top.egon.cola.component.tianshu.admin.repository.DdcInstanceRepository;
-import top.egon.cola.component.tianshu.model.config.DdcHeartbeatRequest;
-import top.egon.cola.component.tianshu.model.config.DdcInstanceRegisterRequest;
-import top.egon.cola.component.tianshu.model.lease.DdcLeaseOperationResult;
-import top.egon.cola.component.tianshu.model.lease.DdcLeaseSession;
+import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextDTO;
+import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantRegistry;
+import top.egon.cola.component.tianshu.admin.service.publish.DdcConfigManifestFactory.PublicationPolicyResolver;
+import top.egon.cola.component.tianshu.admin.service.publish.DdcPublishTaskQueryService.WorkloadObservationReader;
+import top.egon.cola.component.tianshu.model.config.DdcConfigBaselineVO.TargetBindingVO;
+import top.egon.cola.component.tianshu.model.config.DdcConfigScopeVO;
 
+import java.time.Clock;
 import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 
-@Service
+/** Current instances are authorized Kubernetes facts; old instance rows are immutable historical telemetry. */
+@Slf4j
+@Validated
+@Service("ddcInstanceAdminService")
+@RequiredArgsConstructor(onConstructor_ = @Autowired)
 public class DdcInstanceAdminService {
+    private static final int MAX_TARGETS = 32;
+    @Qualifier("ddcInstanceRepository") private final DdcInstanceRepository history;
+    @Qualifier("ddcInstanceResultConverterImpl") private final DdcInstanceResultConverter resultConverter;
+    @Qualifier("ddcConfigPublicationPolicyResolver") private final PublicationPolicyResolver policies;
+    @Qualifier("ddcWorkloadObservationReader") private final ObjectProvider<WorkloadObservationReader> observations;
+    @Qualifier("ddcTenantRegistry") private final DdcTenantRegistry tenants;
+    @Qualifier("ddcPublishClock") private final Clock clock;
 
-    private final DdcInstanceRepository instanceRepository;
-
-    private final DdcConfigLeaseService configLeaseService;
-    private final DdcInstanceResultConverter resultConverter;
-
-    public DdcInstanceAdminService(DdcInstanceRepository instanceRepository,
-                                   DdcConfigLeaseService configLeaseService,
-                                   DdcInstanceResultConverter resultConverter) {
-        this.instanceRepository = instanceRepository;
-        this.configLeaseService = configLeaseService;
-        this.resultConverter = resultConverter;
-    }
-
-    @Transactional
-    public DdcLeaseSession register(DdcInstanceRegisterRequest request) {
-        DdcConfigLeaseService.AdmittedRegistration admitted =
-                configLeaseService.registerAdmitted(request);
-        DdcLeaseSession session = admitted.session();
-        DdcInstanceBO instance = instanceRepository.findByInstanceId(request.getInstanceId())
-                .orElseGet(() -> newInstance(request));
-        fillInstance(instance, request);
-        instance.setLeaseId(session.leaseId());
-        instance.setLeaseExpireAt(localTime(session.leaseExpireAt()));
-        fillRegistration(instance, admitted.registration());
-        instance.setStatus(InstanceStatus.ONLINE.name());
-        instance.setLastHeartbeatAt(LocalDateTime.now());
-        instance.setUpdatedAt(LocalDateTime.now());
-        if (instance.getId() == null) instanceRepository.insert(instance);
-        else instanceRepository.update(instance);
-        return session;
-    }
-
-    @Transactional
-    public DdcLeaseOperationResult heartbeat(DdcHeartbeatRequest request) {
-        DdcConfigLeaseService.AdmittedHeartbeat admitted =
-                configLeaseService.heartbeatAdmitted(request);
-        DdcLeaseOperationResult result = admitted.result();
-        if (result.renewed()) {
-            instanceRepository.findByInstanceId(request.getInstanceId()).ifPresent(instance -> {
-                if (!request.getLeaseId().equals(instance.getLeaseId())) {
-                    return;
-                }
-                instance.setStatus(InstanceStatus.ONLINE.name());
-                instance.setLastHeartbeatAt(LocalDateTime.now());
-                instance.setLeaseExpireAt(localTime(result.leaseExpireAt()));
-                fillRegistration(instance, admitted.registration());
-                instance.setRuntimeMetadata(request.getMetadata());
-                instance.setUpdatedAt(LocalDateTime.now());
-                instanceRepository.update(instance);
-            });
+    /** Does not consult legacy instance/lease rows, including when current evidence is unavailable. */
+    public List<WorkloadViewVO> list(@NotBlank String bizCode, @NotBlank String env, @NotBlank String appCode) {
+        DdcTenantContextDTO trusted = trustedContext();
+        var scope = new DdcConfigScopeVO(trusted.tenantId().toString(), bizCode, env, appCode, "application.yml");
+        var policy = policies.require(trusted, scope);
+        if (policy == null || !scope.equals(policy.scope()) || policy.targetBindings().isEmpty()
+                || policy.targetBindings().size() > MAX_TARGETS) throw invalidAuthority();
+        var unique = new HashSet<String>();
+        for (var target : policy.targetBindings()) {
+            if (target == null || !unique.add(target.getBindingId())) throw invalidAuthority();
         }
-        return result;
+        WorkloadObservationReader reader;
+        try { reader = observations.getIfAvailable(); }
+        catch (RuntimeException unavailable) { reader = null; }
+        var result = new ArrayList<WorkloadViewVO>();
+        for (var target : policy.targetBindings()) result.add(observe(target, reader, clock.instant()));
+        result.sort(Comparator.comparing((WorkloadViewVO view) -> view.target().getClusterId())
+                .thenComparing(view -> view.target().getKubernetesNamespace())
+                .thenComparing(view -> view.target().getWorkloadUid())
+                .thenComparing(view -> view.target().getBindingId()));
+        return List.copyOf(result);
     }
 
-    @Transactional
-    public DdcLeaseOperationResult offline(DdcHeartbeatRequest request) {
-        DdcLeaseOperationResult result = configLeaseService.deregister(request);
-        if (result.deleted()) {
-            instanceRepository.markOfflineIfLeaseMatches(
-                    request.getInstanceId(),
-                    request.getLeaseId(),
-                    InstanceStatus.OFFLINE.name(),
-                    LocalDateTime.now()
-            );
+    public DdcPageResult<WorkloadViewVO> page(@NotBlank String bizCode, @NotBlank String env,
+            @NotBlank String appCode, PageQuery query) {
+        PageQuery page = query == null ? PageQuery.defaultPage() : query;
+        List<WorkloadViewVO> all = list(bizCode, env, appCode);
+        int start = Math.min(all.size(), page.offset());
+        int end = (int) Math.min((long) all.size(), (long) start + page.pageSize());
+        return DdcPageResult.<WorkloadViewVO>builder().records(all.subList(start, end)).total(all.size())
+                .pageNo(page.pageNo()).pageSize(page.pageSize()).build();
+    }
+
+    /** Stored status and heartbeat are historical observations; they establish no current availability. */
+    public List<DdcInstanceResult> historyList(@NotBlank String bizCode, @NotBlank String env, @NotBlank String appCode) {
+        trustedContext();
+        return resultConverter.toTargetList(history.findHistoricalByScope(bizCode, env, appCode));
+    }
+
+    public DdcPageResult<DdcInstanceResult> historyPage(@NotBlank String bizCode, @NotBlank String env,
+            @NotBlank String appCode, PageQuery query) {
+        trustedContext();
+        PageQuery page = query == null ? PageQuery.defaultPage() : query;
+        var stored = history.findHistoricalByScope(bizCode, env, appCode, page);
+        return DdcPageResult.<DdcInstanceResult>builder().records(resultConverter.toTargetList(stored.getRecords()))
+                .total(stored.getTotal()).pageNo(stored.getPageNo()).pageSize(stored.getPageSize()).build();
+    }
+
+    private DdcTenantContextDTO trustedContext() {
+        Long tenant = EgonColaTenantIdProvider.currentTenantId();
+        var registered = tenants.requireEnabledTenant(tenant);
+        if (!Objects.equals(tenant, registered.getTenantId())) throw invalidAuthority();
+        return new DdcTenantContextDTO(tenant, registered.getIdentityTenantId(), MDC.get("userId"));
+    }
+
+    private WorkloadViewVO observe(TargetBindingVO target, WorkloadObservationReader reader, Instant now) {
+        if (reader == null) return unknown(target, StatusEnum.UNAVAILABLE, "CONFIG_CURRENT_EVIDENCE_UNAVAILABLE", null, null, now);
+        final WorkloadViewVO view;
+        try { view = reader.currentView(target); }
+        catch (RuntimeException unavailable) {
+            return unknown(target, StatusEnum.UNAVAILABLE, "CONFIG_CURRENT_EVIDENCE_UNAVAILABLE", null, null, now);
         }
-        return result;
+        if (view == null || view.status() == null || !target.equals(view.target())) {
+            return unknown(target, StatusEnum.UNAVAILABLE, "CONFIG_CURRENT_EVIDENCE_INVALID", null, null, now);
+        }
+        if (view.status() != StatusEnum.FRESH) {
+            return unknown(target, view.status(), view.reasonCode(), view.observedAt(), view.validUntil(), view.invalidatedAt());
+        }
+        if (!target.getWorkloadUid().equals(view.workloadUid())) {
+            return unknown(target, StatusEnum.IDENTITY_CONFLICT, "WORKLOAD_UID_MISMATCH", view.observedAt(), view.validUntil(), now);
+        }
+        if (view.observedAt() == null || view.validUntil() == null || view.observedAt().isAfter(now)
+                || !view.validUntil().isAfter(view.observedAt())) {
+            return unknown(target, StatusEnum.UNAVAILABLE, "CONFIG_CURRENT_EVIDENCE_INVALID", null, null, now);
+        }
+        if (!now.isBefore(view.validUntil())) {
+            return unknown(target, StatusEnum.STALE, "OBSERVATION_EXPIRED", view.observedAt(), view.validUntil(), view.validUntil());
+        }
+        return view;
     }
 
-    public List<DdcInstanceResult> list(
-            String bizCode, String env, String appCode) {
-        return resultConverter.toTargetList(instanceRepository.findByBizCodeAndEnvAndAppCode(
-                bizCode, env, appCode));
+    private static WorkloadViewVO unknown(TargetBindingVO target, StatusEnum status, String reason,
+            Instant observed, Instant expiry, Instant invalidated) {
+        return new WorkloadViewVO(target, status, reason, observed, expiry, invalidated, target.getWorkloadUid(),
+                0, 0, 0, List.of(), List.of(), Map.of(), Map.of());
     }
 
-    public DdcPageResult<DdcInstanceResult> page(
-            String bizCode,
-            String env,
-            String appCode,
-            PageQuery pageQuery
-    ) {
-        DdcPageResult<DdcInstanceBO> page = instanceRepository.findByBizCodeAndEnvAndAppCode(
-                bizCode, env, appCode, pageQuery);
-        return DdcPageResult.<DdcInstanceResult>builder().records(resultConverter.toTargetList(page.getRecords()))
-                .total(page.getTotal()).pageNo(page.getPageNo()).pageSize(page.getPageSize()).build();
-    }
-
-    private LocalDateTime localTime(Instant value) {
-        return LocalDateTime.ofInstant(value, ZoneId.systemDefault());
-    }
-
-    private DdcInstanceBO newInstance(DdcInstanceRegisterRequest request) {
-        DdcInstanceBO instance = new DdcInstanceBO();
-        instance.setInstanceId(request.getInstanceId());
-        instance.setCreatedAt(LocalDateTime.now());
-        return instance;
-    }
-
-    private void fillInstance(DdcInstanceBO instance, DdcInstanceRegisterRequest request) {
-        instance.setBizCode(request.getBizCode());
-        instance.setAppCode(request.getAppCode());
-        instance.setEnv(request.getEnv());
-        instance.setHost(request.getHost());
-        instance.setPort(request.getPort());
-        instance.setPid(request.getPid());
-        instance.setSdkVersion(request.getSdkVersion());
-        instance.setRuntimeMetadata(request.getMetadata());
-    }
-
-    private void fillRegistration(
-            DdcInstanceBO instance,
-            top.egon.cola.component.tianshu.admin.security.registration.VerifiedDdcRegistrationIdentity registration
-    ) {
-        instance.setResourceServerId(registration.resourceServerId());
-        instance.setResourceVersion(registration.resourceVersion());
-        instance.setCredentialId(registration.credentialId());
-        instance.setAdmissionExpiresAt(localTime(registration.expiresAt()));
+    private static IllegalStateException invalidAuthority() {
+        return new IllegalStateException("TIANSHU_CURRENT_INSTANCE_SCOPE_UNVERIFIED");
     }
 }

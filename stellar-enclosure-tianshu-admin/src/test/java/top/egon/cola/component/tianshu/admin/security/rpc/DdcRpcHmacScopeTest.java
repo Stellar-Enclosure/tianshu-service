@@ -1,16 +1,17 @@
 package top.egon.cola.component.tianshu.admin.security.rpc;
 
+import com.google.protobuf.Empty;
 import org.junit.jupiter.api.Test;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.AiResourceQuery;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.DdcScope;
+import top.egon.cola.component.rpc.tianshu.contract.proto.v1.DdcManagementServiceQuery;
+import top.egon.cola.component.rpc.tianshu.contract.proto.v1.FindConfigRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.GetAppRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.GetBizRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.GetPublishTaskRequest;
-import top.egon.cola.component.rpc.tianshu.contract.proto.v1.GetServicesRequest;
+import top.egon.cola.component.rpc.tianshu.contract.proto.v1.GetServiceKeysRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.ListAppsRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.ListBizsRequest;
-import top.egon.cola.component.rpc.tianshu.contract.proto.v1.PullConfigRequest;
-import top.egon.cola.component.rpc.tianshu.contract.proto.v1.DdcServiceQuery;
 
 import java.util.Set;
 
@@ -23,26 +24,40 @@ class DdcRpcHmacScopeTest {
             new DdcRpcScopeExtractor();
 
     @Test
+    void doesNotAuthorizeRetiredConfigAndRegistryWireMethods() {
+        assertThatThrownBy(() -> extractor.extract(
+                "egon.tianshu.v1.DdcConfigRuntimeService/PullConfig",
+                Empty.getDefaultInstance()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Unknown Tianshu RPC method");
+        assertThatThrownBy(() -> extractor.extract(
+                "egon.tianshu.v1.DdcServiceRegistryService/RegisterService",
+                Empty.getDefaultInstance()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Unknown Tianshu RPC method");
+    }
+
+    @Test
     void extractsRequiredOptionalAndUnscopedRequestShapes() {
         DdcRpcScopeExtractor.Scope config = extractor.extract(
-                "egon.tianshu.v1.DdcConfigRuntimeService/PullConfig",
-                PullConfigRequest.newBuilder()
+                "egon.tianshu.v1.DdcManagementService/FindConfig",
+                FindConfigRequest.newBuilder()
                         .setScope(scope("biz-a", "dev", "app-a"))
                         .build()
         );
         assertThat(config).isEqualTo(new DdcRpcScopeExtractor.Scope(
-                "SDK", "app-a", "dev", "biz-a"));
+                "MANAGEMENT", "app-a", "dev", "biz-a"));
 
         DdcRpcScopeExtractor.Scope registry = extractor.extract(
-                "egon.tianshu.v1.DdcServiceRegistryService/GetServices",
-                GetServicesRequest.newBuilder()
-                        .setQuery(DdcServiceQuery.newBuilder()
+                "egon.tianshu.v1.DdcManagementService/GetServiceKeys",
+                GetServiceKeysRequest.newBuilder()
+                        .setQuery(DdcManagementServiceQuery.newBuilder()
                                 .setBizCode("biz-a")
                                 .setEnv("dev"))
                         .build()
         );
         assertThat(registry).isEqualTo(new DdcRpcScopeExtractor.Scope(
-                "REGISTRY", null, "dev", "biz-a"));
+                "MANAGEMENT", null, "dev", "biz-a"));
 
         DdcRpcScopeExtractor.Scope task = extractor.extract(
                 "egon.tianshu.v1.DdcManagementService/GetPublishTask",
@@ -70,13 +85,13 @@ class DdcRpcHmacScopeTest {
     @Test
     void rejectsMissingRequiredScopeAndUnknownMethods() {
         assertThatThrownBy(() -> extractor.extract(
-                "egon.tianshu.v1.DdcConfigRuntimeService/PullConfig",
-                PullConfigRequest.getDefaultInstance()))
+                "egon.tianshu.v1.DdcManagementService/FindConfig",
+                FindConfigRequest.getDefaultInstance()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("scope");
         assertThatThrownBy(() -> extractor.extract(
                 "egon.tianshu.v1.Unknown/Call",
-                PullConfigRequest.getDefaultInstance()))
+                FindConfigRequest.getDefaultInstance()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Unknown Tianshu RPC method");
     }

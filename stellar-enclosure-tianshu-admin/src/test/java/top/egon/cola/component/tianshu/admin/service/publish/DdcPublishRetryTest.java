@@ -25,7 +25,7 @@ class DdcPublishRetryTest {
             assertThat(next.getEventId()).isNotEqualTo(first.getEventId());
             assertThat(next.getConfigId()).isEqualTo(first.getConfigId());
             assertThat(next.getRevision()).isEqualTo(first.getRevision());
-            verify(fixture.tasks,never()).resetForRetry(any(),any(),any(),any(),any());
+            verify(fixture.tasks).resetNativeForRetry(eq(task), eq("test"), any());
         }
     }
     @Test void anOlderDesiredRevisionCannotBeRetriedAfterANewerPublication() {

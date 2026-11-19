@@ -33,14 +33,8 @@ class DdcProfileParityTest {
             "yuheng-service/stellar-enclosure-yuheng-test/stellar-enclosure-yuheng-test-http-provider/src/main/resources/application.yml",
             "yuheng-service/stellar-enclosure-yuheng-biz-gateway/src/main/resources/application-operations.yml",
             "yuheng-service/stellar-enclosure-yuheng-biz-gateway/src/main/resources/application.yml",
-            "yuheng-service/stellar-enclosure-yuheng-admin/src/main/resources/application.yml",
-            "yuheng-service/stellar-enclosure-yuheng-admin/src/main/resources/application-local.yml",
             "yuheng-service/stellar-enclosure-yuheng-mcp-gateway/src/main/resources/application-operations.yml",
             "yuheng-service/stellar-enclosure-yuheng-mcp-gateway/src/main/resources/application.yml",
-            "tianquan-shoubing-service/stellar-enclosure-tianquan-shoubing-admin/src/main/resources/application.yml",
-            "tianquan-shoubing-service/stellar-enclosure-tianquan-shoubing-admin/src/main/resources/application-local.yml",
-            "tianquan-jianshen-service/stellar-enclosure-tianquan-jianshen-admin/src/main/resources/application.yml",
-            "tianquan-jianshen-service/stellar-enclosure-tianquan-jianshen-admin/src/main/resources/application-local.yml",
             "Stellar-Enclosure-COLA/source-projects/stellar-enclosure-source-web/stellar-enclosure-source-web-starter/src/main/resources/application-prod.yml",
             "Stellar-Enclosure-COLA/source-projects/stellar-enclosure-source-web/stellar-enclosure-source-web-starter/src/main/resources/application-test.yml",
             "Stellar-Enclosure-COLA/source-projects/stellar-enclosure-source-web/stellar-enclosure-source-web-starter/src/main/resources/application-dev.yml",
@@ -53,6 +47,18 @@ class DdcProfileParityTest {
             "Stellar-Enclosure-COLA/source-projects/stellar-enclosure-source-light/src/main/resources/application-test.yml",
             "Stellar-Enclosure-COLA/source-projects/stellar-enclosure-source-light/src/main/resources/application-dev.yml",
             "Stellar-Enclosure-COLA/source-projects/stellar-enclosure-source-light/src/main/resources/application.yml");
+
+    @Test
+    void migratedAdminProfilesDoNotReintroduceTheLegacyRedisIdentity() {
+        Path root = repositoryRoot();
+        for (String module : List.of("yuheng", "tianquan-shoubing", "tianquan-jianshen")) {
+            Path resources = root.resolve(module + "-service/stellar-enclosure-" + module + "-admin/src/main/resources");
+            for (String profile : List.of("application.yml", "application-local.yml")) {
+                assertThat(load(resources.resolve(profile)).getProperty(TIANSHU_PREFIX + "redis.username"))
+                        .as(module + " " + profile).isNull();
+            }
+        }
+    }
 
     @Test
     void transactionalOutboxKeySetMatchesAcrossProfilesAndTestPollingIsDisabled() {
@@ -96,16 +102,24 @@ class DdcProfileParityTest {
     }
 
     @Test
-    void runtimeCredentialAllowsReadOnlyAiRpcForPromptAndSkill() {
+    void adminRuntimeCredentialGrantsOnlyTheRemainingAiRpcOperations() {
         Properties adminProfile = load("application.yml");
+        assertThat(adminProfile.getProperty(TIANSHU_PREFIX + "admin.rpc.credentials[0].allowed-operations"))
+                .isEqualTo("AI_READ,AI_REPORT");
+        assertThat(adminProfile.getProperty(TIANSHU_PREFIX + "admin.rpc.credentials[1].client-type"))
+                .isEqualTo("MANAGEMENT");
+        assertThat(adminProfile.getProperty(TIANSHU_PREFIX + "admin.rpc.credentials[2].client-type"))
+                .isNull();
+    }
+
+    @Test
+    void callerOverrideDoesNotGrantManagementWritesToRuntimeCredentials() {
         Properties callerOverride = load(repositoryRoot().resolve(RPC_CREDENTIALS_PROFILE));
-        for (Properties profile : List.of(adminProfile, callerOverride)) {
-            assertThat(profile.getProperty(TIANSHU_PREFIX + "admin.rpc.credentials[0].allowed-operations"))
-                    .isNotNull().contains("CONFIG_PULL", "AI_READ")
-                    .doesNotContain("MANAGEMENT_CONFIG_WRITE", "MANAGEMENT_PUBLISH");
-        }
+        assertThat(callerOverride.getProperty(TIANSHU_PREFIX + "admin.rpc.credentials[0].allowed-operations"))
+                .isNotNull().contains("AI_READ")
+                .doesNotContain("MANAGEMENT_CONFIG_WRITE", "MANAGEMENT_PUBLISH");
         assertThat(callerOverride.getProperty(TIANSHU_PREFIX + "admin.rpc.credentials[3].allowed-operations"))
-                .isNotNull().contains("CONFIG_PULL", "AI_READ")
+                .isNotNull().contains("AI_READ")
                 .doesNotContain("MANAGEMENT_CONFIG_WRITE", "MANAGEMENT_PUBLISH");
     }
 

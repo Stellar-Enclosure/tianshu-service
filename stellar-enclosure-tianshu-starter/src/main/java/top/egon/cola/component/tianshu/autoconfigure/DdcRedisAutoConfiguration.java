@@ -2,7 +2,6 @@ package top.egon.cola.component.tianshu.autoconfigure;
 
 import org.redisson.api.RedissonClient;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -13,30 +12,24 @@ import top.egon.cola.component.tianshu.autoconfigure.properties.DdcTenantPropert
 import top.egon.cola.component.tianshu.redis.DdcRedisClientFactory;
 
 /**
- * 为配置发布订阅与服务注册订阅装配共享的 Tianshu Redisson 客户端。 /
- * Configures the Redisson client shared by configuration-publication and service-registry subscriptions.
+ * 仅为显式 AI 工作区订阅装配 Tianshu Redisson 客户端。 /
+ * Configures a Tianshu Redisson client only for an explicit AI workspace subscription.
  */
-@AutoConfiguration(before = {DdcAutoConfiguration.class, DdcRegistryAutoConfiguration.class})
+@AutoConfiguration(before = DdcAutoConfiguration.class)
 @EnableConfigurationProperties({DdcProperties.class, DdcTenantProperties.class})
-@ConditionalOnProperty(prefix = DdcAutoConfiguration.DELIVERY_PREFIX, name = "enabled", havingValue = "false", matchIfMissing = true)
 public class DdcRedisAutoConfiguration {
 
     /**
-     * 在配置远程生命周期、服务注册或 AI Skill 工作区订阅任一启用时创建唯一 Tianshu Redisson 客户端。 /
-     * Creates the sole Tianshu Redisson client when the remote configuration lifecycle, the service registry or the AI
-     * Skill workspace subscription is enabled.
+     * 在显式启用 AI Skill 工作区订阅时创建唯一客户端。 /
+     * Creates the sole client only when AI Skill workspace subscription is explicitly enabled.
      *
      * @param properties Tianshu 属性 / Tianshu properties
      * @return 共享 Redisson 客户端 / shared Redisson client
      */
     @Bean(name = "ddcRedissonClient", destroyMethod = "shutdown")
     @ConditionalOnMissingBean(name = "ddcRedissonClient")
-    @ConditionalOnExpression(
-            "(${egon.cola.component.tianshu.enabled:false} && "
-                    + "${egon.cola.component.tianshu.redis.enabled:true}) || "
-                    + "${egon.cola.component.tianshu.registry.enabled:false} || "
-                    + "${egon.cola.component.tianshu.ai.skill.workspace.subscription-enabled:false}"
-    )
+    @ConditionalOnProperty(prefix = "egon.cola.component.tianshu.ai.skill.workspace",
+            name = "subscription-enabled", havingValue = "true")
     public RedissonClient ddcRedissonClient(
             @Qualifier("egon.cola.component.tianshu-top.egon.cola.component.tianshu.autoconfigure.properties.DdcProperties")
             DdcProperties properties,

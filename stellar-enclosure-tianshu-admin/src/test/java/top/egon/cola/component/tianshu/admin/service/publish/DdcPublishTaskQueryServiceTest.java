@@ -191,7 +191,9 @@ class DdcPublishTaskQueryServiceTest {
         assertThat(f.service.listResults().getFirst().getProcessState()).isEqualTo("APPLIED");
         assertThat(f.service.pageResults(null, new PageQuery(1, 10)).getRecords().getFirst().getProcessState()).isEqualTo("APPLIED");
         assertThat(f.result().getProcessState()).isEqualTo("APPLIED");
-        verify(f.tasks, never()).update(any()); verify(f.tasks, never()).insert(any());
+        verify(f.tasks, never()).updateNativeEvidence(any(), any(), any(), any(), any());
+        verify(f.tasks, never()).resetNativeForRetry(any(), any(), any());
+        verify(f.tasks, never()).insert(any());
         verify(f.items, never()).advancePublishedVersion(any(), any(), any(), any());
         verify(f.receipts, never()).accept(any(), any()); verify(f.boots, never()).createOrConfirm(any(), any());
     }

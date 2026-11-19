@@ -5,12 +5,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.actuate.autoconfigure.info.InfoContributorAutoConfiguration;
 import org.springframework.boot.actuate.autoconfigure.info.InfoEndpointAutoConfiguration;
 import org.springframework.boot.actuate.info.InfoEndpoint;
-import org.springframework.boot.autoconfigure.AutoConfigurations;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.core.env.EnumerablePropertySource;
@@ -21,33 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-import top.egon.cola.component.tianshu.admin.config.DdcAdminProperties;
-import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantAdminProperties;
-import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextExecutor;
-import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantRegistry;
-import top.egon.cola.component.tianshu.admin.rpc.provider.DdcConfigRpcProvider;
-import top.egon.cola.component.tianshu.admin.rpc.provider.DdcManagementRpcProvider;
-import top.egon.cola.component.tianshu.admin.rpc.provider.DdcRegistryRpcProvider;
-import top.egon.cola.component.tianshu.admin.security.rpc.DdcHmacCredentialRegistry;
-import top.egon.cola.component.tianshu.admin.security.rpc.DdcRpcSecurityConfiguration;
-import top.egon.cola.component.tianshu.admin.service.config.DdcConfigFacade;
-import top.egon.cola.component.tianshu.admin.service.management.DdcManagementFacade;
-import top.egon.cola.component.tianshu.admin.service.lease.DdcResourceAdmissionRevocationService;
-import top.egon.cola.component.tianshu.admin.service.registry.DdcRegistryFacade;
-import top.egon.cola.component.tianshu.api.client.DdcConfigClient;
-import top.egon.cola.component.tianshu.api.client.DdcServiceRegistryClient;
-import top.egon.cola.component.tianshu.autoconfigure.properties.DdcProperties;
-import top.egon.cola.component.rpc.config.EgonRpcAutoConfig;
-import top.egon.cola.component.rpc.config.EgonRpcProperties;
-import top.egon.cola.component.rpc.tianshu.autoconfigure.DdcRpcAutoConfiguration;
-import top.egon.cola.component.rpc.tianshu.autoconfigure.DdcRpcProperties;
-import top.egon.cola.component.rpc.tianshu.client.DdcRpcClientHandle;
-import top.egon.cola.component.rpc.provider.lifecycle.RpcProviderLifecycle;
-import top.egon.cola.component.rpc.provider.registration.RpcProviderRegistrationMode;
-import top.egon.cola.component.rpc.provider.registration.RpcProviderRegistry;
-
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.mock;
 
 /**
  * Guards the shipped {@code application.yml} against placeholders that no property source
@@ -156,110 +125,5 @@ class DdcAdminContextSmokeTest {
         assertThat(unresolved)
                 .as("shipped configuration must not contain unresolvable placeholders")
                 .isEmpty();
-    }
-
-    @Test
-    void adminRpcServerStartsWithoutDiscoveringOrRegisteringItself() {
-        new ApplicationContextRunner()
-                .withConfiguration(AutoConfigurations.of(
-                        DdcRpcAutoConfiguration.class,
-                        EgonRpcAutoConfig.class
-                ))
-                .withUserConfiguration(AdminRpcTestConfiguration.class)
-                .withPropertyValues(
-                        "spring.application.name=stellar-enclosure-tianshu-admin",
-                        "egon.cola.component.tianshu.enabled=false",
-                        "egon.cola.component.tianshu.registry.enabled=false",
-                        "egon.cola.component.tianshu.admin.security.local-dev=true",
-                        "egon.cola.component.tianshu.admin.rpc.signature-enabled=false",
-                        "egon.cola.component.rpc.enabled=true",
-                        "egon.cola.component.rpc.provider.enabled=true",
-                        "egon.cola.component.rpc.provider.port=0",
-                        "egon.cola.component.rpc.provider.registration-mode=DISABLED",
-                        "egon.cola.component.rpc.consumer.enabled=false",
-                        "egon.cola.component.rpc.tls.development-plaintext=true"
-                )
-                .run(context -> {
-                    assertThat(context).hasNotFailed();
-                    assertThat(context).hasSingleBean(RpcProviderLifecycle.class);
-                    assertThat(context.getBean(RpcProviderLifecycle.class)
-                            .boundPort()).isPositive();
-                    assertThat(context).doesNotHaveBean(RpcProviderRegistry.class);
-                    assertThat(context).doesNotHaveBean(DdcConfigClient.class);
-                    assertThat(context).doesNotHaveBean(
-                            DdcServiceRegistryClient.class);
-                    assertThat(context).doesNotHaveBean(DdcRpcClientHandle.class);
-                    assertThat(context.getEnvironment().getProperty(
-                            "egon.cola.component.tianshu.rpc.target")).isNull();
-                    EgonRpcProperties rpc = context.getBean(
-                            EgonRpcProperties.class);
-                    assertThat(rpc.getProvider().getRegistrationMode())
-                            .isEqualTo(RpcProviderRegistrationMode.DISABLED);
-                    assertThat(rpc.getConsumer().isEnabled()).isFalse();
-                });
-    }
-
-    @Configuration(proxyBeanMethods = false)
-    @EnableConfigurationProperties({
-            DdcAdminProperties.class,
-            DdcProperties.class,
-            DdcRpcProperties.class,
-            DdcTenantAdminProperties.class
-    })
-    @Import({DdcRpcSecurityConfiguration.class, DdcTenantRegistry.class,
-            DdcTenantContextExecutor.class})
-    static class AdminRpcTestConfiguration {
-
-        @Bean
-        DdcHmacCredentialRegistry ddcHmacCredentialRegistry(
-                DdcAdminProperties properties) {
-            return new DdcHmacCredentialRegistry(properties);
-        }
-
-        @Bean
-        DdcConfigFacade ddcConfigFacade() {
-            return mock(DdcConfigFacade.class);
-        }
-
-        @Bean
-        DdcRegistryFacade ddcRegistryFacade() {
-            return mock(DdcRegistryFacade.class);
-        }
-
-        @Bean
-        DdcManagementFacade ddcManagementFacade() {
-            return mock(DdcManagementFacade.class);
-        }
-
-        @Bean
-        DdcResourceAdmissionRevocationService ddcResourceAdmissionRevocationService() {
-            return mock(DdcResourceAdmissionRevocationService.class);
-        }
-
-        @Bean
-        DdcConfigRpcProvider ddcConfigRpcProvider(
-                DdcConfigFacade facade,
-                DdcProperties ddcProperties,
-                DdcRpcProperties rpcProperties) {
-            return new DdcConfigRpcProvider(
-                    facade, ddcProperties, rpcProperties);
-        }
-
-        @Bean
-        DdcRegistryRpcProvider ddcRegistryRpcProvider(
-                DdcRegistryFacade facade,
-                DdcRpcProperties rpcProperties) {
-            return new DdcRegistryRpcProvider(facade, rpcProperties);
-        }
-
-        @Bean
-        DdcManagementRpcProvider ddcManagementRpcProvider(
-                DdcManagementFacade facade,
-                DdcResourceAdmissionRevocationService revocations,
-                DdcProperties ddcProperties,
-                DdcRpcProperties rpcProperties) {
-            return new DdcManagementRpcProvider(
-                    facade, revocations, ddcProperties, rpcProperties);
-        }
     }
 }

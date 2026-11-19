@@ -1,45 +1,17 @@
 package top.egon.cola.component.tianshu.admin.repository;
 
-import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import org.springframework.validation.annotation.Validated;
 import top.egon.cola.component.common.mybatis.model.EgonColaModelValidationGroups;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishAckBO;
-
-import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Optional;
 
+/** Tenant-scoped archive access. Old ACK rows never establish current process application. */
 @Validated
 public interface DdcPublishAckRepository {
-
     @Validated(EgonColaModelValidationGroups.Query.class)
-    Optional<DdcPublishAckBO> findByChangeIdAndInstanceIdAndLeaseId(String changeId, String instanceId, String leaseId);
-
-    @Validated(EgonColaModelValidationGroups.Query.class)
-    Optional<DdcPublishAckBO> findForUpdateByChangeIdAndInstanceIdAndLeaseId(
-            String changeId, String instanceId, String leaseId);
-
-    @Validated(EgonColaModelValidationGroups.Update.class)
-    boolean fenceObservedVersion(@NotNull DdcPublishAckBO ack);
-
-    @Validated(EgonColaModelValidationGroups.Query.class)
-    List<DdcPublishAckBO> findByChangeId(String changeId);
-
-    @Validated(EgonColaModelValidationGroups.Update.class)
-    int markIncompleteTimeout(String changeId, String timeoutStatus, LocalDateTime ackAt);
-
-    @Validated(EgonColaModelValidationGroups.Update.class)
-    int resetTargets(String changeId);
-
-    boolean resetTarget(DdcPublishAckBO target);
-
-    @Validated(EgonColaModelValidationGroups.Insert.class)
-    DdcPublishAckBO insert(@Valid @NotNull(groups = EgonColaModelValidationGroups.Insert.class) DdcPublishAckBO command);
-
-    @Validated(EgonColaModelValidationGroups.Insert.class)
-    List<DdcPublishAckBO> insertAll(List<@Valid DdcPublishAckBO> commands);
-
-    @Validated(EgonColaModelValidationGroups.Update.class)
-    DdcPublishAckBO update(@Valid @NotNull(groups = EgonColaModelValidationGroups.Update.class) DdcPublishAckBO command);
+    List<DdcPublishAckBO> findByChangeId(
+            @NotNull(groups = EgonColaModelValidationGroups.Query.class)
+            @Size(max = 64, groups = EgonColaModelValidationGroups.Query.class) String changeId);
 }

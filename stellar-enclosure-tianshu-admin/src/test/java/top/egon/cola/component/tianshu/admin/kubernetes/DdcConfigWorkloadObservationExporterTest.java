@@ -89,6 +89,17 @@ class DdcConfigWorkloadObservationExporterTest {
         exporter.close();
     }
 
+    @Test void aServiceOnlyWorkerCanLeaveTheWorkloadExporterIdle() {
+        var observer = mock(DdcKubernetesObservationService.class);
+        var repository = mock(DdcConfigWorkloadObservationRepository.class);
+        try (var exporter = new DdcConfigWorkloadObservationExporter(observer, repository,
+                new DdcTenantContextExecutor(), List::of, Clock.fixed(NOW, ZoneOffset.UTC), Duration.ofSeconds(2))) {
+            exporter.start();
+            assertThat(exporter.isRunning()).isFalse();
+        }
+        verifyNoInteractions(observer, repository);
+    }
+
     @Test void olderSourceConflictStopsWithoutReclaimOrClobberingNewerShutdownState() {
         var repository = mock(DdcConfigWorkloadObservationRepository.class);
         when(repository.nextWriterEpoch(TENANT)).thenReturn(10L);
