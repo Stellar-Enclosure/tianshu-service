@@ -33,6 +33,7 @@ import top.egon.cola.component.tianshu.model.si.DdcSiPublicationEvent.EventType;
 import top.egon.cola.component.tianshu.model.si.DdcSiReferenceDescriptor;
 import top.egon.cola.component.tianshu.model.si.DdcSiReferenceTargetTypeEnum;
 import top.egon.cola.component.tianshu.model.si.DdcSiResourceDescriptor;
+import top.egon.cola.component.tianshu.model.si.DdcSiExecutionBundleVO;
 import top.egon.cola.component.tianshu.model.si.DdcSiSearchHit;
 import top.egon.cola.component.tianshu.model.si.DdcSiSelfRegistrationRequest;
 import top.egon.cola.component.tianshu.model.si.DdcSiSemanticSearchQuery;
@@ -441,6 +442,17 @@ public class DdcSiResourceServiceImpl implements DdcSiResourceService {
                                                               String envCode, String ownerAppCode, String callerAppCode,
                                                               DdcSiKindEnum kind, String resourceKey, Long requestedVersionNo,
                                                               boolean execution) {
+        return selectRoot(tenantId, bizCode, namespaceCode, envCode, ownerAppCode, callerAppCode, kind, resourceKey,
+                requestedVersionNo, execution).map(selection -> {
+            var manifest = dependencyValidator.requireHistorical(selection.version());
+            return execution ? converter.toExecutionDescriptor(selection.resource(), selection.version(), manifest)
+                    : converter.toCatalogDescriptor(selection.resource(), selection.version());
+        });
+    }
+
+    private Optional<RootSelectionVO> selectRoot(Long tenantId, String bizCode, String namespaceCode, String envCode,
+            String ownerAppCode, String callerAppCode, DdcSiKindEnum kind, String resourceKey, Long requestedVersionNo,
+            boolean execution) {
         Long namespaceId = repository.resolveNamespaceId(tenantId, bizCode, namespaceCode);
         String storedOwner = ownerAppCode == null ? "" : ownerAppCode;
         var found = repository.findByBusinessKey(tenantId, bizCode, namespaceId, envCode, storedOwner, kind, resourceKey);
@@ -460,10 +472,48 @@ public class DdcSiResourceServiceImpl implements DdcSiResourceService {
         Long selected = requestedVersionNo != null ? requestedVersionNo
                 : binding.map(DdcSiBindingBO::getPinnedVersionNo).orElse(null);
         var version = selected == null ? exactCurrentVersion(resource) : exactVersion(resource, selected);
-        var manifest = dependencyValidator.requireHistorical(version);
-        return Optional.of(execution ? converter.toExecutionDescriptor(resource, version, manifest)
-                : converter.toCatalogDescriptor(resource, version));
+        return Optional.of(new RootSelectionVO(resource, version, namespaceId));
     }
+
+    /** Delivers exactly the historical root and every frozen DAG node after current caller/owner checks. */
+    @Override
+    public Optional<DdcSiExecutionBundleVO> resolveExecutionBundle(Long tenantId, String bizCode, String namespaceCode,
+            String envCode, String ownerAppCode, String callerAppCode, DdcSiKindEnum kind, String resourceKey, Long requestedVersionNo) {
+        if (kind != DdcSiKindEnum.AGENT || callerAppCode == null || callerAppCode.isBlank())
+            throw new CommonException(56400, "TIANSHU_SI_VALIDATION_ERROR", "Execution materials require an AGENT root");
+        var selected = selectRoot(tenantId, bizCode, namespaceCode, envCode, ownerAppCode, callerAppCode, kind,
+                resourceKey, requestedVersionNo, true);
+        if (selected.isEmpty()) return Optional.empty();
+        var root = selected.orElseThrow();
+        var verified = dependencyValidator.requireHistoricalMaterial(root.version());
+        var manifest = verified.manifest();
+        if (manifest.nodes().size() > DdcSiExecutionBundleVO.MAX_NODES) throw DdcSiDependencyValidator.unavailable();
+        var material = new java.util.ArrayList<DdcSiExecutionBundleVO.MaterialVO>();
+        for (var node : manifest.nodes()) {
+            var resource = repository.findActiveById(tenantId, Long.valueOf(node.resourceId()))
+                    .orElseThrow(DdcSiDependencyValidator::unavailable);
+            if (!Objects.equals(resource.getTenantId(), tenantId) || !Objects.equals(resource.getId(), Long.valueOf(node.resourceId()))
+                    || !Objects.equals(resource.getNamespaceId(), root.namespaceId()) || !Objects.equals(resource.getBizCode(), bizCode)
+                    || !Objects.equals(resource.getEnvCode(), envCode) || resource.getKind() != node.kind()
+                    || resource.getLifecycleStatus() == null || !resource.getLifecycleStatus().isQueryableByRuntime())
+                throw DdcSiDependencyValidator.unavailable();
+            String owner = resource.getAppCode() == null || resource.getAppCode().isEmpty() ? null : resource.getAppCode();
+            if (owner != null && !owner.equals(callerAppCode)) {
+                var binding = repository.findActiveBinding(tenantId, bizCode, root.namespaceId(), envCode,
+                        callerAppCode, node.kind(), resource.getResourceKey());
+                if (binding.isEmpty() || binding.get().getStatus() != DdcSiBindingStatusEnum.ACTIVE
+                        || !resource.getId().equals(binding.get().getResourceId()))
+                    throw new CommonException(56403, "TIANSHU_SI_SCOPE_DENIED", "SERVICE caller is not authorized for an SI dependency");
+            }
+            resource.setNamespaceCode(namespaceCode);
+            var version = verified.versions().get(Long.valueOf(node.versionId()));
+            if (version == null) throw DdcSiDependencyValidator.unavailable();
+            material.add(converter.toExecutionMaterial(resource, version, node));
+        }
+        return Optional.of(new DdcSiExecutionBundleVO(converter.toExecutionMaterial(root.resource(), root.version(), manifest.root()), manifest, material));
+    }
+
+    private record RootSelectionVO(DdcSiResourceBO resource, DdcSiVersionBO version, Long namespaceId) { }
 
     @Override
     public DdcSiResourceDescriptor registerManaged(DdcSiSelfRegistrationRequest request, boolean allowOverwriteConsole) {

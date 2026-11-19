@@ -42,6 +42,21 @@ class DdcSiCatalogSyncCoordinatorTest {
             .setBizCode("ai").setNamespaceCode("core").setEnvCode("prod").setAppCode("tianji")
             .setCacheTtl(Duration.ofMinutes(1)).setDebounceWindow(Duration.ofMillis(80));
 
+    @Test void completeExecutionBundleNeverUsesWarmMetadataAndRechecksLiveAuthorityEveryTime() throws Exception {
+        var identity=new DdcSiDependencyManifestVO.VersionIdentityVO("1001","1","2","3",DdcSiKindEnum.AGENT,"prod",
+                HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest("{}".getBytes(StandardCharsets.UTF_8))));
+        var bundle=new DdcSiExecutionBundleVO(new DdcSiExecutionBundleVO.MaterialVO(identity,"ai","core",null,"order-agent","{}"),
+                DdcSiDependencyManifestVO.create(identity,null,List.of(),List.of()),List.of());
+        when(delegate.resolveExecutionBundle(1001,"ai","core","prod",null,"tianji",DdcSiKindEnum.AGENT,"order-agent",3L))
+                .thenReturn(Optional.of(bundle)).thenThrow(new SecurityException("revoked"));
+        var coordinator=coordinator(null);
+        assertThat(coordinator.resolveExecutionBundle(1001,"ai","core","prod",null,"tianji",DdcSiKindEnum.AGENT,"order-agent",3L)).contains(bundle);
+        assertThatThrownBy(()->coordinator.resolveExecutionBundle(1001,"ai","core","prod",null,"tianji",DdcSiKindEnum.AGENT,"order-agent",3L)).isInstanceOf(SecurityException.class);
+        verify(delegate,times(2)).resolveExecutionBundle(1001,"ai","core","prod",null,"tianji",DdcSiKindEnum.AGENT,"order-agent",3L);
+        verify(delegate,never()).resolveResource(anyLong(),anyString(),anyString(),anyString(),any(),any(),anyString(),any());
+        verify(delegate,never()).resolveExecutionResource(anyLong(),anyString(),anyString(),anyString(),any(),anyString(),any(),anyString(),any());
+    }
+
     @Test
     void warmCatalogStillRequiresCurrentAuthorizationAndDoesNotFallbackForFailure() {
         var coordinator = coordinator(null);

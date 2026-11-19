@@ -181,9 +181,25 @@ public class DdcSiDependencyValidator {
     }
 
     public DdcSiDependencyManifestVO requireHistorical(@NotNull DdcSiVersionBO version) {
+        return requireHistoricalMaterial(version).manifest();
+    }
+
+    /** Reuses the exact batch which reconciled every child's own historical edges and the optional provenance source. */
+    public HistoricalMaterialVO requireHistoricalMaterial(@NotNull DdcSiVersionBO version) {
         var manifest = readManifest(version);
-        verifyMaterial(version.getTenantId(), manifest);
-        return manifest;
+        var rows = new HashMap<>(verifyMaterial(version.getTenantId(), manifest));
+        rows.put(version.getId(), version);
+        return new HistoricalMaterialVO(manifest, rows);
+    }
+
+    public static final class HistoricalMaterialVO {
+        private final DdcSiDependencyManifestVO manifest;
+        private final Map<Long, DdcSiVersionBO> versions;
+        private HistoricalMaterialVO(DdcSiDependencyManifestVO manifest, Map<Long, DdcSiVersionBO> versions) {
+            this.manifest = manifest; this.versions = Map.copyOf(versions);
+        }
+        public DdcSiDependencyManifestVO manifest() { return manifest; }
+        public Map<Long, DdcSiVersionBO> versions() { return versions; }
     }
 
     public static CommonException unavailable() {
@@ -225,7 +241,7 @@ public class DdcSiDependencyValidator {
         }
     }
 
-    private void verifyMaterial(Long tenantId, DdcSiDependencyManifestVO manifest) {
+    private Map<Long, DdcSiVersionBO> verifyMaterial(Long tenantId, DdcSiDependencyManifestVO manifest) {
         var expected = new HashMap<String, VersionIdentityVO>();
         manifest.nodes().forEach(node -> addNode(expected, node));
         if (manifest.source() != null) {
@@ -253,6 +269,7 @@ public class DdcSiDependencyValidator {
             }
         }
         checkDepth(manifest, outgoing);
+        return Map.copyOf(stored);
     }
 
     private Map<Long, DdcSiVersionBO> loadVersions(Long tenantId, List<Long> requestedIds) {

@@ -112,6 +112,7 @@ public class DdcSiResourceRpcProvider
         return invoke("ResolveSiResource", () -> {
             if (request == null) { throw invalidExecutionRequest(); }
             if (request.getExecutionRequired()) { return resolveExecution(request); }
+            if (request.getIncludeExecutionMaterial()) { throw invalidExecutionRequest(); }
             if (request.hasOwnerAppCode() || !request.getCallerAppCode().isEmpty() || request.hasExactVersionNo()) {
                 throw invalidExecutionRequest();
             }
@@ -141,8 +142,19 @@ public class DdcSiResourceRpcProvider
         requireCoordinate(request.getResourceKey());
         if (request.hasOwnerAppCode()) { requireCoordinate(request.getOwnerAppCode()); }
         DdcSiKindEnum kind = DdcSiKindEnum.fromCode(request.getKind());
+        if (request.getIncludeExecutionMaterial() && kind != DdcSiKindEnum.AGENT) throw invalidExecutionRequest();
         var caller = requireExecutionCaller(request);
         return tenantContexts.call(caller.tenant(), () -> {
+            if (request.getIncludeExecutionMaterial()) {
+                var bundle = resourceService.resolveExecutionBundle(caller.tenant().tenantId(), request.getBizCode(),
+                        request.getNamespaceCode(), request.getEnvCode(), request.hasOwnerAppCode() ? request.getOwnerAppCode() : null,
+                        caller.callerAppCode(), kind, request.getResourceKey(), request.hasExactVersionNo() ? request.getExactVersionNo() : null)
+                        .orElseThrow(DdcSiResourceRpcProvider::historyUnavailable);
+                var response = ResolveSiResourceResponse.newBuilder().setExecutionBundle(protoMapper.toProto(bundle)).build();
+                if (response.getSerializedSize() > 4_194_304) throw new CommonException(56429,
+                        "TIANSHU_SI_MATERIAL_LIMIT", "SI execution material exceeds the bounded response");
+                return response;
+            }
             var descriptor = resourceService.resolveExecutionResource(caller.tenant().tenantId(), request.getBizCode(),
                     request.getNamespaceCode(), request.getEnvCode(), request.hasOwnerAppCode() ? request.getOwnerAppCode() : null,
                     caller.callerAppCode(), kind, request.getResourceKey(), request.hasExactVersionNo() ? request.getExactVersionNo() : null)

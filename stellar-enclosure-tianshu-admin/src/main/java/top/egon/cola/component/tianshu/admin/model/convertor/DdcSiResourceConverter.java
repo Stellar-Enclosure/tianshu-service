@@ -22,6 +22,7 @@ import top.egon.cola.component.tianshu.model.si.DdcSiDependencyManifestVO;
 import top.egon.cola.component.tianshu.model.si.DdcSiLifecycleStatusEnum;
 import top.egon.cola.component.tianshu.model.si.DdcSiReferenceDescriptor;
 import top.egon.cola.component.tianshu.model.si.DdcSiResourceDescriptor;
+import top.egon.cola.component.tianshu.model.si.DdcSiExecutionBundleVO;
 import top.egon.cola.component.tianshu.model.si.DdcSiVersionDescriptor;
 
 import java.util.Collections;
@@ -117,6 +118,16 @@ public interface DdcSiResourceConverter extends BaseConverter<DdcSiResourcePO, D
         return toDescriptor(resource, version, List.of()).setResolvedVersionId(version.getId())
                 .setResolvedVersionNo(version.getVersionNo()).setDependencyManifest(manifest);
     }
+
+    @BeanMapping(ignoreByDefault = true)
+    @Mapping(target = "identity", source = "identity")
+    @Mapping(target = "bizCode", source = "resource.bizCode")
+    @Mapping(target = "namespaceCode", source = "resource.namespaceCode")
+    @Mapping(target = "ownerAppCode", source = "resource.appCode", qualifiedByName = "siOwnerApp")
+    @Mapping(target = "resourceKey", source = "resource.resourceKey")
+    @Mapping(target = "specJson", source = "version.specJson")
+    DdcSiExecutionBundleVO.MaterialVO toExecutionMaterial(DdcSiResourceBO resource, DdcSiVersionBO version,
+            DdcSiDependencyManifestVO.VersionIdentityVO identity);
 
     @Named("siOwnerApp")
     default String toOwnerAppCode(String value) {

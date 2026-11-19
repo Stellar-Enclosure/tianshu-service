@@ -15,6 +15,7 @@ import top.egon.cola.component.tianshu.model.si.DdcSiKindEnum;
 import top.egon.cola.component.tianshu.model.si.DdcSiLifecycleStatusEnum;
 import top.egon.cola.component.tianshu.model.si.DdcSiReferenceDescriptor;
 import top.egon.cola.component.tianshu.model.si.DdcSiResourceDescriptor;
+import top.egon.cola.component.tianshu.model.si.DdcSiExecutionBundleVO;
 import top.egon.cola.component.tianshu.model.si.DdcSiSearchHit;
 import top.egon.cola.component.tianshu.model.si.DdcSiSelfRegistrationRequest;
 import top.egon.cola.component.tianshu.model.si.DdcSiSemanticSearchQuery;
@@ -84,6 +85,15 @@ public interface DdcSiResourceService {
             @NotNull @Positive Long tenantId, @NotBlank String bizCode, @NotBlank String namespaceCode,
             @NotBlank String envCode, @Nullable String ownerAppCode, @NotBlank String callerAppCode,
             @NotNull DdcSiKindEnum kind, @NotBlank String resourceKey, @Nullable @Positive Long requestedVersionNo);
+
+    /** Complete native AGENT material; no metadata or mutable active-content substitute is supported. */
+    default Optional<DdcSiExecutionBundleVO> resolveExecutionBundle(
+            @NotNull @Positive Long tenantId, @NotBlank String bizCode, @NotBlank String namespaceCode,
+            @NotBlank String envCode, @Nullable String ownerAppCode, @NotBlank String callerAppCode,
+            @NotNull DdcSiKindEnum kind, @NotBlank String resourceKey, @Nullable @Positive Long requestedVersionNo) {
+        throw new UnsupportedOperationException("TIANSHU_SI_EXECUTION_BUNDLE_UNSUPPORTED");
+    }
+
 
     DdcSiResourceDescriptor registerManaged(DdcSiSelfRegistrationRequest request, boolean allowOverwriteConsole);
 

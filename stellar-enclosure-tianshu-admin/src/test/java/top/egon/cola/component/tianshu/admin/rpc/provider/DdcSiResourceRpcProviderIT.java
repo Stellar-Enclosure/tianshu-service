@@ -377,6 +377,25 @@ class DdcSiResourceRpcProviderIT {
         }
     }
 
+    @Test void authenticatedCompleteExecutionIsExplicitBoundedAndNeverDowngradesToDescriptor() throws Exception {
+        var resources=mock(DdcSiResourceService.class);var descriptor=executionDescriptor(1L);
+        var bundle=new top.egon.cola.component.tianshu.model.si.DdcSiExecutionBundleVO(
+                new top.egon.cola.component.tianshu.model.si.DdcSiExecutionBundleVO.MaterialVO(descriptor.getDependencyManifest().root(),"ai","core","owner-app","planner","{}"),
+                descriptor.getDependencyManifest(),List.of());
+        when(resources.resolveExecutionBundle(TENANT_ID,"ai","core","prod","owner-app","tianji",DdcSiKindEnum.AGENT,"planner",1L))
+                .thenReturn(Optional.of(bundle)).thenThrow(new CommonException(56403,"TIANSHU_SI_SCOPE_DENIED","dependency revoked"));
+        try(var fixture=new NativeFixture(resources,servicePrincipal(),true)) {
+            var response=fixture.stub().resolveSiResource(executionRequest().setIncludeExecutionMaterial(true).build());
+            assertThat(response.hasExecutionBundle()).isTrue();assertThat(response.hasResource()).isFalse();
+            assertThat(new DdcSiProtoMapperImpl().fromProto(response.getExecutionBundle())).isEqualTo(bundle);
+            rejected(Status.Code.PERMISSION_DENIED,()->fixture.stub().resolveSiResource(executionRequest().setIncludeExecutionMaterial(true).build()));
+            rejected(Status.Code.INVALID_ARGUMENT,()->fixture.stub().resolveSiResource(executionRequest().setExecutionRequired(false).setIncludeExecutionMaterial(true).build()));
+            rejected(Status.Code.INVALID_ARGUMENT,()->fixture.stub().resolveSiResource(executionRequest().setKind("PROMPT").setIncludeExecutionMaterial(true).build()));
+            verify(resources,times(2)).resolveExecutionBundle(TENANT_ID,"ai","core","prod","owner-app","tianji",DdcSiKindEnum.AGENT,"planner",1L);
+            org.mockito.Mockito.verify(resources,org.mockito.Mockito.never()).resolveExecutionResource(any(),any(),any(),any(),any(),any(),any(),any(),any());
+        }
+    }
+
     private static ResolveSiResourceRequest.Builder executionRequest() {
         return ResolveSiResourceRequest.newBuilder().setTenantId(TENANT_ID).setBizCode("ai")
                 .setNamespaceCode("core").setEnvCode("prod").setOwnerAppCode("owner-app").setCallerAppCode("tianji")

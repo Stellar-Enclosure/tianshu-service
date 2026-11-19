@@ -5,6 +5,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import org.springframework.lang.Nullable;
 import top.egon.cola.component.tianshu.model.si.DdcSiCatalogQuery;
+import top.egon.cola.component.tianshu.model.si.DdcSiExecutionBundleVO;
 import top.egon.cola.component.tianshu.model.si.DdcSiKindEnum;
 import top.egon.cola.component.tianshu.model.si.DdcSiResourceDescriptor;
 import top.egon.cola.component.tianshu.model.si.DdcSiSearchHit;
@@ -43,6 +44,14 @@ public interface DdcSiCatalogClient {
             @Nullable String ownerAppCode, @NotBlank String callerAppCode, @NotNull DdcSiKindEnum kind,
             @NotBlank String resourceKey, @Nullable @Positive Long pinnedVersionNo) {
         throw new UnsupportedOperationException("TIANSHU_SI_EXECUTION_RESOLUTION_UNSUPPORTED");
+    }
+
+    /** Complete AGENT execution material; an unsupported adapter must never substitute metadata or active bodies. */
+    default Optional<DdcSiExecutionBundleVO> resolveExecutionBundle(
+            @Positive long tenantId, @NotBlank String bizCode, @NotBlank String namespaceCode, @NotBlank String envCode,
+            @Nullable String ownerAppCode, @NotBlank String callerAppCode, @NotNull DdcSiKindEnum kind,
+            @NotBlank String resourceKey, @Nullable @Positive Long pinnedVersionNo) {
+        throw new UnsupportedOperationException("TIANSHU_SI_EXECUTION_BUNDLE_UNSUPPORTED");
     }
 
     /**

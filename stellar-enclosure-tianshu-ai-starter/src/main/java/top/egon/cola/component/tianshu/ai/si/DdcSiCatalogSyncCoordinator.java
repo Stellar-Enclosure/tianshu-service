@@ -9,6 +9,7 @@ import org.springframework.lang.Nullable;
 import top.egon.cola.component.tianshu.api.client.DdcSiCatalogClient;
 import top.egon.cola.component.tianshu.model.si.DdcSiCatalogQuery;
 import top.egon.cola.component.tianshu.model.si.DdcSiKindEnum;
+import top.egon.cola.component.tianshu.model.si.DdcSiExecutionBundleVO;
 import top.egon.cola.component.tianshu.model.si.DdcSiResourceDescriptor;
 import top.egon.cola.component.tianshu.model.si.DdcSiSearchHit;
 import top.egon.cola.component.tianshu.model.si.DdcSiSelfRegistrationRequest;
@@ -109,6 +110,28 @@ public class DdcSiCatalogSyncCoordinator implements DdcSiCatalogClient {
         }
         cache.putExecutionSnapshot(callerAppCode, result);
         return Optional.of(DdcSiCatalogCache.copy(result));
+    }
+
+    /** A material bundle is always freshly authorized by the native authority, never supplied by local/Redis cache. */
+    @Override
+    public Optional<DdcSiExecutionBundleVO> resolveExecutionBundle(long tenantId, String bizCode, String namespaceCode,
+            String envCode, @Nullable String ownerAppCode, String callerAppCode, DdcSiKindEnum kind,
+            String resourceKey, @Nullable Long pinnedVersionNo) {
+        requireRequest(tenantId, bizCode, namespaceCode, envCode, kind, resourceKey, pinnedVersionNo);
+        if (kind != DdcSiKindEnum.AGENT) throw new IllegalArgumentException("SI_EXECUTION_REQUEST_INVALID");
+        DdcSiCatalogCache.coordinate(callerAppCode);
+        if (ownerAppCode != null) DdcSiCatalogCache.coordinate(ownerAppCode);
+        var remote = Objects.requireNonNull(delegate.resolveExecutionBundle(tenantId, bizCode, namespaceCode, envCode,
+                ownerAppCode, callerAppCode, kind, resourceKey, pinnedVersionNo), "execution bundle result");
+        if (remote.isEmpty()) throw DdcSiCatalogCache.historyUnavailable();
+        var bundle = remote.orElseThrow(); var root = bundle.root(); var identity = root.identity();
+        if (!Long.toString(tenantId).equals(identity.tenantId()) || !bizCode.equals(root.bizCode())
+                || !namespaceCode.equals(root.namespaceCode()) || !envCode.equals(identity.envCode())
+                || kind != identity.kind() || !resourceKey.equals(root.resourceKey())
+                || !Objects.equals(ownerAppCode, root.ownerAppCode())
+                || pinnedVersionNo != null && !Long.toString(pinnedVersionNo).equals(identity.versionNo()))
+            throw DdcSiCatalogCache.historyUnavailable();
+        return remote;
     }
 
     @Override public List<DdcSiSearchHit> semanticSearch(DdcSiSemanticSearchQuery query) { return delegate.semanticSearch(query); }

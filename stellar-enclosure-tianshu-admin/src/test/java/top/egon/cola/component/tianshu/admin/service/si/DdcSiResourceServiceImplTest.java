@@ -478,6 +478,61 @@ class DdcSiResourceServiceImplTest {
         assertThat(resource.getNamespaceCode()).isEqualTo("default");
     }
 
+    @Test
+    void completeExecutionReadsFrozenBodiesOnceAndRequiresEachDependencyCurrentOwnerGrant() throws Exception {
+        var json=new ObjectMapper();
+        var root=DdcSiResourceBO.builder().id(101L).tenantId(1L).bizCode("xingyuan").namespaceId(10L)
+                .envCode("prod").appCode("").kind(DdcSiKindEnum.AGENT).resourceKey("planner")
+                .lifecycleStatus(DdcSiLifecycleStatusEnum.PUBLISHED).currentVersionId(301L).build();
+        var child=DdcSiResourceBO.builder().id(102L).tenantId(1L).bizCode("xingyuan").namespaceId(10L)
+                .envCode("prod").appCode("prompt-owner").kind(DdcSiKindEnum.PROMPT).resourceKey("instructions")
+                .lifecycleStatus(DdcSiLifecycleStatusEnum.DEPRECATED).specJson("{\"draft\":true}").build();
+        var rootVersion=storedVersion(301L,1L,"{\"frozen\":\"agent\"}");
+        var childBody="{\"frozen\":\"prompt\"}";
+        var childIdentity=new VersionIdentityVO("1","102","302","4",DdcSiKindEnum.PROMPT,"prod",DdcSiContentStrategy.sha256Hex(childBody));
+        var childVersion=DdcSiVersionBO.builder().id(302L).tenantId(1L).resourceId(102L).versionNo(4L)
+                .kind(DdcSiKindEnum.PROMPT).envCode("prod").specJson(childBody).digestSha256(childIdentity.digestSha256())
+                .dependencyManifestJson(json.valueToTree(DdcSiDependencyManifestVO.create(childIdentity,null,List.of(),List.of()))).build();
+        var rootIdentity=json.treeToValue(rootVersion.getDependencyManifestJson(),DdcSiDependencyManifestVO.class).root();
+        rootVersion.setDependencyManifestJson(json.valueToTree(DdcSiDependencyManifestVO.create(rootIdentity,null,List.of(childIdentity),
+                List.of(new DdcSiDependencyManifestVO.EdgeVO("301","302")))));
+        when(repository.resolveNamespaceId(1L,"xingyuan","default")).thenReturn(10L);
+        when(repository.findByBusinessKey(1L,"xingyuan",10L,"prod","",DdcSiKindEnum.AGENT,"planner")).thenReturn(Optional.of(root));
+        when(repository.findHistoryVersionByResourceAndNo(1L,101L,1L)).thenReturn(Optional.of(rootVersion));
+        when(repository.findHistoryVersionsByIds(1L,List.of(302L))).thenReturn(List.of(childVersion));
+        when(repository.findActiveById(1L,102L)).thenReturn(Optional.of(child));
+        when(repository.findActiveBinding(1L,"xingyuan",10L,"prod","caller",DdcSiKindEnum.AGENT,"planner")).thenReturn(Optional.empty());
+        when(repository.findActiveBinding(1L,"xingyuan",10L,"prod","caller",DdcSiKindEnum.PROMPT,"instructions"))
+                .thenReturn(Optional.of(DdcSiBindingBO.builder().resourceId(102L).status(DdcSiBindingStatusEnum.ACTIVE).build()));
+        var actual=org.mapstruct.factory.Mappers.getMapper(DdcSiResourceConverter.class);
+        when(converter.toExecutionMaterial(any(),any(),any())).thenAnswer(call->actual.toExecutionMaterial(call.getArgument(0),call.getArgument(1),call.getArgument(2)));
+        var bundle=service.resolveExecutionBundle(1L,"xingyuan","default","prod",null,"caller",DdcSiKindEnum.AGENT,"planner",1L).orElseThrow();
+        assertThat(bundle.nodes()).hasSize(1);assertThat(bundle.nodes().getFirst().specJson()).isEqualTo(childBody);
+        assertThat(bundle.nodes().getFirst().ownerAppCode()).isEqualTo("prompt-owner");
+        verify(repository).findHistoryVersionsByIds(1L,List.of(302L));
+        verify(repository,never()).findHistoryVersionByResourceAndNo(1L,102L,4L);
+        when(repository.findActiveBinding(1L,"xingyuan",10L,"prod","caller",DdcSiKindEnum.PROMPT,"instructions")).thenReturn(Optional.empty());
+        assertThatThrownBy(()->service.resolveExecutionBundle(1L,"xingyuan","default","prod",null,"caller",DdcSiKindEnum.AGENT,"planner",1L))
+                .isInstanceOfSatisfying(CommonException.class,failure->assertThat(failure.getCode()).isEqualTo(56403));
+        child.setLifecycleStatus(DdcSiLifecycleStatusEnum.ARCHIVED);
+        assertThatThrownBy(()->service.resolveExecutionBundle(1L,"xingyuan","default","prod",null,"caller",DdcSiKindEnum.AGENT,"planner",1L))
+                .isInstanceOf(CommonException.class);
+        child.setLifecycleStatus(DdcSiLifecycleStatusEnum.DRAFT);
+        assertThatThrownBy(()->service.resolveExecutionBundle(1L,"xingyuan","default","prod",null,"caller",DdcSiKindEnum.AGENT,"planner",1L))
+                .isInstanceOf(CommonException.class);
+    }
+
+    @Test void completeExecutionCannotReadDraftArchivedOrNonAgentRoot() {
+        when(repository.resolveNamespaceId(1L,"xingyuan","default")).thenReturn(10L);
+        var root=DdcSiResourceBO.builder().id(101L).lifecycleStatus(DdcSiLifecycleStatusEnum.DRAFT).build();
+        when(repository.findByBusinessKey(1L,"xingyuan",10L,"prod","",DdcSiKindEnum.AGENT,"planner")).thenReturn(Optional.of(root));
+        assertThat(service.resolveExecutionBundle(1L,"xingyuan","default","prod",null,"caller",DdcSiKindEnum.AGENT,"planner",1L)).isEmpty();
+        root.setLifecycleStatus(DdcSiLifecycleStatusEnum.ARCHIVED);
+        assertThat(service.resolveExecutionBundle(1L,"xingyuan","default","prod",null,"caller",DdcSiKindEnum.AGENT,"planner",1L)).isEmpty();
+        assertThatThrownBy(()->service.resolveExecutionBundle(1L,"xingyuan","default","prod",null,"caller",DdcSiKindEnum.PROMPT,"planner",1L)).isInstanceOf(CommonException.class);
+        verify(repository,never()).findHistoryVersionByResourceAndNo(any(),any(),any());
+    }
+
     private static DdcSiVersionBO storedVersion(Long id, Long versionNo, String body) {
         return storedVersion(id, versionNo, body, "prod");
     }

@@ -42,6 +42,41 @@ class DdcSiDependencyValidatorTest {
         validator = new DdcSiDependencyValidator(repository, new ObjectMapper());
     }
 
+    @Test void verifiedMaterialReusesTheHistoricalBatchAndRefusesOmittedHistoricalEdgesOrChangedSource() throws Exception {
+        var json=new ObjectMapper();
+        var body="{}";var digest=bodyDigest(body);
+        var rootId=new top.egon.cola.component.tianshu.model.si.DdcSiDependencyManifestVO.VersionIdentityVO("1","100","301","3",DdcSiKindEnum.AGENT,"prod",digest);
+        var childId=new top.egon.cola.component.tianshu.model.si.DdcSiDependencyManifestVO.VersionIdentityVO("1","101","302","2",DdcSiKindEnum.PROMPT,"prod",digest);
+        var sourceId=new top.egon.cola.component.tianshu.model.si.DdcSiDependencyManifestVO.VersionIdentityVO("1","100","300","1",DdcSiKindEnum.AGENT,"prod",digest);
+        var manifest=top.egon.cola.component.tianshu.model.si.DdcSiDependencyManifestVO.create(rootId,sourceId,List.of(childId),
+                List.of(new top.egon.cola.component.tianshu.model.si.DdcSiDependencyManifestVO.EdgeVO("301","302")));
+        var root=historicalRow(rootId,manifest,json);
+        var child=historicalRow(childId,top.egon.cola.component.tianshu.model.si.DdcSiDependencyManifestVO.create(childId,null,List.of(),List.of()),json);
+        var source=historicalRow(sourceId,top.egon.cola.component.tianshu.model.si.DdcSiDependencyManifestVO.create(sourceId,null,List.of(),List.of()),json);
+        when(repository.findHistoryVersionsByIds(1L,List.of(300L,302L))).thenReturn(List.of(child,source));
+        var verified=validator.requireHistoricalMaterial(root);
+        assertThat(verified.versions()).containsOnlyKeys(300L,301L,302L);
+        assertThat(verified.versions().get(302L)).isSameAs(child);
+        assertThatThrownBy(()->verified.versions().clear()).isInstanceOf(UnsupportedOperationException.class);
+        org.mockito.Mockito.verify(repository).findHistoryVersionsByIds(1L,List.of(300L,302L));
+        var omittedId=new top.egon.cola.component.tianshu.model.si.DdcSiDependencyManifestVO.VersionIdentityVO("1","102","303","1",DdcSiKindEnum.SKILL,"prod",digest);
+        child.setDependencyManifestJson(json.valueToTree(top.egon.cola.component.tianshu.model.si.DdcSiDependencyManifestVO.create(childId,null,List.of(omittedId),
+                List.of(new top.egon.cola.component.tianshu.model.si.DdcSiDependencyManifestVO.EdgeVO("302","303")))));
+        assertThatThrownBy(()->validator.requireHistoricalMaterial(root)).isInstanceOf(CommonException.class).hasMessageContaining("history");
+        child.setDependencyManifestJson(json.valueToTree(top.egon.cola.component.tianshu.model.si.DdcSiDependencyManifestVO.create(childId,null,List.of(),List.of())));
+        source.setSpecJson("{\"changed\":true}");
+        assertThatThrownBy(()->validator.requireHistoricalMaterial(root)).isInstanceOf(CommonException.class).hasMessageContaining("history");
+    }
+    private static String bodyDigest(String body) {
+        return top.egon.cola.component.tianshu.admin.service.si.strategy.DdcSiContentStrategy.sha256Hex(body);
+    }
+    private static DdcSiVersionBO historicalRow(top.egon.cola.component.tianshu.model.si.DdcSiDependencyManifestVO.VersionIdentityVO id,
+            top.egon.cola.component.tianshu.model.si.DdcSiDependencyManifestVO manifest,ObjectMapper json) {
+        return DdcSiVersionBO.builder().id(Long.valueOf(id.versionId())).tenantId(Long.valueOf(id.tenantId())).resourceId(Long.valueOf(id.resourceId()))
+                .versionNo(Long.valueOf(id.versionNo())).kind(id.kind()).envCode(id.envCode()).specJson("{}").digestSha256(id.digestSha256())
+                .dependencyManifestJson(json.valueToTree(manifest)).build();
+    }
+
     @Test
     void rejectsDirectSelfCycleBeforeLockingOrReservingAVersion() {
         assertThatThrownBy(() -> validator.freezePublication(resource(), new DdcSiVersionBO(), null,
