@@ -12,6 +12,8 @@ import top.egon.cola.component.common.core.pojo.PageQuery;
 import top.egon.cola.component.tianshu.admin.controller.config.DdcConfigController;
 import top.egon.cola.component.tianshu.admin.model.dto.DdcConfigCreateRequest;
 import top.egon.cola.component.tianshu.admin.model.dto.DdcConfigQueryRequest;
+import top.egon.cola.component.tianshu.admin.model.dto.DdcConfigPreviewQuery;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcConfigPreviewVO;
 import top.egon.cola.component.tianshu.admin.model.dto.DdcPublishRequest;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcConfigVO;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcConfigVersionVO;
@@ -38,10 +40,10 @@ class DdcConfigControllerTest {
     @Autowired
     private MockMvc mockMvc;
 
-    @MockitoBean
+    @MockitoBean("ddcConfigService")
     private DdcConfigService configService;
 
-    @MockitoBean
+    @MockitoBean("ddcPublishService")
     private DdcPublishService publishService;
 
     @Test
@@ -140,6 +142,21 @@ class DdcConfigControllerTest {
                 .andExpect(jsonPath("$.records[0].id").value("version-2"))
                 .andExpect(jsonPath("$.page.total").value(21))
                 .andExpect(jsonPath("$.page.pageNo").value(2));
+    }
+
+    @Test
+    void previewsConfigBeforeAnyDraftMutation() throws Exception {
+        when(configService.preview(any(DdcConfigPreviewQuery.class)))
+                .thenReturn(new DdcConfigPreviewVO(null, true, List.of(), List.of(), List.of()));
+        mockMvc.perform(post("/api/v1/tianshu/configs/preview")
+                        .principal(authentication())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"bizCode":"default","appCode":"demo","env":"dev","content":"feature:\\n  enabled: true\\n"}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.rolloutRequired").value(true));
     }
 
     private TestingAuthenticationToken authentication() {

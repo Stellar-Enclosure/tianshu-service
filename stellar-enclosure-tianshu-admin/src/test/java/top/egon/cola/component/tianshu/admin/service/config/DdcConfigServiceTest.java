@@ -15,6 +15,8 @@ import top.egon.cola.component.tianshu.admin.model.bo.DdcConfigVersionBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcOperationLogBO;
 import top.egon.cola.component.tianshu.admin.model.dto.DdcConfigCreateRequest;
 import top.egon.cola.component.tianshu.admin.model.dto.DdcConfigQueryRequest;
+import top.egon.cola.component.tianshu.admin.model.dto.DdcConfigPreviewQuery;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcConfigPreviewVO.ConfigChangeEnum;
 import top.egon.cola.component.tianshu.admin.model.dto.DdcConfigRollbackRequest;
 import top.egon.cola.component.tianshu.admin.model.dto.DdcConfigUpdateRequest;
 import top.egon.cola.component.tianshu.admin.model.enums.ChangeType;
@@ -65,6 +67,7 @@ class DdcConfigServiceTest {
     private DdcNamespaceEnvAppBindingRepository bindingRepository;
     private DdcPublishTaskRepository publishTaskRepository;
     private DdcConfigService service;
+    private DdcTenantRegistry tenants;
     private final DdcConfigManifestFactory manifests = new DdcConfigManifestFactory(new ObjectMapper());
     private static final DdcTenantContextDTO TENANT = new DdcTenantContextDTO(401L,"registered","user:test");
     private static final DdcConfigBaselineVO.TargetBindingVO TARGET = new DdcConfigBaselineVO.TargetBindingVO(
@@ -83,7 +86,7 @@ class DdcConfigServiceTest {
         publishTaskRepository = mock(DdcPublishTaskRepository.class);
         ObjectProvider<DdcAdminProperties> properties =
                 new DefaultListableBeanFactory().getBeanProvider(DdcAdminProperties.class);
-        var tenants = mock(DdcTenantRegistry.class);
+        tenants = mock(DdcTenantRegistry.class);
         when(tenants.requireEnabledTenant(401L)).thenReturn(new DdcTenantBindingDTO(401L,"registered",true));
         service = new DdcConfigService(itemRepository, versionRepository, new DdcConfigItemConverterImpl(),
                 new DdcConfigVersionConverterImpl(), operationLogRepository, bindingRepository,
@@ -98,6 +101,73 @@ class DdcConfigServiceTest {
     }
 
     @AfterEach void restoreTenant() { tenantScope.close(); }
+
+    @Test
+    void previewsAgainstFrozenPublishedRevisionWithoutWritingOrReturningValues() {
+        String prior = "feature:\n  preexisting: 42\n  removed: true\n";
+        String candidate = "feature:\n  preexisting: 84\n  added: false\n";
+        var existing = item(101L, "config-public-1", 4L, 2L, false, "feature: {}");
+        var scope = new DdcConfigScopeVO("401", "infra", "prod", "gateway", "application.yml");
+        var published = manifests.freeze(TENANT, existing, 2L, prior, true, policies.require(TENANT, scope));
+        when(itemRepository.findByPublicId("config-public-1")).thenReturn(Optional.of(existing));
+        when(versionRepository.findByConfigItemIdAndRevision(101L, 2L))
+                .thenReturn(Optional.of(version(101L, "config-public-1", 2L, prior, "UPDATE")
+                        .setTenantId(401L).setBizCode("infra").setEnv("prod").setAppCode("gateway")
+                        .setManifestJson(published.manifest())));
+        var query = DdcConfigPreviewQuery.builder().configId("config-public-1").expectedVersion(4L)
+                .bizCode("infra").env("prod").appCode("gateway").content(candidate).build();
+
+        var result = service.preview(query);
+
+        assertThat(result.publishedRevision()).isEqualTo("2");
+        assertThat(result.rolloutRequired()).isTrue();
+        assertThat(result.changes()).hasSize(3);
+        assertThat(result.changes()).anyMatch(change ->
+                change.key().equals("feature.removed") && change.change() == ConfigChangeEnum.REMOVED);
+        assertThat(result.targets()).extracting(target -> target.bindingId()).containsExactly("binding-a");
+        assertThatThrownBy(() -> service.preview(query.setExpectedVersion(3L)))
+                .hasMessage("TIANSHU_CONFIG_PREVIEW_REVISION_MISMATCH");
+        verify(itemRepository, never()).update(any(DdcConfigItemBO.class));
+        verify(versionRepository, never()).insert(any(DdcConfigVersionBO.class));
+        verifyNoInteractions(operationLogRepository, publishTaskRepository);
+    }
+
+    @Test
+    void hotOnlyPreviewDoesNotRequireRolloutAndReturnsOnlyTheApprovedSecretReference() {
+        String prior = "feature:\n  enabled: false\n  workerCount: 2\n";
+        var publishedScope = new DdcConfigScopeVO("401", "infra", "prod", "gateway", "application.yml");
+        var rule = new DdcConfigBaselineVO.RuleVO("feature.enabled", DdcConfigBaselineVO.ReloadModeEnum.HOT,
+                "BOOLEAN", null, false, true);
+        var policy = new DdcConfigManifestFactory.PublicationPolicyVO(publishedScope, List.of(rule), List.of(TARGET),
+                null, Map.of(), Map.of("db.password", new DdcConfigBaselineVO.SecretReferenceVO("test-db-ref", "5")));
+        var serviceWithHotRule = new DdcConfigService(itemRepository, versionRepository,
+                new DdcConfigItemConverterImpl(), new DdcConfigVersionConverterImpl(), operationLogRepository,
+                bindingRepository, publishTaskRepository, new DdcYamlConfigValidator(1_048_576), manifests,
+                (tenant, scope) -> policy, tenants);
+        var existing = item(101L, "config-public-1", 4L, 2L, false, prior);
+        var published = manifests.freeze(TENANT, existing, 2L, prior, true, policy);
+        when(itemRepository.findByPublicId("config-public-1")).thenReturn(Optional.of(existing));
+        when(versionRepository.findByConfigItemIdAndRevision(101L, 2L))
+                .thenReturn(Optional.of(version(101L, "config-public-1", 2L, prior, "UPDATE")
+                        .setTenantId(401L).setBizCode("infra").setEnv("prod").setAppCode("gateway")
+                        .setManifestJson(published.manifest())));
+        var query = DdcConfigPreviewQuery.builder().configId("config-public-1").expectedVersion(4L)
+                .bizCode("infra").env("prod").appCode("gateway").content(prior.replace("false", "true")).build();
+
+        var result = serviceWithHotRule.preview(query);
+
+        assertThat(result.rolloutRequired()).isFalse();
+        assertThat(result.targets()).isEmpty();
+        assertThat(result.changes()).singleElement().satisfies(change -> {
+            assertThat(change.key()).isEqualTo("feature.enabled");
+            assertThat(change.mode()).isEqualTo(DdcConfigBaselineVO.ReloadModeEnum.HOT);
+        });
+        assertThat(result.secretReferences()).singleElement().satisfies(ref -> {
+            assertThat(ref.key()).isEqualTo("db.password");
+            assertThat(ref.name()).isEqualTo("test-db-ref");
+            assertThat(ref.version()).isEqualTo("5");
+        });
+    }
 
     @Test
     void legacyConstructorCannotPersistAnEditBeforeDiscoveringMissingTrustedNativeAuthority() {

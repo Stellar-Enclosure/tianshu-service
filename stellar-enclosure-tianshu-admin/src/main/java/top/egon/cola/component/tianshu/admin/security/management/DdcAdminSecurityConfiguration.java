@@ -133,6 +133,9 @@ public class DdcAdminSecurityConfiguration {
                                 "/api/v1/tianshu/instances/page",
                                 "/api/v1/tianshu/publish-tasks/page"
                         ).access(scopeAndPermission(DdcAdminCapability.READ))
+                        .requestMatchers(HttpMethod.POST, "/api/v1/tianshu/configs/preview")
+                        .access(org.springframework.security.authorization.AuthorizationManagers.allOf(
+                                scopeAndPermission(DdcAdminCapability.READ), scopeAndPermission(DdcAdminCapability.WRITE)))
                         .requestMatchers(
                                 HttpMethod.POST,
                                 "/api/v1/tianshu/configs",

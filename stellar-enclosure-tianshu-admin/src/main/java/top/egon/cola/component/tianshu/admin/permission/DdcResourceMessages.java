@@ -724,6 +724,26 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.P
         defaults = @LocalizedText(locale = "en-US", text = "Workload generation"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.workloadUid", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Workload UID"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "api.config.preview", defaultLocale = "en-US",
+        defaults = {@LocalizedText(locale = "en-US", text = "Preview config publication"), @LocalizedText(locale = "zh-CN", text = "预览配置发布")})
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.configChanges", defaultLocale = "en-US",
+        defaults = {@LocalizedText(locale = "en-US", text = "Configuration changes"), @LocalizedText(locale = "zh-CN", text = "配置变更")})
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.configKey", defaultLocale = "en-US",
+        defaults = {@LocalizedText(locale = "en-US", text = "Configuration key"), @LocalizedText(locale = "zh-CN", text = "配置键")})
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.publishedRevision", defaultLocale = "en-US",
+        defaults = {@LocalizedText(locale = "en-US", text = "Published revision"), @LocalizedText(locale = "zh-CN", text = "已发布修订")})
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.reloadMode", defaultLocale = "en-US",
+        defaults = {@LocalizedText(locale = "en-US", text = "Reload mode"), @LocalizedText(locale = "zh-CN", text = "加载方式")})
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.rolloutRequired", defaultLocale = "en-US",
+        defaults = {@LocalizedText(locale = "en-US", text = "Requires workload rollout"), @LocalizedText(locale = "zh-CN", text = "需要工作负载滚动")})
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.secretReferenceName", defaultLocale = "en-US",
+        defaults = {@LocalizedText(locale = "en-US", text = "Secret reference name"), @LocalizedText(locale = "zh-CN", text = "Secret 引用名称")})
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.secretReferenceVersion", defaultLocale = "en-US",
+        defaults = {@LocalizedText(locale = "en-US", text = "Secret reference version"), @LocalizedText(locale = "zh-CN", text = "Secret 引用版本")})
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.secretReferences", defaultLocale = "en-US",
+        defaults = {@LocalizedText(locale = "en-US", text = "Secret references"), @LocalizedText(locale = "zh-CN", text = "Secret 引用")})
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.workloadName", defaultLocale = "en-US",
+        defaults = {@LocalizedText(locale = "en-US", text = "Workload name"), @LocalizedText(locale = "zh-CN", text = "工作负载名称")})
 final class DdcResourceMessages {
     private DdcResourceMessages() { }
 }

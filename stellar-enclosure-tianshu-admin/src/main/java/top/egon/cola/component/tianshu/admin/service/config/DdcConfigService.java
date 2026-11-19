@@ -17,6 +17,7 @@ import top.egon.cola.component.tianshu.admin.model.bo.DdcConfigItemBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcConfigVersionBO;
 import top.egon.cola.component.tianshu.admin.model.dto.DdcConfigCreateRequest;
 import top.egon.cola.component.tianshu.admin.model.dto.DdcConfigQueryRequest;
+import top.egon.cola.component.tianshu.admin.model.dto.DdcConfigPreviewQuery;
 import top.egon.cola.component.tianshu.admin.model.dto.DdcConfigRollbackRequest;
 import top.egon.cola.component.tianshu.admin.model.dto.DdcConfigUpdateRequest;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcOperationLogBO;
@@ -28,6 +29,11 @@ import top.egon.cola.component.tianshu.admin.model.convertor.DdcConfigVersionCon
 import top.egon.cola.component.tianshu.admin.model.vo.DdcConfigVO;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcConfigVersionVO;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcPageResult;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcConfigPreviewVO;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcConfigPreviewVO.ConfigChangeEnum;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcConfigPreviewVO.ConfigChangeVO;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcConfigPreviewVO.ConfigSecretReferenceVO;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcConfigPreviewVO.ConfigTargetVO;
 import top.egon.cola.component.tianshu.admin.repository.DdcConfigItemRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcConfigVersionRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcOperationLogRepository;
@@ -38,11 +44,22 @@ import top.egon.cola.component.tianshu.format.DdcYamlConfigFormatStrategy;
 import top.egon.cola.component.tianshu.model.config.DdcConfigFormat;
 import top.egon.cola.component.tianshu.model.config.DdcConfigValue;
 import top.egon.cola.component.tianshu.model.config.DdcConfigScopeVO;
+import top.egon.cola.component.tianshu.model.config.DdcConfigBaselineVO;
+import top.egon.cola.component.tianshu.model.config.DdcConfigBaselineVO.RuleVO;
+import top.egon.cola.component.tianshu.model.config.DdcConfigBaselineVO.ReloadModeEnum;
 import top.egon.cola.component.tianshu.admin.service.publish.DdcConfigManifestFactory;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextDTO;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantRegistry;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import java.io.IOException;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.TreeSet;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -87,6 +104,86 @@ public class DdcConfigService {
                 new DdcYamlConfigValidator(propertiesProvider.getIfAvailable(DdcAdminProperties::new).getMaxConfigBytes()),
                 new DdcConfigManifestFactory(new com.fasterxml.jackson.databind.ObjectMapper()),
                 (tenant, scope) -> { throw new DdcAdminException("TIANSHU_CONFIG_PUBLICATION_POLICY_UNAVAILABLE"); }, null);
+    }
+
+    @Transactional(readOnly = true)
+    public DdcConfigPreviewVO preview(@Valid DdcConfigPreviewQuery query) {
+        var tenant = currentTenant();
+        yamlValidator.validate(DEFAULT_RESOURCE_NAME, YAML_FORMAT, query.getContent());
+        var requestedScope = new DdcConfigScopeVO(Long.toString(tenant.tenantId()), query.getBizCode(),
+                query.getEnv(), query.getAppCode(), DEFAULT_RESOURCE_NAME);
+        if ((query.getConfigId() == null) != (query.getExpectedVersion() == null)) {
+            throw new DdcAdminException("TIANSHU_CONFIG_PREVIEW_ID_VERSION_REQUIRED");
+        }
+        if (query.getConfigId() == null) {
+            if (findScopeConfig(query.getBizCode(), query.getEnv(), query.getAppCode()).isPresent()) {
+                throw new DdcAdminException("TIANSHU_CONFIG_PREVIEW_SCOPE_ALREADY_EXISTS");
+            }
+            var policy = policies.require(tenant, requestedScope);
+            try {
+                var projection = DdcConfigSnapshotService.projectValues(query.getContent(), true, policy.rules());
+                return previewResult(null, projection.rules(), projection.hotValues(), projection.restartValues(),
+                        policy, true);
+            } catch (IOException invalid) {
+                throw new DdcAdminException("TIANSHU_CONFIG_PREVIEW_INVALID");
+            }
+        }
+        var item = getConfig(query.getConfigId());
+        if (!Objects.equals(item.getTenantId(), tenant.tenantId()) || !requestedScope.equals(scope(tenant, item))
+                || !Objects.equals(item.getCurrentVersion(), query.getExpectedVersion())) {
+            throw new DdcAdminException("TIANSHU_CONFIG_PREVIEW_REVISION_MISMATCH");
+        }
+        var policy = policies.require(tenant, requestedScope);
+        var published = item.getPublishedVersion() == null ? null
+                : manifests.materialize(versionRepository.findByConfigItemIdAndRevision(item.getId(), item.getPublishedVersion())
+                        .orElseThrow(() -> new DdcAdminException("TIANSHU_CONFIG_PREVIEW_BASELINE_UNAVAILABLE")), requestedScope)
+                .baseline();
+        var candidate = manifests.freeze(tenant, item, item.getCurrentVersion(), query.getContent(),
+                !Boolean.TRUE.equals(item.getDeleted()) && Boolean.TRUE.equals(item.getEnabled()), policy).baseline();
+        boolean rolloutRequired = published == null || !published.getRestartDigest().equals(candidate.getRestartDigest())
+                || !published.getTargetBindings().equals(candidate.getTargetBindings());
+        return previewResult(published, candidate.getRules(), candidate.getHotSeed(), candidate.getRestartValues(),
+                policy, rolloutRequired);
+    }
+
+    private DdcConfigPreviewVO previewResult(DdcConfigBaselineVO published, List<RuleVO> rules,
+            Map<String, JsonNode> hotValues, Map<String, JsonNode> restartValues,
+            DdcConfigManifestFactory.PublicationPolicyVO policy, boolean rolloutRequired) {
+        Map<String, JsonNode> before = new LinkedHashMap<>();
+        if (published != null) {
+            before.putAll(published.getHotSeed());
+            before.putAll(published.getRestartValues());
+        }
+        Map<String, JsonNode> after = new LinkedHashMap<>(restartValues);
+        after.putAll(hotValues);
+        Map<String, RuleVO> priorRules = published == null ? Map.of() : byKey(published.getRules());
+        Map<String, RuleVO> candidateRules = byKey(rules);
+        var keys = new TreeSet<>(before.keySet());
+        keys.addAll(after.keySet());
+        var changes = new ArrayList<ConfigChangeVO>();
+        for (String key : keys) {
+            ConfigChangeEnum change;
+            if (!before.containsKey(key)) change = ConfigChangeEnum.ADDED;
+            else if (!after.containsKey(key)) change = ConfigChangeEnum.REMOVED;
+            else if (!Objects.equals(before.get(key), after.get(key))) change = ConfigChangeEnum.UPDATED;
+            else if (!Objects.equals(priorRules.get(key), candidateRules.get(key))) change = ConfigChangeEnum.RULE_CHANGED;
+            else continue;
+            RuleVO currentRule = candidateRules.getOrDefault(key, priorRules.get(key));
+            ReloadModeEnum mode = currentRule == null ? ReloadModeEnum.RESTART : currentRule.getMode();
+            changes.add(new ConfigChangeVO(key, mode, change));
+        }
+        var references = policy.secretReferences().entrySet().stream().sorted(Map.Entry.comparingByKey())
+                .map(item -> new ConfigSecretReferenceVO(item.getKey(), item.getValue().getName(), item.getValue().getVersion()))
+                .toList();
+        var targets = rolloutRequired ? policy.targetBindings().stream().map(binding -> new ConfigTargetVO(
+                binding.getBindingId(), binding.getClusterId(), binding.getKubernetesNamespace(), binding.getWorkloadName()))
+                .toList() : List.<ConfigTargetVO>of();
+        return new DdcConfigPreviewVO(published == null ? null : published.getSource().getRevision(),
+                rolloutRequired, changes, references, targets);
+    }
+
+    private Map<String, RuleVO> byKey(List<RuleVO> rules) {
+        return rules.stream().collect(Collectors.toMap(RuleVO::getKey, Function.identity()));
     }
 
     @Transactional

@@ -8,6 +8,13 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.R
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.security.core.Authentication;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.http.CacheControl;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -22,6 +29,8 @@ import top.egon.cola.component.common.core.pojo.PageResultRecord;
 import top.egon.cola.component.common.core.pojo.ResultRecord;
 import top.egon.cola.component.tianshu.admin.model.dto.DdcConfigCreateRequest;
 import top.egon.cola.component.tianshu.admin.model.dto.DdcConfigQueryRequest;
+import top.egon.cola.component.tianshu.admin.model.dto.DdcConfigPreviewQuery;
+import top.egon.cola.component.tianshu.admin.model.vo.DdcConfigPreviewVO;
 import top.egon.cola.component.tianshu.admin.model.dto.DdcConfigRollbackRequest;
 import top.egon.cola.component.tianshu.admin.model.dto.DdcConfigUpdateRequest;
 import top.egon.cola.component.tianshu.admin.model.dto.DdcPublishRequest;
@@ -36,7 +45,9 @@ import top.egon.cola.component.yuheng.openapi.annotation.EgonGatewayPolicy;
 
 import java.util.List;
 
-@RestController
+@Slf4j
+@RestController("ddcConfigController")
+@RequiredArgsConstructor(onConstructor_ = @Autowired)
 @RequestMapping("/api/v1/tianshu/configs")
 @Tag(name = "tianshu-admin-tianshu-config-controller", description = "DdcConfigController 管理接口组")
 @EgonApiCatalog(
@@ -48,14 +59,8 @@ import java.util.List;
 )
 public class DdcConfigController {
 
-    private final DdcConfigService configService;
-
-    private final DdcPublishService publishService;
-
-    public DdcConfigController(DdcConfigService configService, DdcPublishService publishService) {
-        this.configService = configService;
-        this.publishService = publishService;
-    }
+    @Qualifier("ddcConfigService") private final DdcConfigService configService;
+    @Qualifier("ddcPublishService") private final DdcPublishService publishService;
 
     @Operation(operationId = "tianshu.ddcConfigController.list")
     @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
@@ -77,6 +82,16 @@ public class DdcConfigController {
             DdcConfigQueryRequest request,
             PageQuery pageQuery) {
         return DdcAdminPageSupport.result(configService.page(request, pageQuery));
+    }
+
+    @Operation(operationId = "tianshu.ddcConfigController.preview")
+    @EgonGatewayPolicy(exposure = EgonGatewayPolicy.Exposure.EXTERNAL)
+    @PermissionResource(key = "tianshu.api.config.preview", type = ResourceType.API,
+            labelPage = "tianshu.permissions", labelKey = "api.config.preview")
+    @RequiresPermissions(codes = {DdcPermissionCodes.READ, DdcPermissionCodes.WRITE})
+    @PostMapping("/preview")
+    public ResponseEntity<ResultRecord<DdcConfigPreviewVO>> preview(@RequestBody @Valid DdcConfigPreviewQuery query) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(ResultRecord.success(configService.preview(query)));
     }
 
     @Operation(operationId = "tianshu.ddcConfigController.create")

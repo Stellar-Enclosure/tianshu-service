@@ -214,6 +214,29 @@ class DdcAdminSecurityIntegrationTest {
     }
 
     @Test
+    void configPreviewRequiresReadAndWriteAndTheVerifiedTenant() throws Exception {
+        String body = """
+                {"bizCode":"infra","appCode":"gateway","env":"prod","content":"feature: {}"}
+                """;
+        for (String permission : List.of("TIANSHU_READ", "TIANSHU_WRITE")) {
+            mockMvc.perform(post("/api/v1/tianshu/configs/preview").with(authentication(rbac3(permission)))
+                            .header("X-Egon-Tianshu-Tenant", "tenant-a").contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isForbidden());
+        }
+        var approved = rbac3(java.util.Set.of("TIANSHU_READ", "TIANSHU_WRITE"));
+        mockMvc.perform(post("/api/v1/tianshu/configs/preview").with(authentication(approved))
+                        .header("X-Egon-Tianshu-Tenant", "tenant-b").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isForbidden());
+        verifyNoInteractions(configService);
+        when(configService.preview(any())).thenReturn(
+                new top.egon.cola.component.tianshu.admin.model.vo.DdcConfigPreviewVO(null, true, List.of(), List.of(), List.of()));
+        mockMvc.perform(post("/api/v1/tianshu/configs/preview").with(authentication(approved))
+                        .header("X-Egon-Tianshu-Tenant", "tenant-a").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.rolloutRequired").value(true));
+        verify(configService).preview(any());
+    }
+
+    @Test
     void i18nConditionalRequestStillRequiresPermissionAndExpectedTenant() throws Exception {
         var request = get("/api/v1/tianshu/i18n/bundle").param("bizCode", "retail").param("namespaceCode", "main")
                 .param("env", "prod").param("appCode", "shop").param("pageCode", "orders").param("locale", "en-US")
@@ -324,10 +347,10 @@ class DdcAdminSecurityIntegrationTest {
     @Autowired
     private RequestMappingHandlerMapping handlerMapping;
 
-    @MockitoBean
+    @MockitoBean(name = "ddcConfigService")
     private DdcConfigService configService;
 
-    @MockitoBean
+    @MockitoBean(name = "ddcPublishService")
     private DdcPublishService publishService;
 
     @MockitoBean
