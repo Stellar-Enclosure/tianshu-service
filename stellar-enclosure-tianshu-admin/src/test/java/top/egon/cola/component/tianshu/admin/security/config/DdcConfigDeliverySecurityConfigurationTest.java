@@ -11,7 +11,7 @@ import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.context.SecurityContextHolder;
-import top.egon.cola.component.tianshu.admin.controller.config.DdcConfigDeliveryController;
+import top.egon.cola.component.tianshu.admin.internal.controller.DdcConfigDeliveryController;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcConfigWorkloadIdentityVO;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextDTO;
 import top.egon.cola.component.tianshu.model.config.DdcConfigScopeVO;
@@ -72,6 +72,13 @@ class DdcConfigDeliverySecurityConfigurationTest {
         var order = inOrder(oauth, kubernetes);
         order.verify(oauth).verify("oauth.proof");
         order.verify(kubernetes).verify(principal, "pod.proof", "boot-id");
+    }
+
+    @Test
+    void implicitMvcHeadIsNotASupportedMachineProtocolMethod() throws Exception {
+        checkDenied(request("HEAD", SNAPSHOT_PATH), 403, "TIANSHU_CONFIG_ENDPOINT_NOT_ALLOWED");
+        verifyNoInteractions(oauth, kubernetes);
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
     }
 
     @Test
@@ -163,6 +170,7 @@ class DdcConfigDeliverySecurityConfigurationTest {
         assertThat(response.getStatus()).isEqualTo(status);
         assertThat(response.getHeader("WWW-Authenticate")).isEqualTo(status == 401 ? "Bearer" : null);
         assertThat(response.getContentAsString()).doesNotContain("oauth.proof", "pod.proof");
+        assertThat(response.getHeader("X-Config-Container-Id")).isNull();
         var body = JSON.readTree(response.getContentAsString());
         assertThat(body.get("errorCode").textValue()).isEqualTo(code);
         assertThat(body.get("requestId").textValue()).isEqualTo(requestId(request));

@@ -9,7 +9,12 @@ import org.springframework.core.type.filter.AnnotationTypeFilter;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
+import top.egon.cola.component.tianshu.admin.internal.controller.DdcConfigDeliveryController;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcPublicI18nBundleResult;
+import top.egon.cola.component.tianshu.admin.security.config.DdcConfigWorkloadVerifier;
+import top.egon.cola.component.tianshu.model.config.DdcConfigReceiptCommand;
+import top.egon.cola.component.tianshu.model.config.DdcConfigScopeVO;
+import top.egon.cola.component.tianshu.model.config.DdcConfigSnapshotDTO;
 import top.egon.cola.component.tianshu.admin.service.i18n.DdcAdminUiI18nCatalog;
 import top.egon.cola.component.tianshu.admin.service.i18n.DdcI18nValidation;
 import top.egon.cola.platform.tianquan.jianshen.contract.permission.PermissionManifest;
@@ -38,6 +43,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @EnabledIfSystemProperty(named = "permission.producer.enabled", matches = "true")
 class PermissionProducerCoverageTest {
     private static final String ROOT = "top.egon.cola.component.tianshu.";
+    private static final Set<String> CONFIG_PROTOCOL_API_KEYS = Set.of(
+            "tianshu.api.configDelivery.snapshot", "tianshu.api.configDelivery.receipt");
     private static final Set<String> EXTERNAL_CONTRACTS = Set.of(
             "top.egon.cola.component.common.core.pojo.PageQuery",
             "top.egon.cola.component.common.core.pojo.PageResultRecord",
@@ -92,7 +99,10 @@ class PermissionProducerCoverageTest {
                 }
             }
         }
+        // The ordinary managed API and reachable-field coverage stays exact and unchanged.
         assertThat(apiKeys).hasSize(97);
+        assertThat(apiKeys.addAll(CONFIG_PROTOCOL_API_KEYS)).isTrue();
+        assertThat(apiKeys).hasSize(99);
         assertThat(resources.values().stream().filter(value -> value.type() == ResourceType.API)
                 .map(PermissionManifest.ResourceDefinition::key).toList()).containsExactlyInAnyOrderElementsOf(apiKeys);
         assertThat(resources.values().stream().filter(value -> value.type() == ResourceType.FIELD)
@@ -139,6 +149,92 @@ class PermissionProducerCoverageTest {
                 .allSatisfy(property -> assertThat(property.couldDeserialize()).isFalse());
         for (Field field : DdcPublicI18nBundleResult.class.getDeclaredFields()) {
             assertThat(field.getAnnotation(PermissionResource.class).access()).isEqualTo(ResourceAccess.PUBLIC);
+        }
+    }
+
+    @Test
+    void dualCredentialProtocolExportsOnlyItsSupportedInternalServiceOperations() throws Exception {
+        List<PermissionManifest> fragments = fragments();
+        Map<String, PermissionManifest.ResourceDefinition> resources = new TreeMap<>();
+        Set<String> messages = new HashSet<>();
+        for (var fragment : fragments) {
+            for (var resource : fragment.resources()) {
+                assertThat(resources.put(resource.key(), resource)).as(resource.key()).isNull();
+            }
+            fragment.messages().forEach(message -> messages.add(message.pageCode() + ":" + message.key()));
+        }
+        var mappings = new Mappings();
+        Class<DdcConfigDeliveryPermissionMetadata> metadata = DdcConfigDeliveryPermissionMetadata.class;
+        Class<DdcConfigDeliveryController> controller = DdcConfigDeliveryController.class;
+        assertThat(controller.getPackageName()).isEqualTo(ROOT + "admin.internal.controller");
+        assertThat(controller.getAnnotation(PermissionResource.class)).isNull();
+        assertThat(metadata.getAnnotation(RestController.class)).isNull();
+        assertThat(metadata.getAnnotation(org.springframework.stereotype.Component.class)).isNull();
+        assertThat(java.lang.reflect.Modifier.isFinal(metadata.getModifiers())).isTrue();
+        assertThat(metadata.getDeclaredConstructors()).singleElement().satisfies(constructor -> {
+            assertThat(java.lang.reflect.Modifier.isPrivate(constructor.getModifiers())).isTrue();
+            assertThat(constructor.getParameterCount()).isZero();
+        });
+        Map<String, String> supportedScopes = Map.of(
+                "configSnapshot", DdcConfigWorkloadVerifier.READ_SCOPE,
+                "reportConfigReceipt", DdcConfigWorkloadVerifier.RECEIPT_SCOPE);
+        Set<String> keys = new TreeSet<>();
+        Set<String> physicalHandlers = new TreeSet<>();
+        for (Method handler : controller.getDeclaredMethods()) {
+            if (mappings.mapping(handler, controller) != null) {
+                physicalHandlers.add(handler.getName());
+                assertThat(handler.getAnnotation(PermissionResource.class)).isNull();
+            }
+        }
+        assertThat(physicalHandlers).containsExactlyInAnyOrderElementsOf(supportedScopes.keySet());
+        assertThat(metadata.getDeclaredMethods()).hasSize(2);
+        for (Method method : metadata.getDeclaredMethods()) {
+            String scope = supportedScopes.get(method.getName());
+            assertThat(scope).as(method.toGenericString()).isNotNull();
+            assertThat(java.lang.reflect.Modifier.isPublic(method.getModifiers())).isTrue();
+            assertThat(java.lang.reflect.Modifier.isStatic(method.getModifiers())).isTrue();
+            assertThat(method.getReturnType()).isEqualTo(void.class);
+            assertThat(method.getParameterCount()).isZero();
+            var declaration = method.getAnnotation(PermissionResource.class);
+            assertThat(declaration).isNotNull();
+            assertThat(declaration.access()).isEqualTo(ResourceAccess.INTERNAL);
+            assertThat(declaration.allowedPrincipals()).containsExactly(PermissionManifest.PrincipalType.SERVICE);
+            assertThat(declaration.oauthScopes()).containsExactly(scope);
+            assertThat(keys.add(declaration.key())).isTrue();
+            var exported = resources.get(declaration.key());
+            assertThat(exported).as(declaration.key()).isNotNull();
+            assertThat(exported.type()).isEqualTo(ResourceType.API);
+            assertThat(exported.access()).isEqualTo(ResourceAccess.INTERNAL);
+            assertThat(exported.allowedPrincipals()).containsExactly(PermissionManifest.PrincipalType.SERVICE);
+            assertThat(exported.oauthScopes()).containsExactly(scope);
+            assertThat(exported.requirement()).isNull();
+            assertThat(exported.fieldPolicy()).isNull();
+            assertThat(messages).contains(exported.i18n().pageCode() + ":" + exported.i18n().labelKey());
+            RequestMappingInfo declared = mappings.mapping(method, metadata);
+            Method handler = java.util.Arrays.stream(controller.getDeclaredMethods())
+                    .filter(value -> value.getName().equals(method.getName())).findFirst().orElseThrow();
+            RequestMappingInfo physical = mappings.mapping(handler, controller);
+            assertThat(declared).isNotNull();
+            assertThat(physical).isNotNull();
+            assertThat(declared.getPatternValues()).isEqualTo(physical.getPatternValues());
+            assertThat(declared.getMethodsCondition()).isEqualTo(physical.getMethodsCondition());
+            assertThat(declared.getConsumesCondition()).isEqualTo(physical.getConsumesCondition());
+            assertThat(declared.getProducesCondition()).isEqualTo(physical.getProducesCondition());
+            assertThat(strings(exported.target().get("paths"))).containsExactlyInAnyOrderElementsOf(physical.getPatternValues());
+            Set<String> explicitMethods = new TreeSet<>();
+            physical.getMethodsCondition().getMethods().forEach(value -> explicitMethods.add(value.name()));
+            // This protocol's filter allows only explicit GET/POST. Implicit MVC HEAD is denied.
+            assertThat(strings(exported.target().get("methods"))).containsExactlyInAnyOrderElementsOf(explicitMethods);
+        }
+        assertThat(keys).containsExactlyInAnyOrderElementsOf(CONFIG_PROTOCOL_API_KEYS);
+        Set<String> protocolDtos = Set.of(DdcConfigSnapshotDTO.class.getCanonicalName(),
+                DdcConfigScopeVO.class.getCanonicalName(), DdcConfigReceiptCommand.class.getCanonicalName(),
+                DdcConfigDeliveryController.DeliveryErrorVO.class.getCanonicalName());
+        assertThat(resources.values().stream().filter(value -> value.type() == ResourceType.FIELD)
+                .map(value -> value.target().get("dto")).filter(protocolDtos::contains).toList()).isEmpty();
+        for (Class<?> dto : List.of(DdcConfigSnapshotDTO.class, DdcConfigScopeVO.class,
+                DdcConfigReceiptCommand.class, DdcConfigDeliveryController.DeliveryErrorVO.class)) {
+            for (Field field : dto.getDeclaredFields()) assertThat(field.getAnnotation(PermissionResource.class)).isNull();
         }
     }
 

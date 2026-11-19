@@ -1,4 +1,4 @@
-package top.egon.cola.component.tianshu.admin.controller.config;
+package top.egon.cola.component.tianshu.admin.internal.controller;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -64,7 +64,7 @@ import java.util.Objects;
         @ApiResponse(responseCode = "409", description = "Boot, target or receipt sequence conflict", content = @Content(schema = @Schema(implementation = DdcConfigDeliveryController.DeliveryErrorVO.class))),
         @ApiResponse(responseCode = "503", description = "Authority, observation or persistence unavailable", content = @Content(schema = @Schema(implementation = DdcConfigDeliveryController.DeliveryErrorVO.class)))})
 public class DdcConfigDeliveryController {
-    public static final String VERIFIED_WORKLOAD_ATTRIBUTE = "top.egon.cola.component.tianshu.admin.controller.config.DdcConfigDeliveryController.verifiedWorkload";
+    public static final String VERIFIED_WORKLOAD_ATTRIBUTE = "top.egon.cola.component.tianshu.admin.internal.controller.DdcConfigDeliveryController.verifiedWorkload";
     private static final String DELIVERY_TOKEN_HEADER = "X-Config-Delivery-Token";
     private static final String VALID_UNTIL_HEADER = "X-Config-Valid-Until";
     private static final String CONTAINER_ID_HEADER = "X-Config-Container-Id";

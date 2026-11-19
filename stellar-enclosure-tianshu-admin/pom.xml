@@ -236,6 +236,7 @@
                                         <arg>-Apac.expectedModules=stellar-enclosure-tianshu-starter,stellar-enclosure-tianshu-admin</arg>
                                         <arg>-Apac.ownedKeyPrefixes=tianshu.api.,tianshu.field.</arg>
                                         <arg>-Apac.managedPackages=top.egon.cola.component.tianshu.admin.controller</arg>
+                                        <arg>-Apac.metadataOnlyTypes=top.egon.cola.component.tianshu.admin.permission.DdcConfigDeliveryPermissionMetadata</arg>
                                         <arg>-Apac.repository=tianshu-service</arg>
                                         <arg>-Apac.commit=${permission.commit}</arg>
                                         <arg>-Apac.buildId=${permission.buildId}</arg>

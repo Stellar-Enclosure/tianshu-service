@@ -6,7 +6,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirementEntry;
 import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.core.io.ClassPathResource;
-import top.egon.cola.component.tianshu.admin.controller.config.DdcConfigDeliveryController;
+import top.egon.cola.component.tianshu.admin.internal.controller.DdcConfigDeliveryController;
 import top.egon.cola.component.tianshu.model.config.DdcConfigReceiptCommand;
 import top.egon.cola.component.tianshu.model.config.DdcConfigSnapshotDTO;
 import org.junit.jupiter.api.Test;
@@ -40,9 +40,6 @@ class DdcPublishedOpenApiContractTest {
         for (var bean : scanner.findCandidateComponents("top.egon.cola.component.tianshu.admin.controller")) {
             String name = bean.getBeanClassName();
             Class<?> controller = Class.forName(name);
-            if (controller == DdcConfigDeliveryController.class) {
-                continue;
-            }
             Object instance = mock(controller);
             assertThat(controller.getAnnotation(EgonApiCatalog.class).interfaceGroupCode())
                     .as("published Group of %s", name).isEqualTo("tianshu");

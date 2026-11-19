@@ -38,7 +38,7 @@ import org.springframework.security.web.context.NullSecurityContextRepository;
 import org.springframework.security.web.savedrequest.NullRequestCache;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
-import top.egon.cola.component.tianshu.admin.controller.config.DdcConfigDeliveryController;
+import top.egon.cola.component.tianshu.admin.internal.controller.DdcConfigDeliveryController;
 import top.egon.cola.component.tianshu.admin.kubernetes.DdcKubernetesApiClient;
 import top.egon.cola.component.tianshu.admin.repository.DdcConfigBootBindingRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcConfigItemRepository;

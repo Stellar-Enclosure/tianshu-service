@@ -18,7 +18,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
 import org.springframework.web.method.HandlerMethod;
-import top.egon.cola.component.tianshu.admin.controller.config.DdcConfigDeliveryController;
+import top.egon.cola.component.tianshu.admin.internal.controller.DdcConfigDeliveryController;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcConfigProcessReceiptBO;
 import top.egon.cola.component.tianshu.admin.model.convertor.DdcConfigProcessReceiptConverter;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcConfigWorkloadIdentityVO;
