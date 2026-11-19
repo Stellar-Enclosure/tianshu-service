@@ -121,6 +121,10 @@ class DdcSiPersistenceIT {
                 new org.springframework.boot.context.properties.source.MapConfigurationPropertySource(values))
                 .bind(EgonColaMybatisPlusProperties.PREFIX + ".lifecycle",
                         org.springframework.boot.context.properties.bind.Bindable.ofInstance(properties.getLifecycle()));
+        assertThat(properties.getLifecycle().getStatementPolicies().get(DdcSiVersionMapper.class.getName() + ".selectHistoryByIds").getScope())
+                .isEqualTo(EgonColaMybatisPlusProperties.LifecycleScopeEnum.ID_BATCH);
+        assertThat(properties.getLifecycle().getStatementPolicies().get(DdcSiVersionMapper.class.getName() + ".selectHistoryByIds").getKeyColumn())
+                .isEqualTo("id");
         var guard = new EgonColaTenantIdGuardInnerInterceptor(() -> "system:si-test", properties);
         new org.springframework.context.annotation.CommonAnnotationBeanPostProcessor()
                 .postProcessBeforeInitialization(guard, "siHistoryGuard");

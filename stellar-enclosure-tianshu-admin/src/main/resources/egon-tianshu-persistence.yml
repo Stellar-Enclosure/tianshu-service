@@ -23,9 +23,9 @@ egon:
               key-column: resource_id
               parent-table: ddc_si_resource
             "[top.egon.cola.component.tianshu.admin.dao.DdcSiVersionMapper.selectHistoryByIds]":
-              scope: ALL_PARENT
+              scope: ID_BATCH
               table: ddc_si_version
-              key-column: tenant_id
+              key-column: id
             "[top.egon.cola.component.tianshu.admin.dao.DdcAiOptimizationRunMapper.selectMaxRunNo]":
               scope: ALL_PARENT
               table: ddc_ai_optimization_run

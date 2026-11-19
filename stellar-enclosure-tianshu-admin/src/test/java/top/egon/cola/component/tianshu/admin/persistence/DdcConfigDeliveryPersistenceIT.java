@@ -683,11 +683,7 @@ class DdcConfigDeliveryPersistenceIT {
                         DdcConfigProcessReceiptRepositoryImpl.class, DdcConfigBootBindingConverterImpl.class,
                         DdcConfigProcessReceiptConverterImpl.class)
                 .withPropertyValues("TIANSHU_JDBC_URL=" + url, "TIANSHU_DB_USERNAME=" + user, "TIANSHU_DB_PASSWORD=" + password,
-                        "mybatis-plus.mapper-locations=" + String.join(",",
-                                "classpath*:mybatis/mapper/tianshu/DdcConfigBootBindingMapper.xml",
-                                "classpath*:mybatis/mapper/tianshu/DdcConfigProcessReceiptMapper.xml",
-                                "classpath*:mybatis/mapper/tianshu/DdcAiResourceMapper.xml",
-                                "classpath*:mybatis/mapper/tianshu/DdcAiOptimizationRunMapper.xml"));
+                        "mybatis-plus.mapper-locations=classpath*:mybatis/mapper/tianshu/*Mapper.xml");
         return receiptClock ? runner.withBean("ddcPublishClock", Clock.class, Clock::systemUTC) : runner;
     }
 
