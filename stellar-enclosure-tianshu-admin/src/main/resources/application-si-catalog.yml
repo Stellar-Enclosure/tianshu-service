@@ -1,0 +1,38 @@
+# Opt in explicitly after provisioning the tenant SERVICE registration and its exact SI read grant.
+# Canonical resource identity remains HTTPS; the fixed internal native RPC listener uses h2c.
+egon:
+  cola:
+    platform:
+      tianquan:
+        shoubing:
+          rpc:
+            enabled: true
+            consumer:
+              enabled: false
+            provider:
+              enabled: true
+              methods:
+                "[egon.tianshu.v1.DdcSiResourceGrpcService/ResolveSiResource]":
+                  required: true
+                  principal-kind: SERVICE
+                  scope-context: TENANT
+                  expected-resource-uri: ${TIANSHU_RESOURCE_URI}
+                  required-scopes: ["${TIANSHU_SI_CATALOG_READ_SCOPE}"]
+    component:
+      rpc:
+        enabled: true
+        transport: h2c
+        provider:
+          enabled: true
+          bind-address: 0.0.0.0
+          port: ${TIANSHU_RPC_PORT:19080}
+        consumer:
+          enabled: false
+      tianshu:
+        admin:
+          # This profile exposes only the exact native method; it never requires a legacy signing key.
+          rpc:
+            signature-enabled: false
+            credentials: []
+          tenancy:
+            credential-bindings: []

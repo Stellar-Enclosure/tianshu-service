@@ -27,9 +27,11 @@ import top.egon.cola.component.rpc.tianshu.contract.proto.v1.AiUsageReportBatch;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.AiResourceQuery;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.DdcAiResourceServiceGrpc;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.DdcConfigRuntimeServiceGrpc;
+import top.egon.cola.component.rpc.tianshu.contract.proto.v1.DdcSiResourceGrpcServiceGrpc;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.DdcScope;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.PullConfigRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.PullConfigResponse;
+import top.egon.cola.component.rpc.tianshu.contract.proto.v1.ResolveSiResourceRequest;
 import top.egon.cola.component.rpc.tianshu.mapping.DdcRpcStatusExceptionMapper;
 import top.egon.cola.component.rpc.tianshu.security.DdcRpcCanonicalRequest;
 import top.egon.cola.component.rpc.tianshu.security.DdcRpcMetadataKeys;
@@ -91,6 +93,24 @@ class DdcRpcServerInterceptorTest {
         assertThat(MDC.get("tenantId")).isEqualTo("999");
         assertThat(MDC.get("userId")).isEqualTo("system:outer");
         MDC.clear();
+    }
+
+    @Test
+    void nativeSiResolveNeverFallsBackToAnOtherwiseValidLegacySignature() {
+        interceptor = interceptor(properties(List.of(credential(List.of("AI_READ"), List.of("app-a")))),
+                new InMemoryDdcNonceStore(100));
+        var method = DdcSiResourceGrpcServiceGrpc.getResolveSiResourceMethod();
+        var request = ResolveSiResourceRequest.newBuilder().setTenantId(101L).setBizCode("biz-a")
+                .setNamespaceCode("orders-api").setEnvCode("dev").setAppCode("app-a")
+                .setKind("MCP").setResourceKey("orders-tools").setExecutionRequired(true).build();
+
+        var call = invoke(method, request,
+                signed(method.getFullMethodName(), request, NOW.toEpochMilli(), "native-no-hmac-fallback"),
+                ignored -> facade.pull("must", "not", "run"));
+
+        assertThat(call.status()).isNotNull();
+        assertThat(call.status().getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+        verifyNoInteractions(facade);
     }
 
     @Test

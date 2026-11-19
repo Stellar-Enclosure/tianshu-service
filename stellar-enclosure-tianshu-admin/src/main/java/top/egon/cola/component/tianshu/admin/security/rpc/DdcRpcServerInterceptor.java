@@ -9,6 +9,8 @@ import io.grpc.ServerInterceptor;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.support.StaticListableBeanFactory;
 import org.springframework.util.PatternMatchUtils;
 import top.egon.cola.component.tianshu.admin.config.DdcAdminProperties;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextDTO;
@@ -20,6 +22,9 @@ import top.egon.cola.component.rpc.tianshu.security.DdcRpcMetadataKeys;
 import top.egon.cola.component.rpc.tianshu.security.DdcRpcOperation;
 import top.egon.cola.component.rpc.tianshu.security.DdcRpcOperationResolver;
 import top.egon.cola.component.rpc.tianshu.security.DdcRpcRequestSigner;
+import top.egon.cola.component.rpc.tianshu.contract.proto.v1.DdcSiResourceGrpcServiceGrpc;
+import top.egon.cola.component.rpc.tianshu.contract.proto.v1.ResolveSiResourceRequest;
+import top.egon.cola.platform.tianquan.shoubing.starter.security.rpc.IdpRpcAdmissionIdentityResolver;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -40,6 +45,8 @@ public final class DdcRpcServerInterceptor implements ServerInterceptor {
     private static final Pattern HEX_64 = Pattern.compile("[0-9a-f]{64}");
     private static final Pattern NONCE = Pattern.compile("[\\x21-\\x7e]{1,128}");
     private static final Pattern TENANT_ID = Pattern.compile("[1-9][0-9]{0,18}");
+    private static final String NATIVE_SI_RESOLVE =
+            DdcSiResourceGrpcServiceGrpc.getResolveSiResourceMethod().getFullMethodName();
 
     private final DdcAdminProperties.Rpc properties;
     private final DdcHmacCredentialRegistry credentialRegistry;
@@ -47,6 +54,7 @@ public final class DdcRpcServerInterceptor implements ServerInterceptor {
     private final DdcTenantContextExecutor tenantContextExecutor;
     private final DdcNonceStore nonceStore;
     private final Clock clock;
+    private final ObjectProvider<IdpRpcAdmissionIdentityResolver> nativeIdentities;
     private final DdcRpcRequestSigner signer = new DdcRpcRequestSigner();
     private final DdcRpcOperationResolver operationResolver =
             new DdcRpcOperationResolver();
@@ -64,6 +72,14 @@ public final class DdcRpcServerInterceptor implements ServerInterceptor {
                 nonceStore, Clock.systemUTC());
     }
 
+    /** Supplies the verifier-owned native identity boundary independently of legacy signing credentials. */
+    public DdcRpcServerInterceptor(DdcAdminProperties properties, DdcHmacCredentialRegistry credentialRegistry,
+            DdcTenantRegistry tenantRegistry, DdcTenantContextExecutor tenantContextExecutor,
+            DdcNonceStore nonceStore, ObjectProvider<IdpRpcAdmissionIdentityResolver> nativeIdentities) {
+        this(properties, credentialRegistry, tenantRegistry, tenantContextExecutor, nonceStore,
+                Clock.systemUTC(), nativeIdentities);
+    }
+
     DdcRpcServerInterceptor(
             DdcAdminProperties properties,
             DdcHmacCredentialRegistry credentialRegistry,
@@ -71,8 +87,15 @@ public final class DdcRpcServerInterceptor implements ServerInterceptor {
             DdcTenantContextExecutor tenantContextExecutor,
             DdcNonceStore nonceStore,
             Clock clock) {
+        this(properties, credentialRegistry, tenantRegistry, tenantContextExecutor, nonceStore, clock,
+                new StaticListableBeanFactory().getBeanProvider(IdpRpcAdmissionIdentityResolver.class));
+    }
+
+    private DdcRpcServerInterceptor(DdcAdminProperties properties, DdcHmacCredentialRegistry credentialRegistry,
+            DdcTenantRegistry tenantRegistry, DdcTenantContextExecutor tenantContextExecutor,
+            DdcNonceStore nonceStore, Clock clock, ObjectProvider<IdpRpcAdmissionIdentityResolver> nativeIdentities) {
         if (properties == null || credentialRegistry == null || tenantRegistry == null
-                || tenantContextExecutor == null || clock == null) {
+                || tenantContextExecutor == null || clock == null || nativeIdentities == null) {
             throw new IllegalArgumentException(
                     "properties, credentialRegistry, tenantRegistry, tenantContextExecutor and clock are required");
         }
@@ -82,6 +105,7 @@ public final class DdcRpcServerInterceptor implements ServerInterceptor {
         this.tenantContextExecutor = tenantContextExecutor;
         this.nonceStore = nonceStore;
         this.clock = clock;
+        this.nativeIdentities = nativeIdentities;
         validateConfiguration();
     }
 
@@ -90,8 +114,100 @@ public final class DdcRpcServerInterceptor implements ServerInterceptor {
             ServerCall<ReqT, RespT> call,
             Metadata headers,
             ServerCallHandler<ReqT, RespT> next) {
+        if (NATIVE_SI_RESOLVE.equals(call.getMethodDescriptor().getFullMethodName())) {
+            final IdpRpcAdmissionIdentityResolver resolver;
+            try {
+                resolver = nativeIdentities.getIfAvailable();
+            } catch (RuntimeException unavailable) {
+                return rejectNativeUnavailable(call);
+            }
+            if (resolver == null) {
+                return rejectNativeUnavailable(call);
+            }
+            return new NativeSiAuthenticatingListener<>(call, resolver, next.startCall(call, headers));
+        }
         ServerCall.Listener<ReqT> delegate = next.startCall(call, headers);
         return new AuthenticatingListener<>(call, headers, delegate);
+    }
+
+    private <ReqT, RespT> ServerCall.Listener<ReqT> rejectNativeUnavailable(ServerCall<ReqT, RespT> call) {
+        call.close(Status.UNAVAILABLE.withDescription("Native SI authentication is unavailable"), new Metadata());
+        return new ServerCall.Listener<>() { };
+    }
+
+    /** The exact SI method has one authentication strategy; no signature or metadata fallback exists. */
+    private static final class NativeSiAuthenticatingListener<ReqT, RespT> extends ServerCall.Listener<ReqT> {
+        private final ServerCall<ReqT, RespT> call;
+        private final IdpRpcAdmissionIdentityResolver resolver;
+        private final ServerCall.Listener<ReqT> delegate;
+        private ResolveSiResourceRequest request;
+        private boolean closed;
+        private boolean ready;
+
+        private NativeSiAuthenticatingListener(ServerCall<ReqT, RespT> call,
+                IdpRpcAdmissionIdentityResolver resolver, ServerCall.Listener<ReqT> delegate) {
+            this.call = call;
+            this.resolver = resolver;
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void onMessage(ReqT message) {
+            if (closed) {
+                return;
+            }
+            if (request != null || !(message instanceof ResolveSiResourceRequest received) || !received.getExecutionRequired()) {
+                reject(Status.INVALID_ARGUMENT.withDescription("An SI execution snapshot request is required").asRuntimeException());
+                return;
+            }
+            request = received;
+            if (authorize()) {
+                delegate.onMessage(message);
+                if (ready) {
+                    delegate.onReady();
+                }
+            }
+        }
+
+        @Override
+        public void onHalfClose() {
+            if (closed) {
+                return;
+            }
+            if (request == null) {
+                reject(Status.INVALID_ARGUMENT.withDescription("An SI execution snapshot request is required").asRuntimeException());
+            } else if (authorize()) {
+                delegate.onHalfClose();
+            }
+        }
+
+        private boolean authorize() {
+            try {
+                if (resolver.resolve(NATIVE_SI_RESOLVE, request) == null) {
+                    throw new IllegalStateException("Native SI identity decision is unavailable");
+                }
+                return true;
+            } catch (StatusRuntimeException rejected) {
+                reject(rejected);
+            } catch (RuntimeException unavailable) {
+                reject(Status.UNAVAILABLE.withDescription("Native SI authentication is unavailable").asRuntimeException());
+            }
+            return false;
+        }
+
+        @Override public void onCancel() { delegate.onCancel(); }
+        @Override public void onComplete() { delegate.onComplete(); }
+        @Override public void onReady() {
+            ready = true;
+            if (!closed && request != null) {
+                delegate.onReady();
+            }
+        }
+
+        private void reject(StatusRuntimeException failure) {
+            closed = true;
+            call.close(failure.getStatus(), failure.getTrailers() == null ? new Metadata() : failure.getTrailers());
+        }
     }
 
     private Authentication authenticate(

@@ -173,8 +173,7 @@ egon:
           max-header-count: 64
           max-header-bytes: 16KB
       rpc:
-        tls:
-          development-plaintext: true
+        transport: h2c
       yuheng:
         reporting:
           enabled: ${TIANSHU_YUHENG_REPORTING_ENABLED:false}

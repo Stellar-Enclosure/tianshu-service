@@ -418,17 +418,11 @@ egon:
           state-file: ${YUHENG_REPORT_STATE_FILE:}
       rpc:
         enabled: true
+        transport: h2c
         provider:
           enabled: true
           port: ${TIANSHU_RPC_PORT:19080}
-          registration-mode: DISABLED
         consumer:
           enabled: false
-        tls:
-          enabled: ${TIANSHU_RPC_TLS_ENABLED:true}
-          development-plaintext: ${TIANSHU_RPC_DEVELOPMENT_PLAINTEXT:false}
-          certificate-chain-path: ${TIANSHU_RPC_CERTIFICATE_CHAIN_PATH:}
-          private-key-path: ${TIANSHU_RPC_PRIVATE_KEY_PATH:}
-          trust-certificate-collection-path: ${TIANSHU_RPC_TRUST_CERTIFICATE_COLLECTION_PATH:}
 
 management.endpoint.health.group.readiness.include: ["readinessState", "ddcAuditReadiness"]
