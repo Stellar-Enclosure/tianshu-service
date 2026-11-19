@@ -1,5 +1,8 @@
 package top.egon.cola.component.tianshu.api.client;
 
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 import org.springframework.lang.Nullable;
 import top.egon.cola.component.tianshu.model.si.DdcSiCatalogQuery;
 import top.egon.cola.component.tianshu.model.si.DdcSiKindEnum;
@@ -33,6 +36,14 @@ public interface DdcSiCatalogClient {
             DdcSiKindEnum kind,
             String resourceKey,
             @Nullable Integer pinnedVersionNo);
+
+    /** Resolves one exact execution snapshot with independent owner and verified caller identities. */
+    default Optional<DdcSiResourceDescriptor> resolveExecutionResource(
+            @Positive long tenantId, @NotBlank String bizCode, @NotBlank String namespaceCode, @NotBlank String envCode,
+            @Nullable String ownerAppCode, @NotBlank String callerAppCode, @NotNull DdcSiKindEnum kind,
+            @NotBlank String resourceKey, @Nullable @Positive Long pinnedVersionNo) {
+        throw new UnsupportedOperationException("TIANSHU_SI_EXECUTION_RESOLUTION_UNSUPPORTED");
+    }
 
     /**
      * Executes hybrid vector + FTS semantic search with transparent FTS fallback semantics.
