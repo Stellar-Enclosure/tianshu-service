@@ -31,7 +31,8 @@ import top.egon.cola.component.rpc.tianshu.contract.proto.v1.RegisterManagedSiRe
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.ResolveSiResourceRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.SemanticSearchSiRequest;
 import top.egon.cola.component.rpc.tianshu.mapping.DdcSiProtoMapperImpl;
-import top.egon.cola.component.rpc.tianshu.mapping.DdcRpcStatusExceptionMapper;
+import com.google.rpc.ErrorInfo;
+import io.grpc.protobuf.StatusProto;
 import top.egon.cola.component.rpc.context.invocation.RpcMetadataKeys;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantBindingDTO;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextExecutor;
@@ -318,14 +319,70 @@ class DdcSiResourceRpcProviderIT {
             var failure = org.assertj.core.api.Assertions.catchThrowable(() -> fixture.stub().resolveSiResource(executionRequest().build()));
             assertThat(failure).isInstanceOfSatisfying(StatusRuntimeException.class, status -> {
                 assertThat(status.getStatus().getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
-                assertThat(status.getTrailers().get(DdcRpcStatusExceptionMapper.ERROR_DETAIL).getCode())
-                        .isEqualTo("SI_PINNED_HISTORY_UNAVAILABLE");
+                var structured = StatusProto.fromThrowable(status);
+                assertThat(structured).isNotNull();
+                assertThat(structured.getDetailsCount()).isEqualTo(1);
+                try {
+                    var detail = structured.getDetails(0).unpack(ErrorInfo.class);
+                    assertThat(detail.getReason()).isEqualTo("SI_PINNED_HISTORY_UNAVAILABLE");
+                    assertThat(detail.getDomain()).isEqualTo("tianshu.si");
+                    assertThat(detail.getMetadataMap()).isEqualTo(Map.of("retryable", "false"));
+                } catch (com.google.protobuf.InvalidProtocolBufferException invalid) {
+                    throw new AssertionError("Native SI status must carry standard ErrorInfo", invalid);
+                }
             });
             rejected(Status.Code.PERMISSION_DENIED, () -> fixture.stub().resolveSiResource(executionRequest().build()));
             rejected(Status.Code.UNAVAILABLE, () -> fixture.stub().resolveSiResource(executionRequest().build()));
             rejected(Status.Code.FAILED_PRECONDITION, () -> fixture.stub().resolveSiResource(executionRequest().build()));
             rejected(Status.Code.FAILED_PRECONDITION, () -> fixture.stub().resolveSiResource(executionRequest().build()));
             verify(resources, times(5)).resolveExecutionResource(TENANT_ID, "ai", "core", "prod", "owner-app", "tianji",
+                    DdcSiKindEnum.AGENT, "planner", 1L);
+        }
+    }
+
+    @Test
+    void nativeDomainAndInfrastructureErrorsKeepTheirCodesAndExposeOnlySafeStandardDetails() throws Exception {
+        var resources = mock(DdcSiResourceService.class);
+        List<RuntimeException> failures = List.of(
+                new CommonException(56400, "TIANSHU_SI_SPEC_INVALID", "synthetic-secret-domain"),
+                new CommonException(56403, "TIANSHU_SI_FORBIDDEN", "synthetic-secret-domain"),
+                new CommonException(56404, "TIANSHU_SI_NOT_FOUND", "synthetic-secret-domain"),
+                new CommonException(56409, "TIANSHU_SI_CONFLICT", "synthetic-secret-domain"),
+                new CommonException(56422, "SI_PINNED_HISTORY_UNAVAILABLE", "synthetic-secret-domain"),
+                new CommonException(56429, "TIANSHU_SI_CAPACITY_EXCEEDED", "synthetic-secret-domain"),
+                new CommonException(56999, "TIANSHU_SI_UNKNOWN_FAILURE", "synthetic-secret-domain"),
+                new IllegalArgumentException("synthetic-secret-validation"),
+                new TransientDataAccessResourceException("synthetic-secret-store"),
+                new org.springframework.security.authentication.AuthenticationServiceException("synthetic-secret-auth"),
+                new IllegalStateException("synthetic-secret-internal"));
+        List<Status.Code> codes = List.of(Status.Code.INVALID_ARGUMENT, Status.Code.PERMISSION_DENIED,
+                Status.Code.NOT_FOUND, Status.Code.ABORTED, Status.Code.FAILED_PRECONDITION,
+                Status.Code.RESOURCE_EXHAUSTED, Status.Code.INTERNAL, Status.Code.INVALID_ARGUMENT,
+                Status.Code.UNAVAILABLE, Status.Code.UNAVAILABLE, Status.Code.INTERNAL);
+        List<String> reasons = List.of("TIANSHU_SI_SPEC_INVALID", "TIANSHU_SI_FORBIDDEN", "TIANSHU_SI_NOT_FOUND",
+                "TIANSHU_SI_CONFLICT", "SI_PINNED_HISTORY_UNAVAILABLE", "TIANSHU_SI_CAPACITY_EXCEEDED",
+                "TIANSHU_SI_UNKNOWN_FAILURE", "TIANSHU_SI_VALIDATION_ERROR", "TIANSHU_SERVICE_UNAVAILABLE",
+                "TIANSHU_SI_AUTHORITY_UNAVAILABLE", "TIANSHU_SI_INTERNAL_ERROR");
+        var next = new java.util.concurrent.atomic.AtomicInteger();
+        when(resources.resolveExecutionResource(TENANT_ID, "ai", "core", "prod", "owner-app", "tianji",
+                DdcSiKindEnum.AGENT, "planner", 1L)).thenAnswer(invocation -> { throw failures.get(next.getAndIncrement()); });
+        try (var fixture = new NativeFixture(resources, servicePrincipal(), true)) {
+            for (int index = 0; index < failures.size(); index++) {
+                Throwable thrown = org.assertj.core.api.Assertions.catchThrowable(
+                        () -> fixture.stub().resolveSiResource(executionRequest().build()));
+                assertThat(thrown).isInstanceOf(StatusRuntimeException.class);
+                StatusRuntimeException status = (StatusRuntimeException) thrown;
+                assertThat(status.getStatus().getCode()).isEqualTo(codes.get(index));
+                assertThat(status.getMessage()).doesNotContain("synthetic-secret");
+                var rich = StatusProto.fromThrowable(status);
+                assertThat(rich).isNotNull();
+                assertThat(rich.getDetailsCount()).isEqualTo(1);
+                ErrorInfo detail = rich.getDetails(0).unpack(ErrorInfo.class);
+                assertThat(detail.getDomain()).isEqualTo("tianshu.si");
+                assertThat(detail.getReason()).isEqualTo(reasons.get(index));
+                assertThat(detail.getMetadataMap()).isEqualTo(Map.of("retryable", Boolean.toString(index == 8 || index == 9)));
+            }
+            verify(resources, times(failures.size())).resolveExecutionResource(TENANT_ID, "ai", "core", "prod", "owner-app", "tianji",
                     DdcSiKindEnum.AGENT, "planner", 1L);
         }
     }

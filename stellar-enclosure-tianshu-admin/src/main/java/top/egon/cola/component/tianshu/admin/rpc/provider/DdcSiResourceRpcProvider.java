@@ -25,7 +25,7 @@ import top.egon.cola.component.rpc.tianshu.contract.proto.v1.ResolveSiResourceRe
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.SemanticSearchSiRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.SemanticSearchSiResponse;
 import top.egon.cola.component.rpc.tianshu.mapping.DdcSiProtoMapper;
-import top.egon.cola.component.tianshu.admin.security.rpc.DdcRpcProviderExceptionMapper;
+import top.egon.cola.component.tianshu.admin.security.rpc.DdcSiRpcErrorMapper;
 import top.egon.cola.component.tianshu.admin.security.rpc.DdcServicePrincipal;
 import top.egon.cola.component.tianshu.admin.service.si.DdcSiResourceService;
 import top.egon.cola.component.tianshu.model.si.DdcSiKindEnum;
@@ -209,13 +209,13 @@ public class DdcSiResourceRpcProvider
         return new CommonException(56422, "SI_PINNED_HISTORY_UNAVAILABLE", "Fixed SI execution history is unavailable");
     }
     private static StatusRuntimeException unauthenticated() {
-        return Status.UNAUTHENTICATED.withDescription("Verified SI SERVICE method identity is required").asRuntimeException();
+        return DdcSiRpcErrorMapper.status(Status.UNAUTHENTICATED, "TIANSHU_SI_AUTHENTICATION_REQUIRED", false);
     }
     private static StatusRuntimeException forbidden() {
-        return Status.PERMISSION_DENIED.withDescription("SI execution request is not authorized").asRuntimeException();
+        return DdcSiRpcErrorMapper.status(Status.PERMISSION_DENIED, "TIANSHU_SI_FORBIDDEN", false);
     }
     private static StatusRuntimeException authorityUnavailable() {
-        return Status.UNAVAILABLE.withDescription("SI execution authority is unavailable").asRuntimeException();
+        return DdcSiRpcErrorMapper.status(Status.UNAVAILABLE, "TIANSHU_SI_AUTHORITY_UNAVAILABLE", true);
     }
     private record ExecutionCallerVO(DdcTenantContextDTO tenant, String callerAppCode) { }
 
@@ -281,8 +281,8 @@ public class DdcSiResourceRpcProvider
             observer.onError(sre);
         } catch (RuntimeException failure) {
             log.error("Unhandled SI RPC failure method={}", method, failure);
-            observer.onError(DdcRpcProviderExceptionMapper.status(
-                    Status.INTERNAL, "TIANSHU_SI_INTERNAL_ERROR", "SI RPC operation failed", false));
+            observer.onError(DdcSiRpcErrorMapper.status(
+                    Status.INTERNAL, "TIANSHU_SI_INTERNAL_ERROR", false));
         }
     }
 
@@ -294,18 +294,18 @@ public class DdcSiResourceRpcProvider
         } catch (CommonException failure) {
             throw mapSiFailure(failure);
         } catch (IllegalArgumentException failure) {
-            throw DdcRpcProviderExceptionMapper.status(
-                    Status.INVALID_ARGUMENT, "TIANSHU_SI_VALIDATION_ERROR", failure.getMessage(), false);
+            throw DdcSiRpcErrorMapper.status(
+                    Status.INVALID_ARGUMENT, "TIANSHU_SI_VALIDATION_ERROR", false);
         } catch (TransientDataAccessException failure) {
             log.warn("SI RPC temporarily unavailable method={}", method, failure);
-            throw DdcRpcProviderExceptionMapper.status(
-                    Status.UNAVAILABLE, "TIANSHU_SERVICE_UNAVAILABLE", "Tianshu SI service temporarily unavailable", true);
+            throw DdcSiRpcErrorMapper.status(
+                    Status.UNAVAILABLE, "TIANSHU_SERVICE_UNAVAILABLE", true);
         } catch (AuthenticationServiceException failure) {
             throw authorityUnavailable();
         } catch (RuntimeException failure) {
             log.error("Tianshu SI RPC failed method={}", method, failure);
-            throw DdcRpcProviderExceptionMapper.status(
-                    Status.INTERNAL, "TIANSHU_SI_INTERNAL_ERROR", "Tianshu SI operation failed", false);
+            throw DdcSiRpcErrorMapper.status(
+                    Status.INTERNAL, "TIANSHU_SI_INTERNAL_ERROR", false);
         }
     }
 
@@ -319,8 +319,8 @@ public class DdcSiResourceRpcProvider
             case 56429 -> Status.RESOURCE_EXHAUSTED;
             default -> Status.INTERNAL;
         };
-        return DdcRpcProviderExceptionMapper.status(
-                status, failure.getStatus(), failure.getMessage(), failure.isRetryable());
+        return DdcSiRpcErrorMapper.status(
+                status, failure.getStatus(), failure.isRetryable());
     }
 
     @FunctionalInterface
