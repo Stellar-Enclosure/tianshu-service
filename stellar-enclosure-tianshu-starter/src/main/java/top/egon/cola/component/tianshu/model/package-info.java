@@ -8,7 +8,8 @@
  */
 @NonNullApi
 @top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.PermissionReferences({
-        "TIANSHU_READ", "TIANSHU_WRITE", "TIANSHU_AI_READ", "TIANSHU_AI_WRITE", "TIANSHU_AI_PUBLISH"
+        "TIANSHU_READ", "TIANSHU_WRITE", "TIANSHU_AI_READ", "TIANSHU_AI_WRITE", "TIANSHU_AI_PUBLISH",
+        "TIANSHU_CATALOG_READ"
 })
 package top.egon.cola.component.tianshu.model;
 
