@@ -56,7 +56,6 @@ spring:
       - classpath:META-INF/egon-cola-tianshu.properties
       - classpath:egon-tianshu-persistence.yml
       - optional:file:${UNIFIED_XINGYUAN_RUNTIME_DIR:target/local-unified-xingyuan}/env/tianshu.properties
-      - optional:tianshu:application.yml
 mybatis-plus:
   mapper-locations: classpath*:mybatis/mapper/tianshu/**/*.xml,classpath*:mapper/outbox/**/*.xml
 
@@ -180,14 +179,13 @@ egon:
               scopes: ${TIANSHU_TIANQUAN_JIANSHEN_SERVICE_TOKEN_SCOPES:}
     component:
       tianshu:
-        enabled: ${TIANSHU_SELF_REGISTRATION_ENABLED:false}
+        # Control-plane bootstrap is local; workload delivery is configured independently.
+        enabled: false
         biz-code: ${TIANSHU_RESOURCE_BIZ_CODE:xingyuan}
         app-code: ${TIANSHU_RESOURCE_APP_CODE:tianshu}
         env: ${DEPLOYMENT_ENV:local}
         namespace: ${DEPLOYMENT_NAMESPACE:default}
         max-config-bytes: ${TIANSHU_MAX_CONFIG_BYTES:1048576}
-        instance:
-          id: ${TIANSHU_INSTANCE_ID:tianshu-admin-local-1}
         si:
           vector-dimensions: ${TIANSHU_SI_VECTOR_DIMENSIONS:1536}
           rrf-k: ${TIANSHU_SI_RRF_K:60}
@@ -203,37 +201,6 @@ egon:
             max-pool-size: ${TIANSHU_SI_INDEX_MAX_POOL_SIZE:8}
             queue-capacity: ${TIANSHU_SI_INDEX_QUEUE_CAPACITY:256}
             await-termination: ${TIANSHU_SI_INDEX_AWAIT_TERMINATION:10s}
-        rpc:
-          target: ${TIANSHU_RPC_TARGET:dns:///127.0.0.1:19080}
-          tls:
-            development-plaintext: ${TIANSHU_RPC_DEVELOPMENT_PLAINTEXT:false}
-          auth:
-            runtime:
-              access-key: ${TIANSHU_RPC_RUNTIME_ACCESS_KEY:}
-              secret-key: ${TIANSHU_RPC_RUNTIME_SECRET_KEY:}
-            registry:
-              access-key: ${TIANSHU_RPC_REGISTRY_ACCESS_KEY:}
-              secret-key: ${TIANSHU_RPC_REGISTRY_SECRET_KEY:}
-        redis:
-          enabled: false
-          host: ${TIANSHU_REDIS_HOST:127.0.0.1}
-          port: ${TIANSHU_REDIS_PORT:6379}
-          password: ${TIANSHU_REDIS_PASSWORD:}
-          database: ${TIANSHU_REDIS_DATABASE:0}
-        registry:
-          enabled: ${TIANSHU_SELF_REGISTRATION_ENABLED:false}
-          http:
-            enabled: ${TIANSHU_SELF_REGISTRATION_ENABLED:false}
-            instance-id: ${TIANSHU_INSTANCE_ID:tianshu-admin-local-1}
-            service-name: ${TIANSHU_YUHENG_SERVICE_NAME:tianshu}
-            group: default
-            version: ${TIANSHU_ARTIFACT_VERSION:local}
-            protocol: http
-            advertised-host: ${TIANSHU_ADVERTISED_HOST:127.0.0.1}
-            port: ${TIANSHU_ADVERTISED_PORT:18150}
-            lease-seconds: 30
-            heartbeat-interval-seconds: 10
-            fail-fast: ${TIANSHU_SELF_REGISTRATION_FAIL_FAST:false}
         admin:
           ai:
             optimization:
@@ -393,7 +360,6 @@ egon:
       yuheng:
         openapi:
           enabled: ${TIANSHU_HTTP_OPENAPI_ENABLED:false}
-          publish-to-tianshu: true
           published-groups:
             - tianshu
           biz-code: ${TIANSHU_RESOURCE_BIZ_CODE:xingyuan}

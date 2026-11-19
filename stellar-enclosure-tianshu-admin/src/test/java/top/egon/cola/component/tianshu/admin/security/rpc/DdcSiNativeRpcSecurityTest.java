@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
-import org.springframework.context.annotation.Configuration;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.boot.context.properties.bind.Bindable;
@@ -163,7 +163,7 @@ class DdcSiNativeRpcSecurityTest {
                 });
     }
 
-    @Configuration(value = "nativeSiRpcPropertiesTestConfiguration", proxyBeanMethods = false)
+    @TestConfiguration(value = "nativeSiRpcPropertiesTestConfiguration", proxyBeanMethods = false)
     @EnableConfigurationProperties(EgonRpcProperties.class)
     static class NativeRpcPropertiesConfiguration { }
 
