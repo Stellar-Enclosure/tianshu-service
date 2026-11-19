@@ -17,6 +17,8 @@ import top.egon.cola.component.tianshu.admin.model.convertor.DdcSiResourceConver
 import top.egon.cola.component.tianshu.admin.outbox.DdcSiCatalogOutboxNotifier;
 import top.egon.cola.component.tianshu.admin.repository.DdcSiResourceRepository;
 import top.egon.cola.component.tianshu.admin.search.DdcSiSemanticIndexService;
+import top.egon.cola.component.tianshu.admin.service.si.DdcSiMcpPublicationVerifier.ApprovalVO;
+import top.egon.cola.component.tianshu.admin.service.si.DdcSiMcpPublicationVerifier.PublicationScopeVO;
 import top.egon.cola.component.tianshu.admin.service.si.impl.DdcSiResourceServiceImpl;
 import top.egon.cola.component.tianshu.admin.service.si.strategy.DdcSiAgentContentStrategy;
 import top.egon.cola.component.tianshu.admin.service.si.strategy.DdcSiContentStrategy;
@@ -46,9 +48,11 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -66,6 +70,8 @@ class DdcSiResourceServiceImplTest {
     private DdcSiSemanticIndexService semanticIndexService;
     @Mock
     private DdcSiResourceConverter converter;
+    @Mock
+    private DdcSiMcpPublicationVerifier mcpPublicationVerifier;
 
     private Clock fixedClock;
     private TransactionTemplate txTemplate;
@@ -98,7 +104,8 @@ class DdcSiResourceServiceImplTest {
                 semanticIndexService,
                 converter,
                 txTemplate,
-                fixedClock);
+                fixedClock,
+                mcpPublicationVerifier);
     }
 
     @Test
@@ -136,6 +143,107 @@ class DdcSiResourceServiceImplTest {
         assertThat(published.getDependencyManifestJson().path("nodes").isEmpty()).isTrue();
         verify(outboxNotifier).enqueueAndScheduleAfterCommit(
                 eq(DdcSiPublicationEvent.EventType.PUBLISHED), any(DdcSiResourceBO.class), any(DdcSiVersionBO.class));
+    }
+
+    @Test
+    void mcpPublishWithoutAuthoritativeApprovalDoesNotAllocateVersionOrOutbox() {
+        var draft = mcpResource(canonicalMcpDraft(), DdcSiLifecycleStatusEnum.DRAFT);
+        when(repository.findProjectedById(1L, 101L)).thenReturn(Optional.of(draft));
+        allowMcpWriteUnlessApprovalRejects(draft);
+        when(mcpPublicationVerifier.requireApproved(any(), any(), any()))
+                .thenThrow(new IllegalStateException("TIANSHU_MCP_PUBLICATION_APPROVAL_MISSING"));
+
+        assertThatThrownBy(() -> service.publish(1L, 101L, 2L, "publish", "operator"))
+                .isInstanceOf(CommonException.class);
+        verify(repository, never()).allocateVersionId();
+        verify(repository, never()).insertVersion(any());
+        verify(outboxNotifier, never()).enqueueAndScheduleAfterCommit(any(), any(), any());
+    }
+
+    @Test
+    void historicalMcpCanBeReadButCannotCreateAnUnapprovedActiveRollback() {
+        String priorBody = """
+                {"protocolVersion":"2025-03-26","transport":"SSE","endpoint":"https://tools.example.test/legacy"}
+                """;
+        var published = mcpResource(priorBody, DdcSiLifecycleStatusEnum.PUBLISHED);
+        String digest = DdcSiContentStrategy.sha256Hex(priorBody);
+        var root = new VersionIdentityVO("1", "101", "201", "1", DdcSiKindEnum.MCP, "dev", digest);
+        var prior = DdcSiVersionBO.builder().id(201L).tenantId(1L).resourceId(101L).versionNo(1L)
+                .kind(DdcSiKindEnum.MCP).envCode("dev").specJson(priorBody).digestSha256(digest)
+                .dependencyManifestJson(new ObjectMapper().valueToTree(DdcSiDependencyManifestVO.create(root, null, List.of(), List.of())))
+                .build();
+        when(repository.findProjectedById(1L, 101L)).thenReturn(Optional.of(published));
+        when(repository.findActiveForUpdateById(1L, 101L)).thenReturn(Optional.of(published));
+        when(repository.findHistoryVersionByResourceAndNo(1L, 101L, 1L)).thenReturn(Optional.of(prior));
+        allowMcpWriteUnlessApprovalRejects(published);
+        when(mcpPublicationVerifier.requireApproved(any(), eq(priorBody), eq(digest)))
+                .thenThrow(new IllegalStateException("TIANSHU_MCP_PUBLICATION_APPROVAL_SCHEMA_INVALID"));
+
+        assertThat(service.get(1L, 101L).getSpecJson()).isEqualTo(priorBody);
+        assertThatThrownBy(() -> service.rollback(1L, 101L, 2L, 1L, "rollback", "operator"))
+                .isInstanceOf(CommonException.class).hasMessageContaining("approved MCP schema");
+        assertThat(prior.getSpecJson()).isEqualTo(priorBody);
+        verify(repository, never()).allocateVersionId();
+        verify(repository, never()).insertVersion(any());
+        verify(outboxNotifier, never()).enqueueAndScheduleAfterCommit(any(), any(), any());
+    }
+
+    @Test
+    void mcpPublishSuppliesExactCanonicalBodyAndThePersistedResourceScope() {
+        var draft = mcpResource(canonicalMcpDraft(), DdcSiLifecycleStatusEnum.DRAFT);
+        when(repository.findProjectedById(1L, 101L)).thenReturn(Optional.of(draft));
+        allowMcpWriteUnlessApprovalRejects(draft);
+        var normalized = strategies.get(1).validateAndNormalize(DdcSiKindEnum.MCP, draft.getSpecJson());
+        var scope = new PublicationScopeVO("1", "xingyuan", "default", "dev", "app-a", "weather", "101");
+        when(mcpPublicationVerifier.requireApproved(scope, normalized.getNormalizedJson(), normalized.getDigestSha256()))
+                .thenReturn(new ApprovalVO("approval-1", "b".repeat(64), normalized.getDigestSha256(), fixedClock.instant().plusSeconds(60)));
+
+        var version = service.publish(1L, 101L, 2L, "approved", "operator");
+
+        assertThat(version.getSpecJson()).isEqualTo(normalized.getNormalizedJson());
+        assertThat(version.getDigestSha256()).isEqualTo(normalized.getDigestSha256());
+        verify(mcpPublicationVerifier).requireApproved(scope, version.getSpecJson(), version.getDigestSha256());
+        verify(repository).insertVersion(any());
+        verify(outboxNotifier).enqueueAndScheduleAfterCommit(eq(DdcSiPublicationEvent.EventType.PUBLISHED), any(), any());
+    }
+
+    private DdcSiResourceBO mcpResource(String body, DdcSiLifecycleStatusEnum status) {
+        return DdcSiResourceBO.builder().id(101L).tenantId(1L).bizCode("xingyuan").namespaceId(10L).namespaceCode("default")
+                .envCode("dev").appCode("app-a").kind(DdcSiKindEnum.MCP).resourceKey("weather").displayName("Weather")
+                .tags(List.of()).specJson(body).contentSha256(DdcSiContentStrategy.sha256Hex(body))
+                .lifecycleStatus(status).lastVersionNo(1L).version(2L).build();
+    }
+
+    private void allowMcpWriteUnlessApprovalRejects(DdcSiResourceBO draft) {
+        lenient().when(repository.findActiveForUpdateById(1L, 101L)).thenReturn(Optional.of(draft));
+        lenient().when(repository.allocateNextVersionNo(1L, 101L)).thenReturn(2L);
+        lenient().when(repository.allocateVersionId()).thenReturn(202L);
+        lenient().when(repository.insertVersion(any())).thenAnswer(call -> call.getArgument(0));
+        lenient().when(repository.updateVersioned(any())).thenReturn(Optional.of(draft));
+    }
+
+    private static String canonicalMcpDraft() {
+        return """
+                {
+                  "schemaVersion":"mcp-server-v2","sourceType":"REMOTE_HTTPS","protocolVersion":"2025-11-25",
+                  "transport":"STREAMABLE_HTTP","endpoint":"https://weather.example.test/mcp","capabilityFingerprint":"%s","tools":[]
+                }
+                """.formatted("a".repeat(64));
+    }
+
+    @Test
+    void mcpAutoRegistrationRequiresAnExistingIdentityBeforeAutomaticPublication() {
+        var request = DdcSiSelfRegistrationRequest.builder().tenantId(1L).bizCode("xingyuan").namespaceCode("default")
+                .envCode("dev").serviceName("app-a").instanceId("weather-0").kind(DdcSiKindEnum.MCP)
+                .resourceKey("weather").displayName("Weather").specJson(canonicalMcpDraft()).autoPublishIfNew(true)
+                .build();
+        when(repository.resolveNamespaceId(1L, "xingyuan", "default")).thenReturn(10L);
+
+        assertThatThrownBy(() -> service.registerManaged(request, false))
+                .isInstanceOf(CommonException.class).hasMessageContaining("Register the target MCP resource");
+        verify(repository, never()).insert(any());
+        verify(repository, never()).insertVersion(any());
+        verifyNoInteractions(mcpPublicationVerifier, outboxNotifier);
     }
 
     @Test

@@ -13,6 +13,7 @@ import org.springframework.validation.annotation.Validated;
 import top.egon.cola.component.common.core.exception.CommonException;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcSiBindingBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcSiReferenceBO;
+import top.egon.cola.component.tianshu.admin.model.bo.DdcSiReferenceBO.ExpectedIdentityVO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcSiResourceBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcSiVersionBO;
 import top.egon.cola.component.tianshu.admin.repository.DdcSiResourceRepository;
@@ -67,29 +68,40 @@ public class DdcSiDependencyValidator {
         var selections = new ArrayList<DependencySelectionVO>();
         for (var reference : references) {
             DdcSiKindEnum kind = resolveTargetKind(reference);
+            ExpectedIdentityVO expected = reference.getExpectedIdentity();
             if (kind == null) {
+                if (expected != null) {
+                    throw identityMismatch();
+                }
                 continue; // Tianji process references are governed outside the SI version graph.
             }
-            if (kind == resource.getKind() && resource.getResourceKey().equals(reference.getTargetKey())) {
+            boolean directSelf = expected != null ? Objects.equals(resource.getId(), expected.resourceId())
+                    : kind == resource.getKind() && resource.getResourceKey().equals(reference.getTargetKey());
+            if (directSelf) {
                 throw new CommonException(CODE_VALIDATION, "TIANSHU_SI_DEPENDENCY_CYCLE",
                         "SI publication cannot depend on itself");
             }
 
+            String targetOwner = resource.getAppCode();
+            if (expected != null && expected.ownerPresent()) {
+                targetOwner = expected.ownerAppCode() == null ? "" : expected.ownerAppCode();
+            }
             var target = repository.findByBusinessKey(resource.getTenantId(), resource.getBizCode(),
-                    resource.getNamespaceId(), resource.getEnvCode(), resource.getAppCode(), kind, reference.getTargetKey())
+                    resource.getNamespaceId(), resource.getEnvCode(), targetOwner, kind, reference.getTargetKey())
                     .orElseThrow(() -> new CommonException(CODE_VALIDATION, "TIANSHU_SI_DEPENDENCY_MISSING",
                             "SI dependency is missing from the publication scope"));
-            if (!target.getLifecycleStatus().isQueryableByRuntime()) {
+            if (expected != null) {
+                requireExpectedTarget(resource, target, reference, targetOwner, kind, expected);
+            }
+            if (target.getLifecycleStatus() == null || !target.getLifecycleStatus().isQueryableByRuntime()) {
                 throw new CommonException(CODE_VALIDATION, "TIANSHU_SI_DEPENDENCY_UNPUBLISHED",
                         "SI dependency is not published in the publication scope");
             }
             participants.add(target);
             selections.add(new DependencySelectionVO(target.getId(), target.getCurrentVersionId(),
-                    reference.getPinnedVersionNo(), kind));
+                    expected == null ? reference.getPinnedVersionNo() : expected.versionNo(), kind, expected));
         }
         lockCurrentPointers(resource.getTenantId(), participants);
-        allocateIdentity(candidate);
-
         var nodes = new HashMap<String, VersionIdentityVO>();
         var edges = new HashSet<EdgeVO>();
         var activeIds = selections.stream().filter(selection -> selection.pinnedVersionNo() == null)
@@ -98,7 +110,7 @@ public class DdcSiDependencyValidator {
             throw unavailable();
         }
         var activeVersions = loadVersions(resource.getTenantId(), activeIds);
-        VersionIdentityVO root = identity(candidate);
+        var selectedManifests = new ArrayList<DdcSiDependencyManifestVO>();
         for (var selection : selections) {
             DdcSiVersionBO child = selection.pinnedVersionNo() == null
                     ? activeVersions.get(selection.activeVersionId())
@@ -112,6 +124,20 @@ public class DdcSiDependencyValidator {
                     || !resource.getEnvCode().equals(manifest.root().envCode())) {
                 throw unavailable();
             }
+            ExpectedIdentityVO expected = selection.expectedIdentity();
+            if (expected != null && (!Long.toString(resource.getTenantId()).equals(manifest.root().tenantId())
+                    || !Long.toString(expected.resourceId()).equals(manifest.root().resourceId())
+                    || !Long.toString(expected.versionId()).equals(manifest.root().versionId())
+                    || !Long.toString(expected.versionNo()).equals(manifest.root().versionNo())
+                    || !expected.digestSha256().equals(manifest.root().digestSha256()))) {
+                throw identityMismatch();
+            }
+            selectedManifests.add(manifest);
+        }
+        // No new version identity is reserved until all approved direct tuples have been verified.
+        allocateIdentity(candidate);
+        VersionIdentityVO root = identity(candidate);
+        for (var manifest : selectedManifests) {
             addNode(nodes, manifest.root());
             manifest.nodes().forEach(node -> addNode(nodes, node));
             edges.add(new EdgeVO(root.versionId(), manifest.root().versionId()));
@@ -301,7 +327,53 @@ public class DdcSiDependencyValidator {
                 "SI publication input changed before its version could be frozen");
     }
 
-    private record DependencySelectionVO(Long resourceId, Long activeVersionId, Long pinnedVersionNo, DdcSiKindEnum kind) {}
+    private record DependencySelectionVO(Long resourceId, Long activeVersionId, Long pinnedVersionNo,
+                                         DdcSiKindEnum kind, ExpectedIdentityVO expectedIdentity) { }
+
+    private void requireExpectedTarget(DdcSiResourceBO source, DdcSiResourceBO target, DdcSiReferenceBO reference,
+                                       String targetOwner, DdcSiKindEnum kind, ExpectedIdentityVO expected) {
+        if (!Objects.equals(source.getTenantId(), target.getTenantId())
+                || !Objects.equals(source.getBizCode(), target.getBizCode())
+                || !Objects.equals(source.getNamespaceId(), target.getNamespaceId())
+                || !Objects.equals(source.getEnvCode(), target.getEnvCode())
+                || !Objects.equals(targetOwner, target.getAppCode())
+                || target.getKind() != kind || !Objects.equals(reference.getTargetKey(), target.getResourceKey())
+                || !Objects.equals(expected.resourceId(), target.getId()) || target.getDeletedAt() != null
+                || (reference.getPinnedVersionNo() != null && !expected.versionNo().equals(reference.getPinnedVersionNo()))
+                || (reference.getTargetVersionNo() != null && !expected.versionNo().equals(reference.getTargetVersionNo()))) {
+            throw identityMismatch();
+        }
+        if (Objects.equals(source.getAppCode(), targetOwner)) {
+            return;
+        }
+        // A business-owned source cannot invent an application caller for a cross-owner grant.
+        if (source.getAppCode() == null || source.getAppCode().isBlank()) {
+            throw dependencyScopeDenied();
+        }
+        var binding = repository.findActiveBinding(source.getTenantId(), source.getBizCode(), source.getNamespaceId(),
+                source.getEnvCode(), source.getAppCode(), kind, reference.getTargetKey())
+                .orElseThrow(DdcSiDependencyValidator::dependencyScopeDenied);
+        if (binding.getStatus() != DdcSiBindingStatusEnum.ACTIVE || binding.getDeletedAt() != null
+                || !Objects.equals(source.getTenantId(), binding.getTenantId())
+                || !Objects.equals(source.getBizCode(), binding.getBizCode())
+                || !Objects.equals(source.getNamespaceId(), binding.getNamespaceId())
+                || !Objects.equals(source.getEnvCode(), binding.getEnvCode())
+                || !Objects.equals(source.getAppCode(), binding.getAppCode())
+                || binding.getKind() != kind || !Objects.equals(reference.getTargetKey(), binding.getResourceKey())
+                || !Objects.equals(target.getId(), binding.getResourceId())
+                || (binding.getPinnedVersionNo() != null && !expected.versionNo().equals(binding.getPinnedVersionNo()))) {
+            throw dependencyScopeDenied();
+        }
+    }
+
+    private static CommonException identityMismatch() {
+        return new CommonException(CODE_VALIDATION, "TIANSHU_SI_DEPENDENCY_IDENTITY_MISMATCH",
+                "SI dependency does not match its approved immutable identity");
+    }
+
+    private static CommonException dependencyScopeDenied() {
+        return new CommonException(56403, "TIANSHU_SI_SCOPE_DENIED", "SI dependency owner is not authorized for the source application");
+    }
 
     /**
      * 归档前拦截：若存在活跃上游资源、活跃 {@code TIANJI_PROCESS} 引用或活跃应用绑定，抛出 {@code 409 Conflict}。

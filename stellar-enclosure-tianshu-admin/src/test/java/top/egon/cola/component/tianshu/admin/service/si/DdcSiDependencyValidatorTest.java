@@ -97,6 +97,44 @@ class DdcSiDependencyValidatorTest {
         assertThatCode(() -> validator.ensureSafeToArchive(resource)).doesNotThrowAnyException();
     }
 
+    @Test
+    void exactIdentityRetainsLongRangeAndRequiresAllPositiveCanonicalCoordinates() {
+        var maximum = new DdcSiReferenceBO.ExpectedIdentityVO(Long.MAX_VALUE,Long.MAX_VALUE,Long.MAX_VALUE,"a".repeat(64),false,null);
+        assertThat(maximum.versionId()).isEqualTo(Long.MAX_VALUE);
+        assertThatThrownBy(()->new DdcSiReferenceBO.ExpectedIdentityVO(null,2L,3L,"a".repeat(64),false,null)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(()->new DdcSiReferenceBO.ExpectedIdentityVO(1L,0L,3L,"a".repeat(64),false,null)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(()->new DdcSiReferenceBO.ExpectedIdentityVO(1L,2L,-1L,"a".repeat(64),false,null)).isInstanceOf(IllegalArgumentException.class);
+        for(String digest:List.of("sha256:"+"a".repeat(64),"A".repeat(64),"a".repeat(63))) {
+            assertThatThrownBy(()->new DdcSiReferenceBO.ExpectedIdentityVO(1L,2L,3L,digest,false,null)).isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThatThrownBy(()->new DdcSiReferenceBO.ExpectedIdentityVO(1L,2L,3L,"a".repeat(64),false,"owner")).isInstanceOf(IllegalArgumentException.class);
+        for(String owner:List.of("", " owner", "owner ", "owner\n")) {
+            assertThatThrownBy(()->new DdcSiReferenceBO.ExpectedIdentityVO(1L,2L,3L,"a".repeat(64),true,owner)).isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThat(new DdcSiReferenceBO.ExpectedIdentityVO(1L,2L,3L,"a".repeat(64),true,null).ownerPresent()).isTrue();
+    }
+
+    @Test
+    void persistedReferenceProjectionDoesNotInventOrPersistInternalExpectedIdentity() {
+        try(var context=new org.springframework.context.annotation.AnnotationConfigApplicationContext(
+                top.egon.cola.component.tianshu.admin.model.convertor.DdcSiResourceConverterImpl.class,
+                top.egon.cola.component.tianshu.admin.model.convertor.DdcSiEnumConverterImpl.class)) {
+            var converter=context.getBean(top.egon.cola.component.tianshu.admin.model.convertor.DdcSiResourceConverter.class);
+            var po=top.egon.cola.component.tianshu.admin.model.po.DdcSiReferencePO.builder().id(1L).tenantId(1L)
+                    .sourceType(top.egon.cola.component.tianshu.admin.model.enums.DdcSiReferenceTargetTypePersistenceEnum.AGENT)
+                    .sourceKey("source").targetKind(top.egon.cola.component.tianshu.admin.model.enums.DdcAiKindPersistenceEnum.MCP)
+                    .targetKey("target").targetVersionNo(3L).envCode("prod").namespaceId(10L).build();
+            var restored=converter.toReferenceBo(po);
+            assertThat(restored.getExpectedIdentity()).isNull();
+            assertThat(restored.getPinnedVersionNo()).isEqualTo(3L);
+            restored.setExpectedIdentity(new DdcSiReferenceBO.ExpectedIdentityVO(11L,12L,3L,"a".repeat(64),true,"tools"));
+            assertThat(new ObjectMapper().valueToTree(restored).has("expectedIdentity")).isFalse();
+            var persistedAgain=converter.toReferencePo(restored);
+            assertThat(persistedAgain.getTargetVersionNo()).isEqualTo(3L);
+            assertThat(converter.toReferenceBo(persistedAgain).getExpectedIdentity()).isNull();
+        }
+    }
+
     private static DdcSiReferenceBO edge(DdcSiReferenceTargetTypeEnum srcType, String srcKey,
                                          DdcSiReferenceTargetTypeEnum targetType, String targetKey) {
         return DdcSiReferenceBO.builder()

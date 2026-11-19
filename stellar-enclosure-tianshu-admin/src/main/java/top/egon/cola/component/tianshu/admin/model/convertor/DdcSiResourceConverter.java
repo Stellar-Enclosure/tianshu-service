@@ -63,6 +63,7 @@ public interface DdcSiResourceConverter extends BaseConverter<DdcSiResourcePO, D
     @Mapping(target = "pinnedVersionNo", source = "targetVersionNo")
     @Mapping(target = "required", constant = "true")
     @Mapping(target = "roleHint", ignore = true)
+    @Mapping(target = "expectedIdentity", ignore = true)
     DdcSiReferenceBO toReferenceBo(DdcSiReferencePO source);
 
     @Mapping(target = "targetKind", source = "targetKind")

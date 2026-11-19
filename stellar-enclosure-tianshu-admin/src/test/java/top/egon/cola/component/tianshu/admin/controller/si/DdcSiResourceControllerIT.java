@@ -365,6 +365,32 @@ class DdcSiResourceControllerIT {
     }
 
     @Test
+    void publishedMcpVersionReturnsTheFullFrozenBodyAndDigest() throws Exception {
+        String input = """
+                {"schemaVersion":"mcp-server-v2","sourceType":"COMPOSED_API","protocolVersion":"2025-11-25",
+                 "transport":"STREAMABLE_HTTP","endpoint":"http://mcp-access.test.svc.cluster.local/mcp",
+                 "capabilityFingerprint":"%s",
+                 "serviceBinding":{"bindingId":"mcp-access","revision":"1","serviceName":"mcp-access","namespace":"test","port":80},
+                 "apiMapping":{"gatewayGroupId":"12","publicationId":"9007199254740993","schemaVersion":"yuheng-mcp-mapping-seed-v1",
+                               "contentSha256":"%s","artifactSha256":"%s"},
+                 "tools":[{"toolId":"weather","name":"weather","inputSchema":{"type":"object"},"outputSchema":{"type":"object"},
+                           "riskLevel":"LOW","requiredPermissions":[],"idempotent":false,"enabled":true}]}
+                """.formatted("a".repeat(64), "b".repeat(64), "c".repeat(64));
+        var strategy = new top.egon.cola.component.tianshu.admin.service.si.strategy.DdcSiMcpContentStrategy(objectMapper);
+        var canonical = strategy.validateAndNormalize(DdcSiKindEnum.MCP, input);
+        String body = canonical.getNormalizedJson();
+        String digest = canonical.getDigestSha256();
+        DdcSiVersionBO version = sampleVersion("dev", 2L).setKind(DdcSiKindEnum.MCP).setSpecJson(body).setDigestSha256(digest);
+        when(siResourceService.getVersion(TENANT_ID, RESOURCE_ID, 2L)).thenReturn(version);
+
+        mockMvc.perform(get("/api/v1/tianshu/si/resources/{id}/versions/{versionNo}", RESOURCE_ID, 2L))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.versionNo").value(2))
+                .andExpect(jsonPath("$.data.specJson").value(body))
+                .andExpect(jsonPath("$.data.digestSha256").value(digest));
+    }
+
+    @Test
     void versionHistoryReferencesUnbindAndReindexEndpointsWorkWithUtcTimestamps() throws Exception {
         DdcSiVersionBO version = sampleVersion("dev", 2L);
         when(siResourceService.pageVersions(eq(TENANT_ID), eq(RESOURCE_ID), any()))

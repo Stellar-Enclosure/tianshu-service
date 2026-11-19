@@ -20,6 +20,8 @@ import top.egon.cola.component.tianshu.admin.repository.DdcSiResourceRepository;
 import top.egon.cola.component.tianshu.admin.search.DdcSiSemanticIndexService;
 import top.egon.cola.component.tianshu.admin.service.si.DdcSiDependencyValidator;
 import top.egon.cola.component.tianshu.admin.service.si.DdcSiLifecycleTransitionPolicy;
+import top.egon.cola.component.tianshu.admin.service.si.DdcSiMcpPublicationVerifier;
+import top.egon.cola.component.tianshu.admin.service.si.DdcSiMcpPublicationVerifier.PublicationScopeVO;
 import top.egon.cola.component.tianshu.admin.service.si.DdcSiResourceService;
 import top.egon.cola.component.tianshu.admin.service.si.strategy.DdcSiContentStrategy;
 import top.egon.cola.component.tianshu.admin.service.si.strategy.DdcSiContentStrategy.NormalizedContent;
@@ -80,6 +82,9 @@ public class DdcSiResourceServiceImpl implements DdcSiResourceService {
 
     @Qualifier("ddcPublishClock")
     private final Clock clock;
+
+    @Qualifier("ddcSiMcpPublicationVerifier")
+    private final DdcSiMcpPublicationVerifier mcpPublicationVerifier;
 
     @Override
     public DdcPageResult<DdcSiResourceBO> page(Long tenantId, String bizCode, String namespaceCode, String envCode,
@@ -180,6 +185,7 @@ public class DdcSiResourceServiceImpl implements DdcSiResourceService {
 
             DdcSiContentStrategy strategy = selectStrategy(resource.getKind());
             NormalizedContent normalized = strategy.validateAndNormalize(resource.getKind(), resource.getSpecJson());
+            requireMcpApproval(resource, normalized.getNormalizedJson(), normalized.getDigestSha256());
             var outgoing = strategy.extractReferences(resource.getKind(), normalized.getNormalizedJson());
             Instant now = clock.instant();
             var candidate = publication(resource, normalized.getNormalizedJson(), normalized.getDigestSha256(),
@@ -200,6 +206,7 @@ public class DdcSiResourceServiceImpl implements DdcSiResourceService {
 
             var prior = exactVersion(locked, targetVersionNo);
             var manifest = dependencyValidator.requireHistorical(prior);
+            requireMcpApproval(locked, prior.getSpecJson(), prior.getDigestSha256());
             Instant now = clock.instant();
             var candidate = publication(locked, prior.getSpecJson(), prior.getDigestSha256(),
                     changeNote == null ? "rollback to version " + targetVersionNo : changeNote, actor, now)
@@ -231,9 +238,12 @@ public class DdcSiResourceServiceImpl implements DdcSiResourceService {
             var outgoing = strategy.extractReferences(source.getKind(), sourceVer.getSpecJson());
 
             Instant now = clock.instant();
-            DdcSiResourceBO target = repository.findByBusinessKey(tenantId, source.getBizCode(), source.getNamespaceId(),
-                            targetEnvCode, source.getAppCode(), source.getKind(), source.getResourceKey())
-                    .orElseGet(() -> repository.insert(DdcSiResourceBO.builder()
+            var existingTarget = repository.findByBusinessKey(tenantId, source.getBizCode(), source.getNamespaceId(),
+                    targetEnvCode, source.getAppCode(), source.getKind(), source.getResourceKey());
+            if (source.getKind() == DdcSiKindEnum.MCP && existingTarget.isEmpty()) {
+                throw mcpRegistrationRequired();
+            }
+            DdcSiResourceBO target = existingTarget.orElseGet(() -> repository.insert(DdcSiResourceBO.builder()
                             .tenantId(tenantId)
                             .createUserId(actor)
                             .updateUserId(actor)
@@ -258,11 +268,13 @@ public class DdcSiResourceServiceImpl implements DdcSiResourceService {
                             .build()));
 
             transitionPolicy.assertCanTransition(target.getLifecycleStatus(), DdcSiLifecycleStatusEnum.PUBLISHED);
+            target.setNamespaceCode(source.getNamespaceCode());
+            requireMcpApproval(target, sourceVer.getSpecJson(), sourceVer.getDigestSha256());
             var candidate = publication(target, sourceVer.getSpecJson(), sourceVer.getDigestSha256(),
                     changeNote == null ? "promote from " + source.getEnvCode() : changeNote, actor, now)
                     .setSourceEnvCode(source.getEnvCode()).setSourceVersionNo(sourceVer.getVersionNo());
             dependencyValidator.freezePublication(target, candidate, sourceManifest.root(), outgoing, List.of(source));
-            target.setNamespaceCode(source.getNamespaceCode()).setDisplayName(source.getDisplayName())
+            target.setDisplayName(source.getDisplayName())
                     .setDescription(source.getDescription())
                     .setTags(source.getTags());
             return commitPublication(target, candidate, outgoing, EventType.PROMOTED, actor, now);
@@ -466,6 +478,9 @@ public class DdcSiResourceServiceImpl implements DdcSiResourceService {
             Optional<DdcSiResourceBO> existingOpt = repository.findByBusinessKey(
                     request.getTenantId(), request.getBizCode(), namespaceId,
                     request.getEnvCode(), request.getServiceName(), request.getKind(), request.getResourceKey());
+            if (request.getKind() == DdcSiKindEnum.MCP && request.isAutoPublishIfNew() && existingOpt.isEmpty()) {
+                throw mcpRegistrationRequired();
+            }
 
             if (existingOpt.isPresent()) {
                 DdcSiResourceBO existing = existingOpt.get().setNamespaceCode(request.getNamespaceCode());
@@ -515,6 +530,7 @@ public class DdcSiResourceServiceImpl implements DdcSiResourceService {
             final String actor = "system:auto-register";
             if (request.isAutoPublishIfNew()) {
                 transitionPolicy.assertCanTransition(resource.getLifecycleStatus(), DdcSiLifecycleStatusEnum.PUBLISHED);
+                requireMcpApproval(resource, normalized.getNormalizedJson(), normalized.getDigestSha256());
                 var outgoing = strategy.extractReferences(resource.getKind(), normalized.getNormalizedJson());
                 var candidate = publication(resource, normalized.getNormalizedJson(), normalized.getDigestSha256(),
                         "auto-registered", actor, now);
@@ -598,6 +614,38 @@ public class DdcSiResourceServiceImpl implements DdcSiResourceService {
                 || !Objects.equals(resource.getEnvCode(), version.getEnvCode())) {
             throw DdcSiDependencyValidator.unavailable();
         }
+    }
+
+    private void requireMcpApproval(DdcSiResourceBO resource, String body, String digest) {
+        if (resource.getKind() != DdcSiKindEnum.MCP) {
+            return;
+        }
+        if (resource.getId() == null || resource.getId() <= 0) {
+            throw mcpRegistrationRequired();
+        }
+        try {
+            var scope = new PublicationScopeVO(Objects.toString(resource.getTenantId(), ""), resource.getBizCode(),
+                    resource.getNamespaceCode(), resource.getEnvCode(), Objects.toString(resource.getAppCode(), ""),
+                    resource.getResourceKey(), resource.getId().toString());
+            var approval = mcpPublicationVerifier.requireApproved(scope, body, digest);
+            if (approval == null || !Objects.equals(digest, approval.canonicalSpecSha256())
+                    || approval.validUntil() == null || !clock.instant().isBefore(approval.validUntil())) {
+                throw mcpApprovalRequired();
+            }
+            log.debug("Validated immutable MCP publication scope resourceId={} approvalId={}", resource.getId(), approval.approvalId());
+        } catch (IllegalArgumentException | IllegalStateException denied) {
+            throw mcpApprovalRequired();
+        }
+    }
+
+    private static CommonException mcpRegistrationRequired() {
+        return new CommonException(CODE_CONFLICT, "TIANSHU_SI_MCP_REGISTRATION_REQUIRED",
+                "Register the target MCP resource before requesting publication");
+    }
+
+    private static CommonException mcpApprovalRequired() {
+        return new CommonException(DdcSiContentStrategy.CODE_VALIDATION_FAILED, "TIANSHU_SI_MCP_PUBLICATION_UNAPPROVED",
+                "Publication requires an approved MCP schema and immutable evidence");
     }
 
     private static DdcSiVersionBO publication(DdcSiResourceBO resource, String body, String digest,
