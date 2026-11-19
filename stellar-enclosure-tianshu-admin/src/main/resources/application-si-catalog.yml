@@ -18,6 +18,18 @@ egon:
                   scope-context: TENANT
                   expected-resource-uri: ${TIANSHU_RESOURCE_URI}
                   required-scopes: ["${TIANSHU_SI_CATALOG_READ_SCOPE}"]
+                "[egon.tianshu.v1.DdcSiResourceGrpcService/ListSiCatalog]":
+                  required: true
+                  principal-kind: SERVICE
+                  scope-context: TENANT
+                  expected-resource-uri: ${TIANSHU_RESOURCE_URI}
+                  required-scopes: ["${TIANSHU_SI_CATALOG_READ_SCOPE}"]
+                "[egon.tianshu.v1.DdcSiResourceGrpcService/SemanticSearchSiResources]":
+                  required: true
+                  principal-kind: SERVICE
+                  scope-context: TENANT
+                  expected-resource-uri: ${TIANSHU_RESOURCE_URI}
+                  required-scopes: ["${TIANSHU_SI_CATALOG_READ_SCOPE}"]
     component:
       rpc:
         enabled: true
@@ -30,9 +42,8 @@ egon:
           enabled: false
       tianshu:
         admin:
-          # This profile exposes only the exact native method; it never requires a legacy signing key.
-          rpc:
-            signature-enabled: false
-            credentials: []
-          tenancy:
-            credential-bindings: []
+          si:
+            native-rpc:
+              # Supply exact issuer/resource/client/tenant/source coordinates and per-method namespaces.
+              # Register additionally requires an explicit deployed SERVICE/TENANT write method policy.
+              bindings: []

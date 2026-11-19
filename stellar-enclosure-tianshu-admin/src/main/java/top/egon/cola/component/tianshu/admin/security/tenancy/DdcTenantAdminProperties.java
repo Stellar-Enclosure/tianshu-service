@@ -25,8 +25,4 @@ public class DdcTenantAdminProperties {
     @Builder.Default
     @NotNull
     private List<@Valid DdcTenantBindingDTO> bindings = new ArrayList<>();
-
-    @Builder.Default
-    @NotNull
-    private List<@Valid DdcCredentialTenantDTO> credentialBindings = new ArrayList<>();
 }

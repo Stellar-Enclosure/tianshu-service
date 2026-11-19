@@ -90,8 +90,6 @@ egon:
               max-output-excerpt-bytes: 32768
           security:
             local-dev: true
-          rpc:
-            signature-enabled: false
           redis:
             enabled: false
       transactional-outbox:

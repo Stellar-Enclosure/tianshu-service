@@ -15,8 +15,6 @@ public class DdcAdminProperties {
 
     private Lease lease = new Lease();
 
-    private Rpc rpc = new Rpc();
-
     private Security security = new Security();
 
     private Publish publish = new Publish();
@@ -46,14 +44,6 @@ public class DdcAdminProperties {
 
     public void setLease(Lease lease) {
         this.lease = lease;
-    }
-
-    public Rpc getRpc() {
-        return rpc;
-    }
-
-    public void setRpc(Rpc rpc) {
-        this.rpc = rpc;
     }
 
     public Security getSecurity() {
@@ -207,142 +197,6 @@ public class DdcAdminProperties {
 
         public void setScanIntervalMillis(long scanIntervalMillis) {
             this.scanIntervalMillis = scanIntervalMillis;
-        }
-    }
-
-    public static class Rpc {
-
-        private boolean signatureEnabled;
-
-        private int allowedClockSkewSeconds = 300;
-
-        private int nonceCacheMaxSize = 10000;
-
-        private List<Credential> credentials = new ArrayList<>();
-
-        public boolean isSignatureEnabled() {
-            return signatureEnabled;
-        }
-
-        public void setSignatureEnabled(boolean signatureEnabled) {
-            this.signatureEnabled = signatureEnabled;
-        }
-
-        public int getAllowedClockSkewSeconds() {
-            return allowedClockSkewSeconds;
-        }
-
-        public void setAllowedClockSkewSeconds(int allowedClockSkewSeconds) {
-            this.allowedClockSkewSeconds = allowedClockSkewSeconds;
-        }
-
-        public int getNonceCacheMaxSize() {
-            return nonceCacheMaxSize;
-        }
-
-        public void setNonceCacheMaxSize(int nonceCacheMaxSize) {
-            this.nonceCacheMaxSize = nonceCacheMaxSize;
-        }
-
-        public List<Credential> getCredentials() {
-            return credentials;
-        }
-
-        public void setCredentials(List<Credential> credentials) {
-            this.credentials = credentials;
-        }
-    }
-
-    public static class Credential {
-
-        private String credentialId;
-
-        private String accessKey;
-
-        private String secret;
-
-        private String clientType;
-
-        private List<String> appCodePatterns = new ArrayList<>();
-
-        private List<String> envPatterns = new ArrayList<>();
-
-        private List<String> bizCodePatterns = new ArrayList<>();
-
-        private List<String> namespacePatterns = new ArrayList<>();
-
-        private List<String> allowedOperations = new ArrayList<>();
-
-        public String getCredentialId() {
-            return credentialId;
-        }
-
-        public void setCredentialId(String credentialId) {
-            this.credentialId = credentialId;
-        }
-
-        public String getAccessKey() {
-            return accessKey;
-        }
-
-        public void setAccessKey(String accessKey) {
-            this.accessKey = accessKey;
-        }
-
-        public String getSecret() {
-            return secret;
-        }
-
-        public void setSecret(String secret) {
-            this.secret = secret;
-        }
-
-        public String getClientType() {
-            return clientType;
-        }
-
-        public void setClientType(String clientType) {
-            this.clientType = clientType;
-        }
-
-        public List<String> getAppCodePatterns() {
-            return appCodePatterns;
-        }
-
-        public void setAppCodePatterns(List<String> appCodePatterns) {
-            this.appCodePatterns = appCodePatterns;
-        }
-
-        public List<String> getEnvPatterns() {
-            return envPatterns;
-        }
-
-        public void setEnvPatterns(List<String> envPatterns) {
-            this.envPatterns = envPatterns;
-        }
-
-        public List<String> getBizCodePatterns() {
-            return bizCodePatterns;
-        }
-
-        public void setBizCodePatterns(List<String> bizCodePatterns) {
-            this.bizCodePatterns = bizCodePatterns;
-        }
-
-        public List<String> getNamespacePatterns() {
-            return namespacePatterns;
-        }
-
-        public void setNamespacePatterns(List<String> namespacePatterns) {
-            this.namespacePatterns = namespacePatterns;
-        }
-
-        public List<String> getAllowedOperations() {
-            return allowedOperations;
-        }
-
-        public void setAllowedOperations(List<String> allowedOperations) {
-            this.allowedOperations = allowedOperations;
         }
     }
 

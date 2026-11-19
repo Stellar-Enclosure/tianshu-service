@@ -42,14 +42,15 @@ class DdcCloudOnlyConfigurationTest {
     private static final String PROVIDER_PACKAGE = DdcSiResourceRpcProvider.class.getPackageName();
 
     @Test
-    void discoversSiProviderWithoutRetiredConfigRegistryOrManagementProviders() {
+    void discoversSiProviderWithoutRetiredProviders() {
         assertThat(providerCandidates())
                 .extracting(BeanDefinition::getBeanClassName)
                 .contains(DdcSiResourceRpcProvider.class.getName())
                 .doesNotContain(
                         PROVIDER_PACKAGE + ".DdcConfigRpcProvider",
                         PROVIDER_PACKAGE + ".DdcRegistryRpcProvider",
-                        PROVIDER_PACKAGE + ".DdcManagementRpcProvider");
+                        PROVIDER_PACKAGE + ".DdcManagementRpcProvider",
+                        PROVIDER_PACKAGE + ".DdcAiResourceRpcProvider");
     }
 
     @Test
@@ -83,7 +84,8 @@ class DdcCloudOnlyConfigurationTest {
                             .isEqualTo(ResolveSiResourceResponse.getDefaultInstance());
                     for (String method : List.of("egon.tianshu.v1.DdcConfigRuntimeService/PullConfig",
                             "egon.tianshu.v1.DdcServiceRegistryService/RegisterService",
-                            "egon.tianshu.v1.DdcManagementService/GetBiz")) {
+                            "egon.tianshu.v1.DdcManagementService/GetBiz",
+                            "egon.tianshu.v1.DdcAiResourceService/GetPrompt")) {
                         assertThatThrownBy(() -> ClientCalls.blockingUnaryCall(channel, unaryMethod(method),
                                 CallOptions.DEFAULT.withDeadlineAfter(3, TimeUnit.SECONDS), Empty.getDefaultInstance()))
                                 .as(method)

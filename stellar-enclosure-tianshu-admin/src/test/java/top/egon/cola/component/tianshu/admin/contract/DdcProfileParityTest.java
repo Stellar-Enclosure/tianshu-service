@@ -23,8 +23,9 @@ class DdcProfileParityTest {
     private static final String TIANSHU_PREFIX = "egon.cola.component.tianshu.";
     private static final String RPC_CREDENTIALS_PROFILE =
             "yuheng-service/deployment/tianshu-rpc-credentials.yml";
+    private static final String SAMPLE_PROFILE =
+            "tianshu-service/stellar-enclosure-tianshu-test/src/main/resources/application.yml";
     private static final List<String> DIRECT_CALLER_PROFILES = List.of(
-            "tianshu-service/stellar-enclosure-tianshu-test/src/main/resources/application.yml",
             "yuheng-service/stellar-enclosure-yuheng-test/stellar-enclosure-yuheng-test-mcp-provider/src/main/resources/application.yml",
             "yuheng-service/stellar-enclosure-yuheng-test/stellar-enclosure-yuheng-test-rpc-consumer/src/main/resources/application.yml",
             "yuheng-service/stellar-enclosure-yuheng-test/stellar-enclosure-yuheng-test-tianquan-shoubing-backend/src/main/resources/application.yml",
@@ -102,12 +103,23 @@ class DdcProfileParityTest {
     }
 
     @Test
-    void adminRuntimeCredentialGrantsOnlyTheRemainingAiRpcOperations() {
-        Properties adminProfile = load("application.yml");
-        assertThat(adminProfile.getProperty(TIANSHU_PREFIX + "admin.rpc.credentials[0].allowed-operations"))
-                .isEqualTo("AI_READ,AI_REPORT");
-        assertThat(adminProfile.getProperty(TIANSHU_PREFIX + "admin.rpc.credentials[1].client-type"))
-                .isNull();
+    void sampleDeliveryRequiresAnOptInAndHasNoPhysicalRegistryConfiguration() {
+        Properties sample = load(repositoryRoot().resolve(SAMPLE_PROFILE));
+
+        assertThat(sample.getProperty(TIANSHU_PREFIX + "enabled")).isEqualTo("${TIANSHU_ENABLED:false}");
+        assertThat(sample.getProperty(TIANSHU_PREFIX + "delivery.enabled")).isEqualTo("${TIANSHU_ENABLED:false}");
+        assertThat(sample.getProperty(TIANSHU_PREFIX + "tenant-id")).isEqualTo("${TIANSHU_TENANT_ID:}");
+        assertThat(sample.stringPropertyNames()).noneMatch(key -> List.of("redis.", "rpc.", "lease.", "registry.")
+                .stream().anyMatch(prefix -> key.startsWith(TIANSHU_PREFIX + prefix)));
+    }
+
+    @Test
+    void nativeProfilesDeclareNoLegacySigningConfiguration() {
+        for (String profile : List.of("application.yml", "application-local.yml", "application-test.yml", "application-si-catalog.yml")) {
+            assertThat(load(profile).stringPropertyNames()).as(profile)
+                    .noneMatch(key -> key.startsWith(TIANSHU_PREFIX + "admin.rpc.")
+                            || key.startsWith(TIANSHU_PREFIX + "admin.tenancy.credential-bindings"));
+        }
     }
 
     @Test

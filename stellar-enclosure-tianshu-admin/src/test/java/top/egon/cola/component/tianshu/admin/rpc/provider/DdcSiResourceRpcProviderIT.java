@@ -1,14 +1,9 @@
 package top.egon.cola.component.tianshu.admin.rpc.provider;
 
-import io.grpc.Context;
-import io.grpc.Contexts;
 import io.grpc.ConnectivityState;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
 import io.grpc.Server;
-import io.grpc.ServerCall;
-import io.grpc.ServerCallHandler;
-import io.grpc.ServerInterceptor;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
@@ -49,8 +44,8 @@ import top.egon.cola.platform.tianquan.shoubing.starter.security.domain.TokenAud
 import top.egon.cola.platform.tianquan.shoubing.starter.security.rpc.IdpRpcAdmissionIdentityResolver;
 import top.egon.cola.platform.tianquan.shoubing.starter.security.rpc.IdpRpcBearerServerInterceptor;
 import top.egon.cola.platform.tianquan.shoubing.starter.security.rpc.IdpRpcSecurityContext;
-import top.egon.cola.component.tianshu.admin.security.rpc.DdcRpcScopeExtractor;
-import top.egon.cola.component.tianshu.admin.security.rpc.DdcServicePrincipal;
+import top.egon.cola.component.tianshu.admin.config.DdcSiNativeRpcProperties;
+import top.egon.cola.component.tianshu.admin.security.rpc.DdcSiNativeRpcAuthorization;
 import top.egon.cola.component.tianshu.admin.service.si.DdcSiResourceService;
 import top.egon.cola.component.tianshu.model.si.DdcSiKindEnum;
 import top.egon.cola.component.tianshu.model.si.DdcSiLifecycleStatusEnum;
@@ -66,12 +61,13 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -94,8 +90,6 @@ class DdcSiResourceRpcProviderIT {
     private static final Instant NATIVE_NOW = Instant.now();
     private static final String FULL_RESOLVE = DdcSiResourceGrpcServiceGrpc.getResolveSiResourceMethod().getFullMethodName();
 
-    private Server server;
-    private ManagedChannel channel;
 
     @Test
     void executionRequiredRejectsLegacyScopeOnlyBeforeResourceServiceInvocation() throws Exception {
@@ -105,111 +99,104 @@ class DdcSiResourceRpcProviderIT {
                 .setNamespaceCode("core").setEnvCode("prod").setOwnerAppCode("owner-app")
                 .setCallerAppCode("caller-app").setKind("AGENT").setResourceKey("planner")
                 .setExactVersionNo(1).setExecutionRequired(true).build();
-        Throwable rejected = principal(TENANT_ID).bind(Context.current()).call(() ->
-                org.assertj.core.api.Assertions.catchThrowable(() -> provider.resolveSiResource(request)));
+        MDC.put("tenantId", Long.toString(TENANT_ID));
+        MDC.put("userId", "unverified-request-state");
+        Throwable rejected = org.assertj.core.api.Assertions.catchThrowable(() -> provider.resolveSiResource(request));
         assertThat(rejected).isInstanceOfSatisfying(StatusRuntimeException.class,
                 failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAUTHENTICATED));
         verifyNoInteractions(resources);
     }
 
     @AfterEach
-    void tearDown() throws InterruptedException {
-        if (channel != null) {
-            channel.shutdownNow().awaitTermination(3, TimeUnit.SECONDS);
-        }
-        if (server != null) {
-            server.shutdownNow().awaitTermination(3, TimeUnit.SECONDS);
+    void clearThreadState() {
+        SecurityContextHolder.clearContext();
+        MDC.clear();
+    }
+
+    @Test
+    void nativeMetadataSearchAndRegistrationPreserveBusinessErrorMapping() throws Exception {
+        var resources = mock(DdcSiResourceService.class);
+        var descriptor = DdcSiResourceDescriptor.builder().tenantId(TENANT_ID).bizCode("ai").namespaceCode("core")
+                .envCode("prod").resourceId(910001L).kind(DdcSiKindEnum.AGENT).resourceKey("order-agent")
+                .displayName("Order Agent").status(DdcSiLifecycleStatusEnum.PUBLISHED)
+                .sourceType(DdcSiSourceTypeEnum.AUTO_REPORTED).activeVersionNo(2)
+                .digestSha256("b".repeat(64)).publishedAt(NOW).updatedAt(NOW).build();
+        when(resources.listCatalog(any())).thenReturn(List.of(descriptor));
+        when(resources.resolveResource(eq(TENANT_ID), eq("ai"), eq("core"), eq("prod"), eq("owner-app"),
+                any(), eq(DdcSiKindEnum.AGENT), eq("missing"), any())).thenReturn(Optional.empty());
+        when(resources.hybridSearch(any())).thenAnswer(invocation -> {
+            assertThat(MDC.get("tenantId")).isEqualTo("1001");
+            return List.of(DdcSiSearchHit.builder().resource(descriptor).hybridScore(0.95).degradedToFtsOnly(true).rank(1).build());
+        });
+        when(resources.registerManaged(any(), eq(false)))
+                .thenThrow(new CommonException(56409, "TIANSHU_SI_CONFLICT", "Owned by console"));
+        try (var fixture = new NativeFixture(resources, servicePrincipal(Set.of("si:read", "si:write")), true, true)) {
+            var stub = fixture.stub();
+            rejected(Status.Code.PERMISSION_DENIED, () -> stub.listSiCatalog(ListSiCatalogRequest.newBuilder()
+                    .setTenantId(2002).setBizCode("ai").setNamespaceCode("core").setEnvCode("prod").build()));
+            var catalog = stub.listSiCatalog(ListSiCatalogRequest.newBuilder().setTenantId(TENANT_ID).setBizCode("ai")
+                    .setNamespaceCode("core").setEnvCode("prod").setPageNo(1).setPageSize(20).build());
+            assertThat(catalog.getItemsList()).hasSize(1);
+            assertThat(catalog.getItems(0).getResourceKey()).isEqualTo("order-agent");
+            rejected(Status.Code.NOT_FOUND, () -> stub.resolveSiResource(ResolveSiResourceRequest.newBuilder()
+                    .setTenantId(TENANT_ID).setBizCode("ai").setNamespaceCode("core").setEnvCode("prod")
+                    .setAppCode("owner-app").setKind("AGENT").setResourceKey("missing").build()));
+            var search = stub.semanticSearchSiResources(SemanticSearchSiRequest.newBuilder().setTenantId(TENANT_ID)
+                    .setBizCode("ai").setNamespaceCode("core").setEnvCode("prod").setQueryText("order").setTopK(5).build());
+            assertThat(search.getHitsList()).hasSize(1);
+            assertThat(search.getHits(0).getDegradedToFtsOnly()).isTrue();
+            rejected(Status.Code.ABORTED, () -> stub.registerManagedSiResource(registration("tianji", "core")));
+            verify(resources, times(1)).registerManaged(any(), eq(false));
         }
     }
 
     @Test
-    void rejectsSpoofedCrossTenantRequestsWithPermissionDeniedAndMapsDomainErrors() throws Exception {
-        DdcSiResourceService siResourceService = mock(DdcSiResourceService.class);
-        DdcSiResourceRpcProvider provider = new DdcSiResourceRpcProvider(siResourceService, new DdcSiProtoMapperImpl());
-        AtomicReference<DdcServicePrincipal> activePrincipal = new AtomicReference<>(principal(TENANT_ID));
+    void namespacePrivilegesDoNotExpandWhenMutableConfigurationChangesAfterStartup() throws Exception {
+        var resources = mock(DdcSiResourceService.class);
+        when(resources.listCatalog(any())).thenReturn(List.of());
+        try (var fixture = new NativeFixture(resources, servicePrincipal(), true)) {
+            fixture.privileges.getBindings().getFirst().getMethods()
+                    .put(DdcSiNativeRpcAuthorization.LIST, Set.of("core", "other"));
+            rejected(Status.Code.PERMISSION_DENIED, () -> fixture.stub().listSiCatalog(ListSiCatalogRequest.newBuilder()
+                    .setTenantId(TENANT_ID).setBizCode("ai").setNamespaceCode("other").setEnvCode("prod").build()));
+            fixture.stub().listSiCatalog(ListSiCatalogRequest.newBuilder().setTenantId(TENANT_ID)
+                    .setBizCode("ai").setNamespaceCode("core").setEnvCode("prod").setPageNo(1).setPageSize(10).build());
+            verify(resources, times(1)).listCatalog(any());
+        }
+    }
 
-        ServerInterceptor principalInjector = new ServerInterceptor() {
-            @Override
-            public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
-                    ServerCall<ReqT, RespT> call,
-                    Metadata headers,
-                    ServerCallHandler<ReqT, RespT> next) {
-                Context ctx = activePrincipal.get().bind(Context.current());
-                return Contexts.interceptCall(ctx, call, headers, next);
-            }
-        };
+    @Test
+    void registrationNeedsExplicitWriteApprovalAndCannotSpoofTheOwnerApplication() throws Exception {
+        var resources = mock(DdcSiResourceService.class);
+        var principal = servicePrincipal(Set.of("si:read", "si:write"));
+        try (var fixture = new NativeFixture(resources, principal, true)) {
+            rejected(Status.Code.PERMISSION_DENIED, () -> fixture.stub().registerManagedSiResource(registration("tianji", "core")));
+        }
+        try (var fixture = new NativeFixture(resources, principal, true, true)) {
+            rejected(Status.Code.PERMISSION_DENIED, () -> fixture.stub().registerManagedSiResource(registration("owner-app", "core")));
+            rejected(Status.Code.PERMISSION_DENIED, () -> fixture.stub().registerManagedSiResource(registration("tianji", "other")));
+        }
+        verifyNoInteractions(resources);
+    }
 
-        server = NettyServerBuilder.forPort(0)
-                .addService(provider)
-                .intercept(principalInjector)
-                .build()
-                .start();
-        channel = NettyChannelBuilder.forAddress("localhost", server.getPort())
-                .usePlaintext()
-                .build();
-        DdcSiResourceGrpcServiceGrpc.DdcSiResourceGrpcServiceBlockingStub stub =
-                DdcSiResourceGrpcServiceGrpc.newBlockingStub(channel);
-
-        // Cross-tenant spoofing must be denied before touching service
-        assertThatThrownBy(() -> stub.listSiCatalog(ListSiCatalogRequest.newBuilder()
-                .setTenantId(2002L)
-                .setEnvCode("prod")
-                .build()))
-                .isInstanceOf(StatusRuntimeException.class)
-                .satisfies(ex -> assertThat(((StatusRuntimeException) ex).getStatus().getCode())
-                        .isEqualTo(Status.Code.PERMISSION_DENIED));
-        verifyNoInteractions(siResourceService);
-
-        // Authorized list call
-        DdcSiResourceDescriptor descriptor = DdcSiResourceDescriptor.builder()
-                .tenantId(TENANT_ID).bizCode("ai").namespaceCode("core").envCode("prod")
-                .resourceId(910001L).kind(DdcSiKindEnum.AGENT).resourceKey("order-agent")
-                .displayName("Order Agent").status(DdcSiLifecycleStatusEnum.PUBLISHED)
-                .sourceType(DdcSiSourceTypeEnum.AUTO_REPORTED).activeVersionNo(2)
-                .digestSha256("b".repeat(64)).publishedAt(NOW).updatedAt(NOW).build();
-        when(siResourceService.listCatalog(any())).thenReturn(List.of(descriptor));
-
-        ListSiCatalogResponse catalog = stub.listSiCatalog(ListSiCatalogRequest.newBuilder()
-                .setTenantId(TENANT_ID)
-                .setBizCode("ai")
-                .setNamespaceCode("core")
-                .setEnvCode("prod")
-                .setKind("AGENT")
-                .build());
-        assertThat(catalog.getItemsList()).hasSize(1);
-        assertThat(catalog.getItems(0).getResourceKey()).isEqualTo("order-agent");
-
-        // Resolve NOT_FOUND -> gRPC NOT_FOUND
-        when(siResourceService.resolveResource(eq(TENANT_ID), eq("ai"), eq("core"), eq("prod"),
-                eq("tianji"), any(), eq(DdcSiKindEnum.AGENT), eq("missing"), any()))
-                .thenReturn(Optional.empty());
-        assertThatThrownBy(() -> stub.resolveSiResource(ResolveSiResourceRequest.newBuilder()
-                .setTenantId(TENANT_ID).setBizCode("ai").setNamespaceCode("core")
-                .setEnvCode("prod").setAppCode("tianji").setKind("AGENT").setResourceKey("missing")
-                .build()))
-                .isInstanceOf(StatusRuntimeException.class)
-                .satisfies(ex -> assertThat(((StatusRuntimeException) ex).getStatus().getCode())
-                        .isEqualTo(Status.Code.NOT_FOUND));
-
-        // Semantic search delegation
-        when(siResourceService.hybridSearch(any())).thenReturn(List.of(
-                DdcSiSearchHit.builder().resource(descriptor).hybridScore(0.95)
-                        .degradedToFtsOnly(true).rank(1).build()));
-        var searchResp = stub.semanticSearchSiResources(SemanticSearchSiRequest.newBuilder()
-                .setTenantId(TENANT_ID).setEnvCode("prod").setQueryText("order").setTopK(5).build());
-        assertThat(searchResp.getHitsList()).hasSize(1);
-        assertThat(searchResp.getHits(0).getDegradedToFtsOnly()).isTrue();
-
-        // Self-registration conflict -> ABORTED
-        when(siResourceService.registerManaged(any(), eq(false)))
-                .thenThrow(new CommonException(56409, "TIANSHU_SI_CONFLICT", "Owned by console"));
-        assertThatThrownBy(() -> stub.registerManagedSiResource(RegisterManagedSiRequest.newBuilder()
-                .setTenantId(TENANT_ID).setBizCode("ai").setNamespaceCode("core")
-                .setEnvCode("prod").setServiceName("tianji-agent").setKind("AGENT")
-                .setResourceKey("order-agent").setSpecJson("{}").build()))
-                .isInstanceOf(StatusRuntimeException.class)
-                .satisfies(ex -> assertThat(((StatusRuntimeException) ex).getStatus().getCode())
-                        .isEqualTo(Status.Code.ABORTED));
+    @Test
+    void nativeCatalogListUsesMappedTenantAndKeepsOwnerFilterSeparateFromCaller() throws Exception {
+        var resources = mock(DdcSiResourceService.class);
+        when(resources.listCatalog(any())).thenAnswer(invocation -> {
+            top.egon.cola.component.tianshu.model.si.DdcSiCatalogQuery query = invocation.getArgument(0);
+            assertThat(query.getTenantId()).isEqualTo(TENANT_ID);
+            assertThat(query.getAppCode()).isEqualTo("owner-app");
+            assertThat(MDC.get("tenantId")).isEqualTo("1001");
+            assertThat(MDC.get("userId")).isEqualTo("service:runtime-client");
+            return List.of();
+        });
+        try (var fixture = new NativeFixture(resources, servicePrincipal(), true)) {
+            var response = fixture.stub().listSiCatalog(ListSiCatalogRequest.newBuilder().setTenantId(TENANT_ID)
+                    .setBizCode("ai").setNamespaceCode("core").setEnvCode("prod").setAppCode("owner-app")
+                    .setPageNo(1).setPageSize(20).build());
+            assertThat(response.getItemsList()).isEmpty();
+            verify(resources, times(1)).listCatalog(any());
+        }
     }
 
     @Test
@@ -251,10 +238,13 @@ class DdcSiResourceRpcProviderIT {
     void nativeProofWithoutMethodAuthorizationFrameCannotInvokeExecution() throws Exception {
         var resources = mock(DdcSiResourceService.class);
         var principal = servicePrincipal();
-        var identityBeans = new StaticListableBeanFactory(Map.of("idpRpcAdmissionIdentityResolver", new IdpRpcAdmissionIdentityResolver()));
+        var identityBeans = new StaticListableBeanFactory(Map.of("idpRpcAdmissionIdentityResolver", new IdpRpcAdmissionIdentityResolver(),
+                "idpStarterProperties", nativePolicies(false)));
+        var gate = new DdcSiNativeRpcAuthorization(nativePrivileges(false), identityBeans.getBeanProvider(IdpStarterProperties.class),
+                identityBeans.getBeanProvider(IdpRpcAdmissionIdentityResolver.class), tenantRegistry(), Clock.fixed(NATIVE_NOW, ZoneOffset.UTC));
+        var authorityBeans = new StaticListableBeanFactory(Map.of("ddcSiNativeRpcAuthorization", gate));
         var provider = new DdcSiResourceRpcProvider(resources, new DdcSiProtoMapperImpl(),
-                identityBeans.getBeanProvider(IdpRpcAdmissionIdentityResolver.class), tenantRegistry(),
-                new DdcTenantContextExecutor(), Clock.fixed(NATIVE_NOW, ZoneOffset.UTC));
+                authorityBeans.getBeanProvider(DdcSiNativeRpcAuthorization.class), new DdcTenantContextExecutor());
         var prior = SecurityContextHolder.getContext();
         var bare = new IdpAuthenticationToken(principal, List.of(new SimpleGrantedAuthority("SCOPE_si:read")), ISSUER);
         bare.setDetails(proof());
@@ -393,9 +383,11 @@ class DdcSiResourceRpcProviderIT {
                 .setKind("AGENT").setResourceKey("planner").setExactVersionNo(1).setExecutionRequired(true);
     }
 
-    private static ServiceIdentityPrincipal servicePrincipal() {
+    private static ServiceIdentityPrincipal servicePrincipal() { return servicePrincipal(Set.of("si:read")); }
+
+    private static ServiceIdentityPrincipal servicePrincipal(Set<String> scopes) {
         return new ServiceIdentityPrincipal("runtime-client", "90001", "runtime-client", "fixture-jti", RESOURCE,
-                1L, Set.of("si:read"), "ai", "tianji", "prod", "fixture-credential",
+                1L, scopes, "ai", "tianji", "prod", "fixture-credential",
                 NATIVE_NOW.minusSeconds(30), NATIVE_NOW.plusSeconds(300), "runtime-app", ServiceTokenContext.TENANT);
     }
 
@@ -431,24 +423,29 @@ class DdcSiResourceRpcProviderIT {
         private final IdpJwtVerifier verifier = mock(IdpJwtVerifier.class);
         private final Server server;
         private final ManagedChannel channel;
+        private final DdcSiNativeRpcProperties privileges;
 
         private NativeFixture(DdcSiResourceService resources, ServiceIdentityPrincipal principal, boolean configuredAuthority) throws Exception {
+            this(resources, principal, configuredAuthority, false);
+        }
+
+        private NativeFixture(DdcSiResourceService resources, ServiceIdentityPrincipal principal,
+                boolean configuredAuthority, boolean write) throws Exception {
             doAnswer(invocation -> new AccessTokenVerification.Valid<>(principal, principal.scopes(), proof(), ISSUER))
                     .when(verifier).verifyAny("verified-fixture");
-            var policies = new IdpStarterProperties();
-            policies.getRpc().setEnabled(true);
-            policies.getRpc().getProvider().setEnabled(true);
-            policies.getRpc().getProvider().setMethods(Map.of(FULL_RESOLVE, new IdpStarterProperties.RpcProviderMethodProperties()
-                    .setRequired(true).setPrincipalKind(IdpStarterProperties.RpcPrincipalKindEnum.SERVICE)
-                    .setScopeContext(ServiceTokenContext.TENANT).setRequiredScopes(Set.of("si:read")).setExpectedResourceUri(RESOURCE)));
+            var policies = nativePolicies(write);
+            privileges = nativePrivileges(write);
             var interceptor = IdpRpcBearerServerInterceptor.createConfigured(mock(UserAccessTokenVerifier.class), verifier,
                     policies, null, validators.getValidator());
             interceptor.validateConfiguration();
             var identities = new StaticListableBeanFactory(configuredAuthority
-                    ? Map.of("idpRpcAdmissionIdentityResolver", new IdpRpcAdmissionIdentityResolver()) : Map.of());
+                    ? Map.of("idpRpcAdmissionIdentityResolver", new IdpRpcAdmissionIdentityResolver(), "idpStarterProperties", policies)
+                    : Map.of("idpStarterProperties", policies));
+            var gate = new DdcSiNativeRpcAuthorization(privileges, identities.getBeanProvider(IdpStarterProperties.class),
+                    identities.getBeanProvider(IdpRpcAdmissionIdentityResolver.class), tenantRegistry(), Clock.fixed(NATIVE_NOW, ZoneOffset.UTC));
+            var authorityBeans = new StaticListableBeanFactory(Map.of("ddcSiNativeRpcAuthorization", gate));
             var provider = new DdcSiResourceRpcProvider(resources, new DdcSiProtoMapperImpl(),
-                    identities.getBeanProvider(IdpRpcAdmissionIdentityResolver.class), tenantRegistry(),
-                    new DdcTenantContextExecutor(), Clock.fixed(NATIVE_NOW, ZoneOffset.UTC));
+                    authorityBeans.getBeanProvider(DdcSiNativeRpcAuthorization.class), new DdcTenantContextExecutor());
             server = NettyServerBuilder.forPort(0).addService(provider).intercept(interceptor).build().start();
             channel = NettyChannelBuilder.forAddress("127.0.0.1", server.getPort()).usePlaintext().disableRetry()
                     .disableServiceConfigLookUp().build();
@@ -479,40 +476,37 @@ class DdcSiResourceRpcProviderIT {
         }
     }
 
-    @Test
-    void rpcScopeExtractorSupportsAllFourSiMethods() {
-        DdcRpcScopeExtractor extractor = new DdcRpcScopeExtractor();
-        var listScope = extractor.extract(
-                "egon.tianshu.v1.DdcSiResourceGrpcService/ListSiCatalog",
-                ListSiCatalogRequest.newBuilder()
-                        .setTenantId(TENANT_ID).setBizCode("ai").setNamespaceCode("core")
-                        .setEnvCode("prod").setAppCode("tianji").build());
-        assertThat(listScope.clientType()).isEqualTo("SDK");
-        assertThat(listScope.namespaceCode()).isEqualTo("core");
-
-        var regScope = extractor.extract(
-                "egon.tianshu.v1.DdcSiResourceGrpcService/RegisterManagedSiResource",
-                RegisterManagedSiRequest.newBuilder()
-                        .setTenantId(TENANT_ID).setBizCode("ai").setNamespaceCode("core")
-                        .setEnvCode("prod").setServiceName("tianji-agent").build());
-        assertThat(regScope.clientType()).isEqualTo("SDK");
-        assertThat(regScope.appCode()).isEqualTo("tianji-agent");
+    private static RegisterManagedSiRequest registration(String owner, String namespace) {
+        return RegisterManagedSiRequest.newBuilder().setTenantId(TENANT_ID).setBizCode("ai").setNamespaceCode(namespace)
+                .setEnvCode("prod").setServiceName(owner).setInstanceId("pod-a").setKind("AGENT").setResourceKey("order-agent")
+                .setDisplayName("Order Agent").setSpecJson("{}").build();
     }
 
-    private DdcServicePrincipal principal(long tenantId) {
-        return new DdcServicePrincipal(
-                "cred-si-test",
-                "SDK",
-                Set.of("*"),
-                Set.of("*"),
-                Set.of("*"),
-                Set.of("AI_READ", "AI_WRITE"),
-                "tianji",
-                "prod",
-                "ai",
-                tenantId,
-                "tenant-" + tenantId,
-                Set.of("*")
-        );
+    private static IdpStarterProperties nativePolicies(boolean write) {
+        var policies = new IdpStarterProperties();
+        policies.getRpc().setEnabled(true);
+        policies.getRpc().getProvider().setEnabled(true);
+        var methods = new LinkedHashMap<String, IdpStarterProperties.RpcProviderMethodProperties>();
+        for (String method : List.of(DdcSiNativeRpcAuthorization.LIST, DdcSiNativeRpcAuthorization.RESOLVE,
+                DdcSiNativeRpcAuthorization.SEARCH)) methods.put(method, nativePolicy("si:read"));
+        if (write) methods.put(DdcSiNativeRpcAuthorization.REGISTER, nativePolicy("si:write"));
+        policies.getRpc().getProvider().setMethods(methods);
+        return policies;
+    }
+
+    private static IdpStarterProperties.RpcProviderMethodProperties nativePolicy(String scope) {
+        return new IdpStarterProperties.RpcProviderMethodProperties().setRequired(true)
+                .setPrincipalKind(IdpStarterProperties.RpcPrincipalKindEnum.SERVICE).setScopeContext(ServiceTokenContext.TENANT)
+                .setRequiredScopes(Set.of(scope)).setExpectedResourceUri(RESOURCE);
+    }
+
+    private static DdcSiNativeRpcProperties nativePrivileges(boolean write) {
+        var methods = new LinkedHashMap<String, Set<String>>();
+        for (String method : List.of(DdcSiNativeRpcAuthorization.LIST, DdcSiNativeRpcAuthorization.RESOLVE,
+                DdcSiNativeRpcAuthorization.SEARCH)) methods.put(method, Set.of("core"));
+        if (write) methods.put(DdcSiNativeRpcAuthorization.REGISTER, Set.of("core"));
+        return new DdcSiNativeRpcProperties().setBindings(new ArrayList<>(List.of(new DdcSiNativeRpcProperties.BindingDTO()
+                .setIssuer(ISSUER).setResourceUri(RESOURCE).setIdentityTenantId("90001").setClientId("runtime-client")
+                .setSourceBizCode("ai").setSourceAppCode("tianji").setSourceEnvironment("prod").setMethods(methods))));
     }
 }

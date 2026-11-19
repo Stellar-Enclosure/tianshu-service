@@ -803,6 +803,15 @@ public class DdcAiResourceServiceImpl implements DdcAiResourceService {
             return systemActor.get();
         }
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication != null && authentication.getPrincipal()
+                instanceof top.egon.cola.platform.tianquan.shoubing.contract.ServiceIdentityPrincipal) {
+            try {
+                return top.egon.cola.component.tianshu.admin.security.ai.DdcAiServiceCallerResolver.current(
+                        top.egon.cola.component.tianshu.api.ai.DdcAiHttpContract.Operation.PUBLISH).tenant().actor();
+            } catch (top.egon.cola.component.tianshu.admin.security.ai.DdcAiServiceCallerResolver.Rejected denied) {
+                throw scopeForbidden();
+            }
+        }
         if (authentication == null || !(authentication.getPrincipal() instanceof Rbac3UserDetails user)
                 || user.identitySub() == null || user.identitySub().isBlank()) {
             throw scopeForbidden();

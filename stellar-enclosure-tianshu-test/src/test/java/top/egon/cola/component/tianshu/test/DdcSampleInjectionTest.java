@@ -1,62 +1,51 @@
 package top.egon.cola.component.tianshu.test;
 
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import top.egon.cola.component.common.id.snowflake.SnowflakeIdGenerator;
-import top.egon.cola.component.tianshu.api.client.DdcConfigClient;
-import top.egon.cola.component.tianshu.service.lifecycle.DdcRuntimeCoordinator;
-import top.egon.cola.component.tianshu.test.service.SampleConfigService;
-import top.egon.cola.component.rpc.tianshu.client.config.RpcDdcConfigClient;
-import java.time.Duration;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE, properties = {
-        "egon.cola.component.tianshu.enabled=true",
-        "egon.cola.component.tianshu.tenant-id=1001",
-        "egon.cola.component.mybatis-plus.enabled=false",
-        "egon.cola.component.cache.enabled=false",
-        "egon.cola.component.transactional-outbox.enabled=false",
-        "egon.cola.component.dtp.enabled=false",
-        "egon.cola.component.tianshu.app-code=demo-app",
-        "egon.cola.component.tianshu.env=dev",
-        "egon.cola.component.tianshu.namespace=default",
-        "egon.cola.component.tianshu.rpc.target=dns:///127.0.0.1:19080",
-        "egon.cola.component.tianshu.rpc.tls.development-plaintext=true",
-        "egon.cola.component.tianshu.rpc.auth.runtime.access-key=test",
-        "egon.cola.component.tianshu.rpc.auth.runtime.secret-key=test",
-        "egon.cola.component.tianshu.redis.enabled=false",
-        "egon.cola.component.tianshu.consistency.fail-fast=false",
-        "spring.autoconfigure.exclude=top.egon.cola.component.common.mybatis.autoconfigure.EgonColaShardingAutoConfiguration,"
-                + "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,"
-                + "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration,"
-                + "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration,"
-                + "org.redisson.spring.starter.RedissonAutoConfigurationV4"
-})
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import top.egon.cola.component.tianshu.autoconfigure.DdcAutoConfiguration;
+import top.egon.cola.component.tianshu.test.service.SampleConfigService;
+
 class DdcSampleInjectionTest {
-
-    @BeforeAll
-    static void bindTheProcessWideEngine() {
-        SnowflakeIdGenerator.initialize(0L, Duration.ofMillis(5));
-    }
-
-    @Autowired
-    private SampleConfigService sampleConfigService;
-
-    @Autowired
-    private ObjectProvider<DdcRuntimeCoordinator> runtimeCoordinator;
-
-    @Autowired
-    private DdcConfigClient configClient;
+    private final ApplicationContextRunner runner =
+        new ApplicationContextRunner()
+            .withConfiguration(AutoConfigurations.of(DdcAutoConfiguration.class))
+            .withBean("sampleConfigService", SampleConfigService.class, SampleConfigService::new);
 
     @Test
-    void offlineModeKeepsAnnotationDefaultsWithoutRegisteringOrPulling() {
-        assertThat(runtimeCoordinator.getIfAvailable()).isNull();
-        assertThat(configClient).isInstanceOf(RpcDdcConfigClient.class);
-        assertThat(sampleConfigService.getDowngradeSwitch()).isFalse();
-        assertThat(sampleConfigService.getRateLimit()).isEqualTo(100);
+    void localModeUsesRealSpringAnnotationDefaultsWithoutAnyTransport() {
+        runner.withPropertyValues("egon.cola.component.tianshu.enabled=false").run(context -> {
+            assertThat(context)
+                .hasNotFailed()
+                .doesNotHaveBean("ddcConfigSnapshotCoordinator")
+                .doesNotHaveBean("ddcConfigSnapshotHttpClient")
+                .doesNotHaveBean("ddcConfigClient")
+                .doesNotHaveBean("ddcRuntimeCoordinator")
+                .doesNotHaveBean("ddcRedissonClient");
+            assertThat(context.getBean(SampleConfigService.class).getDowngradeSwitch()).isFalse();
+            assertThat(context.getBean(SampleConfigService.class).getRateLimit()).isEqualTo(100);
+        });
+    }
+
+    @Test
+    void explicitLocalValuesStillUseTheRealComposedValueAnnotation() {
+        runner
+            .withPropertyValues("egon.cola.component.tianshu.enabled=false", "downgrade-switch=true",
+                "order.rate-limit.permits-per-second=175")
+            .run(context -> {
+                assertThat(context).hasNotFailed();
+                assertThat(context.getBean(SampleConfigService.class).getDowngradeSwitch()).isTrue();
+                assertThat(context.getBean(SampleConfigService.class).getRateLimit()).isEqualTo(175);
+            });
+    }
+
+    @Test
+    void enablingTheSdkCannotSilentlyFallBackToOfflineDefaultsWithoutNativeDelivery() {
+        runner.withPropertyValues("egon.cola.component.tianshu.enabled=true").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure()).hasMessageContaining("CONFIG_NATIVE_DELIVERY_REQUIRED");
+        });
     }
 }

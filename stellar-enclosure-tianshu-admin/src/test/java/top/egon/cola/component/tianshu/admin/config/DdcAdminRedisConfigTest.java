@@ -28,7 +28,8 @@ class DdcAdminRedisConfigTest {
                             .doesNotHaveBean("ddcServiceRegistryService")
                             .doesNotHaveBean("ddcNotificationPublisher")
                             .doesNotHaveBean("ddcRegistryEventDeliveryHandler")
-                            .doesNotHaveBean("ddcRegistrationCredentialVerifier");
+                            .doesNotHaveBean("ddcRegistrationCredentialVerifier")
+                            .doesNotHaveBean("ddcNonceStore");
                 });
     }
 

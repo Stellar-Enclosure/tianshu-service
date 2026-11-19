@@ -6,7 +6,9 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirementEntry;
 import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.core.io.ClassPathResource;
+import top.egon.cola.component.tianshu.admin.internal.controller.DdcAiInternalController;
 import top.egon.cola.component.tianshu.admin.internal.controller.DdcConfigDeliveryController;
+import top.egon.cola.component.tianshu.api.ai.DdcAiHttpContract;
 import top.egon.cola.component.tianshu.model.config.DdcConfigReceiptCommand;
 import top.egon.cola.component.tianshu.model.config.DdcConfigSnapshotDTO;
 import org.junit.jupiter.api.Test;
@@ -18,6 +20,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.method.HandlerMethod;
 import top.egon.cola.component.yuheng.openapi.annotation.EgonApiCatalog;
+import top.egon.cola.component.yuheng.openapi.annotation.EgonGatewayPolicy;
 import top.egon.cola.component.yuheng.openapi.config.GatewayOpenApiProperties;
 import top.egon.cola.component.yuheng.openapi.customizer.EgonOperationCustomizer;
 
@@ -62,6 +65,32 @@ class DdcPublishedOpenApiContractTest {
             }
         }
         assertThat(operations).isGreaterThan(20);
+    }
+
+    @Test
+    void internalAiOperationsAreOutsideThePublishedTianshuGroup() {
+        Class<DdcAiInternalController> controller = DdcAiInternalController.class;
+        assertThat(controller.getAnnotation(EgonApiCatalog.class)).isNull();
+
+        var scanner = new ClassPathScanningCandidateComponentProvider(false);
+        scanner.addIncludeFilter(new AnnotationTypeFilter(RestController.class));
+        assertThat(scanner.findCandidateComponents("top.egon.cola.component.tianshu.admin.controller"))
+                .noneMatch(bean -> controller.getName().equals(bean.getBeanClassName()));
+
+        var methods = Arrays.stream(controller.getDeclaredMethods())
+                .filter(method -> AnnotatedElementUtils.hasAnnotation(method, RequestMapping.class))
+                .toList();
+        assertThat(methods).hasSize(6).allSatisfy(method -> {
+            assertThat(method.getAnnotation(EgonGatewayPolicy.class)).isNotNull();
+            assertThat(method.getAnnotation(EgonGatewayPolicy.class).exposure())
+                    .isEqualTo(EgonGatewayPolicy.Exposure.INTERNAL);
+            assertThat(method.getAnnotation(Operation.class)).isNotNull();
+        });
+        assertThat(methods).flatExtracting(method -> Arrays.asList(
+                        AnnotatedElementUtils.findMergedAnnotation(method, RequestMapping.class).path()))
+                .containsExactlyInAnyOrder(DdcAiHttpContract.PROMPTS_PATH, DdcAiHttpContract.SKILLS_PATH,
+                        DdcAiHttpContract.VERSION_HEAD_PATH, DdcAiHttpContract.SKILL_DRAFT_PATH,
+                        DdcAiHttpContract.SKILL_PUBLICATIONS_PATH, DdcAiHttpContract.USAGE_REPORTS_PATH);
     }
 
     @Test

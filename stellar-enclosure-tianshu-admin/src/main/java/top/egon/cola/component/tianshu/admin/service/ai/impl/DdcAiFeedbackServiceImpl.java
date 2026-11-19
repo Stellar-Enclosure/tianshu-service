@@ -30,7 +30,6 @@ import top.egon.cola.component.tianshu.admin.model.vo.DdcPageResult;
 import top.egon.cola.component.tianshu.admin.repository.DdcAiResourceRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcAiUsageFeedbackRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcAiVersionRepository;
-import top.egon.cola.component.tianshu.admin.security.rpc.DdcServicePrincipal;
 import top.egon.cola.component.tianshu.admin.service.ai.DdcAiFeedbackService;
 import top.egon.cola.component.tianshu.admin.service.ai.validation.DdcAiScopeValidator;
 import top.egon.cola.component.tianshu.model.ai.DdcAiUsageReportStatusEnum;
@@ -94,7 +93,7 @@ public class DdcAiFeedbackServiceImpl implements DdcAiFeedbackService {
 
     @Override
     public DdcAiUsageReportReceiptResult accept(DdcAiUsageReportBatchCommand command) {
-        DdcServicePrincipal principal = currentPrincipal();
+        ReportActorVO principal = currentPrincipal();
         Instant now = clock.instant();
         List<DdcAiUsageReportReceiptResult.ItemResult> items = new ArrayList<>(command.getReports().size());
         for (DdcAiUsageReportCommand report : command.getReports()) {
@@ -103,7 +102,7 @@ public class DdcAiFeedbackServiceImpl implements DdcAiFeedbackService {
         return DdcAiUsageReportReceiptResult.builder().items(items).build();
     }
 
-    private DdcAiUsageReportReceiptResult.ItemResult acceptOne(DdcServicePrincipal principal,
+    private DdcAiUsageReportReceiptResult.ItemResult acceptOne(ReportActorVO principal,
             DdcAiUsageReportCommand report, Instant now) {
         String usageId = report.getUsageId();
         if (!validationUtils.isValid(report) || containsNul(report.getInputExcerpt())
@@ -118,16 +117,19 @@ public class DdcAiFeedbackServiceImpl implements DdcAiFeedbackService {
             DdcAiUsageReportReceiptResult.ItemResult result = commandTransactionTemplate.execute(
                     status -> insertReport(principal, report));
             return Objects.requireNonNull(result, "AI_USAGE_REPORT_RESULT_MISSING");
-        } catch (DataIntegrityViolationException duplicate) {
+        } catch (DataIntegrityViolationException failure) {
+            if (!usageDuplicate(failure)) throw failure;
             return item(usageId, DdcAiUsageReportStatusEnum.ACCEPTED_DUPLICATE, null);
         } catch (CommonException | ConstraintViolationException rejected) {
+            if (rejected instanceof CommonException common && (common.getCode() == 56310
+                    || common.getCode() == 56313 || common.getCode() == 56322)) throw common;
             log.debug("AI usage report rejected usageId={} failureType={}", usageId,
                     rejected.getClass().getSimpleName());
             return rejected(usageId, REASON_RESOURCE_NOT_FOUND);
         }
     }
 
-    private DdcAiUsageReportReceiptResult.ItemResult insertReport(DdcServicePrincipal principal,
+    private DdcAiUsageReportReceiptResult.ItemResult insertReport(ReportActorVO principal,
             DdcAiUsageReportCommand report) {
         Optional<DdcAiResourceBO> resource = resourceRepository.findActiveById(report.getResourceId())
                 .filter(row -> report.getResourceKey().equals(row.getResourceKey()))
@@ -147,9 +149,9 @@ public class DdcAiFeedbackServiceImpl implements DdcAiFeedbackService {
                 .versionId(report.getVersionId())
                 .usageId(report.getUsageId())
                 .reporterCredentialId(principal.credentialId())
-                .bizCode(principal.bizCode() != null ? principal.bizCode() : resource.get().getBizCode())
-                .envCode(principal.env() != null ? principal.env() : resource.get().getEnvCode())
-                .appCode(principal.appCode() != null ? principal.appCode() : resource.get().getAppCode())
+                .bizCode(principal.bizCode())
+                .envCode(principal.env())
+                .appCode(principal.appCode())
                 .outcome(enumConverter.toPersistenceOutcome(report.getOutcome()))
                 .explicitScore(report.getExplicitScore() == null ? null : report.getExplicitScore().shortValue())
                 .judgeState(report.getExplicitScore() != null
@@ -238,14 +240,31 @@ public class DdcAiFeedbackServiceImpl implements DdcAiFeedbackService {
         return deleted == null ? 0 : deleted;
     }
 
-    private static DdcServicePrincipal currentPrincipal() {
-        try {
-            return DdcServicePrincipal.current();
-        } catch (IllegalStateException missingPrincipal) {
-            throw new CommonException(56307, "TIANSHU_AI_SCOPE_FORBIDDEN",
-                    "AI permission is required for the requested namespace");
+    private static ReportActorVO currentPrincipal() {
+        var authentication = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        if (authentication != null && authentication.getPrincipal()
+                instanceof top.egon.cola.platform.tianquan.shoubing.contract.ServiceIdentityPrincipal) {
+            var caller = top.egon.cola.component.tianshu.admin.security.ai.DdcAiServiceCallerResolver.current(
+                    top.egon.cola.component.tianshu.api.ai.DdcAiHttpContract.Operation.REPORT);
+            return new ReportActorVO(caller.stableActorId(), caller.sourceBizCode(), caller.sourceEnvironment(), caller.sourceAppCode());
         }
+        throw new CommonException(56307, "TIANSHU_AI_SCOPE_FORBIDDEN",
+                "AI permission is required for the requested namespace");
     }
+
+    private static boolean usageDuplicate(DataIntegrityViolationException failure) {
+        Set<Throwable> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        for (Throwable cause = failure; cause != null && seen.add(cause); cause = cause.getCause()) {
+            if (cause instanceof org.postgresql.util.PSQLException postgres && "23505".equals(postgres.getSQLState())
+                    && postgres.getServerErrorMessage() != null
+                    && "uk_ai_usage_feedback_usage".equals(postgres.getServerErrorMessage().getConstraint())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private record ReportActorVO(String credentialId, String bizCode, String env, String appCode) { }
 
     private static boolean containsNul(String value) {
         return value != null && value.indexOf('\u0000') >= 0;

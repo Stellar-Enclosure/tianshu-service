@@ -1,5 +1,6 @@
 package top.egon.cola.component.tianshu.admin.rpc.provider;
 
+import com.google.protobuf.Message;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
@@ -11,8 +12,8 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.support.StaticListableBeanFactory;
 import org.springframework.dao.TransientDataAccessException;
 import org.springframework.security.authentication.AuthenticationServiceException;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
+import org.springframework.lang.Nullable;
 import top.egon.cola.component.common.core.exception.CommonException;
 import top.egon.cola.component.rpc.annotation.EgonRpcProvider;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.DdcSiResourceGrpcServiceGrpc;
@@ -26,19 +27,15 @@ import top.egon.cola.component.rpc.tianshu.contract.proto.v1.SemanticSearchSiReq
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.SemanticSearchSiResponse;
 import top.egon.cola.component.rpc.tianshu.mapping.DdcSiProtoMapper;
 import top.egon.cola.component.tianshu.admin.security.rpc.DdcSiRpcErrorMapper;
-import top.egon.cola.component.tianshu.admin.security.rpc.DdcServicePrincipal;
+import top.egon.cola.component.tianshu.admin.security.rpc.DdcSiNativeRpcAuthorization;
 import top.egon.cola.component.tianshu.admin.service.si.DdcSiResourceService;
 import top.egon.cola.component.tianshu.model.si.DdcSiKindEnum;
 import top.egon.cola.component.tianshu.model.si.DdcSiResourceDescriptor;
 import top.egon.cola.component.tianshu.model.si.DdcSiSearchHit;
 import top.egon.cola.component.tianshu.model.si.DdcSiSelfRegistrationRequest;
 import top.egon.cola.component.tianshu.model.si.DdcSiSemanticSearchQuery;
-import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextDTO;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextExecutor;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantRegistry;
-import top.egon.cola.platform.tianquan.shoubing.contract.ServiceIdentityPrincipal;
-import top.egon.cola.platform.tianquan.shoubing.contract.ServiceTokenContext;
-import top.egon.cola.platform.tianquan.shoubing.starter.security.IdpAuthenticationToken;
 import top.egon.cola.platform.tianquan.shoubing.starter.security.rpc.IdpRpcAdmissionIdentityResolver;
 import top.egon.cola.platform.tianquan.shoubing.starter.security.rpc.IdpRpcSecurityContext;
 
@@ -61,22 +58,24 @@ public class DdcSiResourceRpcProvider
     @Qualifier("ddcSiProtoMapperImpl")
     private final DdcSiProtoMapper protoMapper;
 
-    @Qualifier("idpRpcAdmissionIdentityResolver")
-    private final ObjectProvider<IdpRpcAdmissionIdentityResolver> methodIdentities;
-
-    @Qualifier("ddcTenantRegistry")
-    private final DdcTenantRegistry tenants;
+    @Qualifier("ddcSiNativeRpcAuthorization")
+    private final ObjectProvider<DdcSiNativeRpcAuthorization> authorizations;
 
     @Qualifier("ddcTenantContextExecutor")
     private final DdcTenantContextExecutor tenantContexts;
 
-    @Qualifier("ddcPublishClock")
-    private final Clock clock;
-
-    /** Metadata-only source compatibility; no verified execution authority is fabricated. */
+    /** Source compatibility does not fabricate deployment-approved native authority. */
     public DdcSiResourceRpcProvider(DdcSiResourceService resourceService, DdcSiProtoMapper protoMapper) {
-        this(resourceService, protoMapper, new StaticListableBeanFactory().getBeanProvider(IdpRpcAdmissionIdentityResolver.class),
-                null, new DdcTenantContextExecutor(), Clock.systemUTC());
+        this(resourceService, protoMapper,
+                new StaticListableBeanFactory().getBeanProvider(DdcSiNativeRpcAuthorization.class), new DdcTenantContextExecutor());
+    }
+
+    /** The former execution fixture constructor remains source-compatible but grants no namespaces. */
+    public DdcSiResourceRpcProvider(DdcSiResourceService resourceService, DdcSiProtoMapper protoMapper,
+            ObjectProvider<IdpRpcAdmissionIdentityResolver> methodIdentities, DdcTenantRegistry tenants,
+            DdcTenantContextExecutor tenantContexts, Clock clock) {
+        this(resourceService, protoMapper,
+                new StaticListableBeanFactory().getBeanProvider(DdcSiNativeRpcAuthorization.class), tenantContexts);
     }
 
     @Override
@@ -89,12 +88,15 @@ public class DdcSiResourceRpcProvider
     @Override
     public ListSiCatalogResponse listSiCatalog(ListSiCatalogRequest request) {
         return invoke("ListSiCatalog", () -> {
-            assertAuthorizedTenant(request.getTenantId());
-            List<DdcSiResourceDescriptor> descriptors = resourceService.listCatalog(protoMapper.fromProto(request));
-            ListSiCatalogResponse.Builder builder = ListSiCatalogResponse.newBuilder()
-                    .setTotal(descriptors.size());
-            descriptors.forEach(item -> builder.addItems(protoMapper.toProto(item)));
-            return builder.build();
+            if (request == null) throw invalidExecutionRequest();
+            var caller = authorize(DdcSiNativeRpcAuthorization.LIST, request, request.getTenantId(),
+                    request.getBizCode(), request.getNamespaceCode(), request.getEnvCode(), null);
+            return tenantContexts.call(caller.tenant(), () -> {
+                List<DdcSiResourceDescriptor> descriptors = resourceService.listCatalog(protoMapper.fromProto(request));
+                ListSiCatalogResponse.Builder builder = ListSiCatalogResponse.newBuilder().setTotal(descriptors.size());
+                descriptors.forEach(item -> builder.addItems(protoMapper.toProto(item)));
+                return builder.build();
+            });
         });
     }
 
@@ -113,25 +115,18 @@ public class DdcSiResourceRpcProvider
             if (request.hasOwnerAppCode() || !request.getCallerAppCode().isEmpty() || request.hasExactVersionNo()) {
                 throw invalidExecutionRequest();
             }
-            long tenantId = assertAuthorizedTenant(request.getTenantId());
-            DdcSiKindEnum kind = DdcSiKindEnum.valueOf(request.getKind().trim().toUpperCase());
-            Integer pinnedVersion = request.getPinnedVersionNo() > 0 ? request.getPinnedVersionNo() : null;
-            Optional<DdcSiResourceDescriptor> resolved = resourceService.resolveResource(
-                    tenantId,
-                    request.getBizCode(),
-                    request.getNamespaceCode(),
-                    request.getEnvCode(),
-                    request.getAppCode(),
-                    null,
-                    kind,
-                    request.getResourceKey(),
-                    pinnedVersion
-            );
-            DdcSiResourceDescriptor descriptor = resolved.orElseThrow(() ->
-                    new CommonException(56404, "TIANSHU_SI_NOT_FOUND", "SI resource not found: " + request.getResourceKey()));
-            return ResolveSiResourceResponse.newBuilder()
-                    .setResource(protoMapper.toProto(descriptor))
-                    .build();
+            var caller = authorize(DdcSiNativeRpcAuthorization.RESOLVE, request, request.getTenantId(),
+                    request.getBizCode(), request.getNamespaceCode(), request.getEnvCode(), null);
+            return tenantContexts.call(caller.tenant(), () -> {
+                DdcSiKindEnum kind = DdcSiKindEnum.valueOf(request.getKind().trim().toUpperCase(java.util.Locale.ROOT));
+                Integer pinnedVersion = request.getPinnedVersionNo() > 0 ? request.getPinnedVersionNo() : null;
+                Optional<DdcSiResourceDescriptor> resolved = resourceService.resolveResource(caller.tenant().tenantId(),
+                        request.getBizCode(), request.getNamespaceCode(), request.getEnvCode(), request.getAppCode(),
+                        null, kind, request.getResourceKey(), pinnedVersion);
+                DdcSiResourceDescriptor descriptor = resolved.orElseThrow(() ->
+                        new CommonException(56404, "TIANSHU_SI_NOT_FOUND", "SI resource is unavailable"));
+                return ResolveSiResourceResponse.newBuilder().setResource(protoMapper.toProto(descriptor)).build();
+            });
         });
     }
 
@@ -159,42 +154,21 @@ public class DdcSiResourceRpcProvider
         });
     }
 
-    private ExecutionCallerVO requireExecutionCaller(ResolveSiResourceRequest request) {
-        var principal = IdpRpcSecurityContext.currentPrincipalOrNull();
-        var authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (principal == null || !(authentication instanceof IdpAuthenticationToken accepted)
-                || !accepted.isAuthenticated() || accepted.getPrincipal() != principal) {
-            throw unauthenticated();
-        }
-        if (!(principal instanceof ServiceIdentityPrincipal service) || service.scopeContext() != ServiceTokenContext.TENANT) {
-            throw forbidden();
-        }
-        var proof = IdpRpcSecurityContext.currentProofOrNull();
-        if (proof == null || !proof.equals(accepted.getDetails()) || !service.expiresAt().isAfter(clock.instant())) {
-            throw unauthenticated();
-        }
-        try {
-            if (!proof.issuer().equals(accepted.verifiedIssuer()) || !proof.resource().equals(service.resourceUri())) {
-                throw forbidden();
-            }
-        } catch (IllegalStateException missingIssuer) { throw unauthenticated(); }
-        if (!request.getCallerAppCode().equals(service.sourceAppCode())
-                || !request.getBizCode().equals(service.sourceBizCode())
-                || !request.getEnvCode().equals(service.sourceEnvironment())) { throw forbidden(); }
-        final IdpRpcAdmissionIdentityResolver methodIdentity;
-        try { methodIdentity = methodIdentities.getIfAvailable(); }
+    private DdcSiNativeRpcAuthorization.AuthorizedCallerVO requireExecutionCaller(ResolveSiResourceRequest request) {
+        var caller = authorize(DdcSiNativeRpcAuthorization.RESOLVE, request, request.getTenantId(),
+                request.getBizCode(), request.getNamespaceCode(), request.getEnvCode(), null);
+        if (!request.getCallerAppCode().equals(caller.callerAppCode())) throw forbidden();
+        return caller;
+    }
+
+    private DdcSiNativeRpcAuthorization.AuthorizedCallerVO authorize(String method, Message request, long tenant,
+            String biz, String namespace, String env, @Nullable String registrationOwner) {
+        if (IdpRpcSecurityContext.currentPrincipalOrNull() == null) throw unauthenticated();
+        final DdcSiNativeRpcAuthorization authorization;
+        try { authorization = authorizations.getIfAvailable(); }
         catch (RuntimeException unavailable) { throw authorityUnavailable(); }
-        if (methodIdentity == null || tenants == null) { throw authorityUnavailable(); }
-        // Read-only method proof; the native server's admission interceptor remains the sole quota owner.
-        var method = methodIdentity.resolve(DdcSiResourceGrpcServiceGrpc.getResolveSiResourceMethod().getFullMethodName(), request);
-        if (!Long.toString(method.tenantId()).equals(service.tenantId()) || !method.clientId().equals(service.clientId())
-                || !method.resource().equals(service.resourceUri().toASCIIString())) { throw forbidden(); }
-        final top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantBindingDTO tenant;
-        try { tenant = tenants.requireByIdentityTenantId(service.tenantId()); }
-        catch (IllegalArgumentException unregistered) { throw forbidden(); }
-        if (request.getTenantId() <= 0 || !tenant.getTenantId().equals(request.getTenantId())) { throw forbidden(); }
-        return new ExecutionCallerVO(new DdcTenantContextDTO(tenant.getTenantId(), tenant.getIdentityTenantId(),
-                "service:" + service.clientId()), service.sourceAppCode());
+        if (authorization == null) throw authorityUnavailable();
+        return authorization.authorize(method, request, tenant, biz, namespace, env, registrationOwner);
     }
 
     private static void requireCoordinate(String value) {
@@ -217,7 +191,6 @@ public class DdcSiResourceRpcProvider
     private static StatusRuntimeException authorityUnavailable() {
         return DdcSiRpcErrorMapper.status(Status.UNAVAILABLE, "TIANSHU_SI_AUTHORITY_UNAVAILABLE", true);
     }
-    private record ExecutionCallerVO(DdcTenantContextDTO tenant, String callerAppCode) { }
 
     @Override
     public void semanticSearchSiResources(
@@ -229,12 +202,16 @@ public class DdcSiResourceRpcProvider
     @Override
     public SemanticSearchSiResponse semanticSearchSiResources(SemanticSearchSiRequest request) {
         return invoke("SemanticSearchSiResources", () -> {
-            assertAuthorizedTenant(request.getTenantId());
-            DdcSiSemanticSearchQuery query = protoMapper.fromProto(request);
-            List<DdcSiSearchHit> hits = resourceService.hybridSearch(query);
-            SemanticSearchSiResponse.Builder builder = SemanticSearchSiResponse.newBuilder();
-            hits.forEach(hit -> builder.addHits(protoMapper.toProto(hit)));
-            return builder.build();
+            if (request == null) throw invalidExecutionRequest();
+            var caller = authorize(DdcSiNativeRpcAuthorization.SEARCH, request, request.getTenantId(),
+                    request.getBizCode(), request.getNamespaceCode(), request.getEnvCode(), null);
+            return tenantContexts.call(caller.tenant(), () -> {
+                DdcSiSemanticSearchQuery query = protoMapper.fromProto(request);
+                List<DdcSiSearchHit> hits = resourceService.hybridSearch(query);
+                SemanticSearchSiResponse.Builder builder = SemanticSearchSiResponse.newBuilder();
+                hits.forEach(hit -> builder.addHits(protoMapper.toProto(hit)));
+                return builder.build();
+            });
         });
     }
 
@@ -248,28 +225,15 @@ public class DdcSiResourceRpcProvider
     @Override
     public RegisterManagedSiResponse registerManagedSiResource(RegisterManagedSiRequest request) {
         return invoke("RegisterManagedSiResource", () -> {
-            assertAuthorizedTenant(request.getTenantId());
-            DdcSiSelfRegistrationRequest domainReq = protoMapper.fromProto(request);
-            DdcSiResourceDescriptor descriptor = resourceService.registerManaged(domainReq, false);
-            return RegisterManagedSiResponse.newBuilder()
-                    .setResource(protoMapper.toProto(descriptor))
-                    .build();
+            if (request == null) throw invalidExecutionRequest();
+            var caller = authorize(DdcSiNativeRpcAuthorization.REGISTER, request, request.getTenantId(),
+                    request.getBizCode(), request.getNamespaceCode(), request.getEnvCode(), request.getServiceName());
+            return tenantContexts.call(caller.tenant(), () -> {
+                DdcSiSelfRegistrationRequest domainReq = protoMapper.fromProto(request);
+                DdcSiResourceDescriptor descriptor = resourceService.registerManaged(domainReq, false);
+                return RegisterManagedSiResponse.newBuilder().setResource(protoMapper.toProto(descriptor)).build();
+            });
         });
-    }
-
-    private long assertAuthorizedTenant(long declaredTenantId) {
-        DdcServicePrincipal principal;
-        try {
-            principal = DdcServicePrincipal.current();
-        } catch (IllegalStateException missingPrincipal) {
-            throw new CommonException(56403, "TIANSHU_SI_FORBIDDEN", "Authenticated service principal is required");
-        }
-        if (declaredTenantId <= 0 || !principal.tenantId().equals(declaredTenantId)) {
-            log.warn("Rejected cross-tenant SI RPC principalTenant={} declaredTenant={}",
-                    principal.tenantId(), declaredTenantId);
-            throw new CommonException(56403, "TIANSHU_SI_FORBIDDEN", "Cross-tenant SI RPC access is denied");
-        }
-        return principal.tenantId();
     }
 
     private <T> void respondUnary(String method, StreamObserver<T> observer, Invocation<T> invocation) {
@@ -280,7 +244,7 @@ public class DdcSiResourceRpcProvider
         } catch (StatusRuntimeException sre) {
             observer.onError(sre);
         } catch (RuntimeException failure) {
-            log.error("Unhandled SI RPC failure method={}", method, failure);
+            log.error("Unhandled SI RPC failure method={} failureType={}", method, failure.getClass().getSimpleName());
             observer.onError(DdcSiRpcErrorMapper.status(
                     Status.INTERNAL, "TIANSHU_SI_INTERNAL_ERROR", false));
         }
@@ -297,13 +261,13 @@ public class DdcSiResourceRpcProvider
             throw DdcSiRpcErrorMapper.status(
                     Status.INVALID_ARGUMENT, "TIANSHU_SI_VALIDATION_ERROR", false);
         } catch (TransientDataAccessException failure) {
-            log.warn("SI RPC temporarily unavailable method={}", method, failure);
+            log.warn("SI RPC temporarily unavailable method={} failureType={}", method, failure.getClass().getSimpleName());
             throw DdcSiRpcErrorMapper.status(
                     Status.UNAVAILABLE, "TIANSHU_SERVICE_UNAVAILABLE", true);
         } catch (AuthenticationServiceException failure) {
             throw authorityUnavailable();
         } catch (RuntimeException failure) {
-            log.error("Tianshu SI RPC failed method={}", method, failure);
+            log.error("Tianshu SI RPC failed method={} failureType={}", method, failure.getClass().getSimpleName());
             throw DdcSiRpcErrorMapper.status(
                     Status.INTERNAL, "TIANSHU_SI_INTERNAL_ERROR", false);
         }

@@ -1,6 +1,5 @@
 package top.egon.cola.component.tianshu.admin.service.ai;
 
-import io.grpc.Context;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -15,7 +14,8 @@ import top.egon.cola.component.tianshu.admin.model.bo.DdcNamespaceEnvAppBindingB
 import top.egon.cola.component.tianshu.admin.repository.DdcAiResourceRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcNamespaceEnvAppBindingRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcNamespaceRepository;
-import top.egon.cola.component.tianshu.admin.security.rpc.DdcServicePrincipal;
+import top.egon.cola.component.tianshu.admin.security.ai.DdcAiServiceCallerTestFixture;
+import top.egon.cola.component.tianshu.api.ai.DdcAiHttpContract.Operation;
 import top.egon.cola.component.tianshu.admin.service.ai.validation.DdcAiScopeValidator;
 import top.egon.cola.component.tianshu.admin.service.ai.validation.DdcAiSystemActor;
 import top.egon.cola.component.tianshu.admin.service.metadata.DdcScopeGate;
@@ -66,30 +66,30 @@ class DdcAiScopeValidatorAuthorityTest {
 
     @ParameterizedTest
     @CsvSource({
-            "READ,AI_READ,true", "READ,AI_REPORT,false",
-            "REPORT,AI_REPORT,true", "REPORT,AI_READ,false",
-            "WRITE,AI_WRITE,true", "WRITE,AI_PUBLISH,false",
-            "PUBLISH,AI_PUBLISH,true", "PUBLISH,AI_WRITE,false"})
-    void rpcPrincipalRequiresTheMatchingAllowedOperation(String permission, String allowed, boolean permitted) {
+            "READ,READ,true", "READ,REPORT,false",
+            "REPORT,REPORT,true", "REPORT,READ,false",
+            "WRITE,WRITE,true", "WRITE,PUBLISH,false",
+            "PUBLISH,PUBLISH,true", "PUBLISH,WRITE,false"})
+    void verifiedServiceRequiresTheMatchingApprovedOperation(String permission, String allowed, boolean permitted) {
         Runnable call = () -> invoke(permission);
         if (permitted) {
-            assertThatCode(() -> withPrincipal(principal(Set.of(allowed)), call)).doesNotThrowAnyException();
+            assertThatCode(() -> withService(Operation.valueOf(allowed), SCOPE, call)).doesNotThrowAnyException();
         } else {
-            assertThatThrownBy(() -> withPrincipal(principal(Set.of(allowed)), call))
+            assertThatThrownBy(() -> withService(Operation.valueOf(allowed), SCOPE, call))
                     .isInstanceOfSatisfying(CommonException.class, failure -> assertThat(failure.getCode()).isEqualTo(56307));
         }
     }
 
     @Test
     void reportIsReadOnlyAndDoesNotLockScopeParents() {
-        withPrincipal(principal(Set.of("AI_REPORT")), () -> validator.assertCanReport(resource()));
+        withService(Operation.REPORT, SCOPE, () -> validator.assertCanReport(resource()));
 
         verify(resourceRepository, never()).lockScopeParentsForShare(any());
     }
 
     @Test
     void writeStillLocksScopeParents() {
-        withPrincipal(principal(Set.of("AI_WRITE")), () -> validator.assertCanWrite(resource()));
+        withService(Operation.WRITE, SCOPE, () -> validator.assertCanWrite(resource()));
 
         verify(resourceRepository).lockScopeParentsForShare(SCOPE);
     }
@@ -110,26 +110,21 @@ class DdcAiScopeValidatorAuthorityTest {
     }
 
     @Test
-    void namespaceOutsideCredentialPatternsIsRejected() {
-        DdcServicePrincipal narrow = new DdcServicePrincipal("runtime", "SDK", Set.of("assistant-app"),
-                Set.of("prod"), Set.of("retail"), Set.of("AI_REPORT"), "assistant-app", "prod", "retail", 42L,
-                "tenant-42", Set.of("other-*"));
-
-        assertThatThrownBy(() -> withPrincipal(narrow, () -> validator.assertCanReport(resource())))
-                .isInstanceOf(CommonException.class);
+    void exactPlacementCannotBeBroadenedByANamespaceOrOwnerPattern() {
+        for (DdcAiScopeDTO allowed : List.of(
+                new DdcAiScopeDTO("retail", "other-space", "prod", "assistant-app"),
+                new DdcAiScopeDTO("retail", "prod-*", "prod", "assistant-app"),
+                new DdcAiScopeDTO("retail", "prod-space", "prod", "other-owner"))) {
+            assertThatThrownBy(() -> withService(Operation.REPORT, allowed, () -> validator.assertCanReport(resource())))
+                    .isInstanceOf(CommonException.class);
+        }
     }
 
     @Test
-    void unscopedRpcPrincipalIsAuthorizedByCredentialPatterns() {
-        DdcServicePrincipal unscoped = new DdcServicePrincipal("runtime", "SDK", Set.of("assistant-*"),
-                Set.of("prod"), Set.of("*"), Set.of("AI_WRITE"), null, null, null, 42L, "tenant-42", Set.of("prod-*"));
-        DdcServicePrincipal foreign = new DdcServicePrincipal("runtime", "SDK", Set.of("billing-*"),
-                Set.of("prod"), Set.of("*"), Set.of("AI_WRITE"), null, null, null, 42L, "tenant-42", Set.of("prod-*"));
-
-        assertThatCode(() -> withPrincipal(unscoped, () -> validator.assertCanWrite(resource())))
-                .doesNotThrowAnyException();
-        assertThatThrownBy(() -> withPrincipal(foreign, () -> validator.assertCanWrite(resource())))
-                .isInstanceOf(CommonException.class);
+    void aTenantMdcAloneNeverAuthorizesAnyBusinessOperation() {
+        for (String operation : List.of("READ", "WRITE", "PUBLISH", "REPORT")) {
+            assertThatThrownBy(() -> invoke(operation)).isInstanceOf(CommonException.class);
+        }
     }
 
     @Test
@@ -153,18 +148,8 @@ class DdcAiScopeValidatorAuthorityTest {
                 .namespaceCode(SCOPE.namespaceCode()).envCode(SCOPE.env()).appCode(SCOPE.appCode()).build();
     }
 
-    private static DdcServicePrincipal principal(Set<String> operations) {
-        return new DdcServicePrincipal("runtime", "SDK", Set.of("assistant-app"), Set.of("prod"), Set.of("retail"),
-                operations, "assistant-app", "prod", "retail", 42L, "tenant-42", Set.of("prod-*"));
-    }
-
-    private static void withPrincipal(DdcServicePrincipal principal, Runnable action) {
-        Context context = principal.bind(Context.current());
-        Context previous = context.attach();
-        try {
-            action.run();
-        } finally {
-            context.detach(previous);
-        }
+    private static void withService(Operation allowed, DdcAiScopeDTO placement, Runnable action) {
+        DdcAiServiceCallerTestFixture.call(allowed, placement, 42L, "runtime", "secret-v1",
+                java.time.Instant.parse("2026-11-19T00:00:00Z"), () -> { action.run(); return null; });
     }
 }

@@ -8,7 +8,6 @@ import org.slf4j.MDC;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.context.SecurityContextHolder;
-import top.egon.cola.component.tianshu.admin.config.DdcAdminProperties;
 import top.egon.cola.component.tianshu.admin.security.management.DdcAdminAuthenticationEntryPoint;
 import top.egon.cola.platform.tianquan.shoubing.contract.AuthenticationContext;
 import top.egon.cola.platform.tianquan.shoubing.contract.IdentityPrincipal;
@@ -55,19 +54,18 @@ class DdcTenantIsolationTest {
     }
 
     @Test
-    void mapsVerifiedUserAndHmacCredentialsToOneExactStorageTenant() {
-        DdcTenantBindingDTO userBinding = registry.requireByIdentityTenantId("tenant-a");
-        DdcCredentialTenantDTO credentialBinding = registry.requireCredentialBinding("runtime-a");
-
-        assertThat(userBinding.getTenantId()).isEqualTo(101L);
-        assertThat(credentialBinding.getTenantId()).isEqualTo(101L);
-        assertThat(credentialBinding.getNamespacePatterns()).containsExactly("orders-*");
+    void identityAndStorageLookupsRequireAnEnabledTenant() {
+        DdcTenantBindingDTO identityBinding = registry.requireByIdentityTenantId("tenant-a");
+        assertThat(identityBinding.getTenantId()).isEqualTo(101L);
+        assertThat(registry.requireEnabledTenant(101L)).isEqualTo(identityBinding);
         assertThatThrownBy(() -> registry.requireByIdentityTenantId("unregistered"))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("TENANT_IDENTITY_UNREGISTERED");
         assertThatThrownBy(() -> registry.requireByIdentityTenantId("tenant-disabled"))
-                .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> registry.requireCredentialBinding("unregistered-key"))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("TENANT_IDENTITY_UNREGISTERED");
+        assertThatThrownBy(() -> registry.requireEnabledTenant(202L))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("TENANT_ID_UNREGISTERED");
+        assertThatThrownBy(() -> registry.requireEnabledTenant(0L))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("TENANT_ID_UNREGISTERED");
     }
 
     @Test
@@ -212,23 +210,9 @@ class DdcTenantIsolationTest {
                 .identityTenantId("tenant/a")
                 .enabled(true)
                 .build();
-        DdcCredentialTenantDTO credentialBinding = DdcCredentialTenantDTO.builder()
-                .credentialId("runtime-a")
-                .tenantId(101L)
-                .namespacePatterns(List.of("orders-*"))
-                .build();
         DdcTenantAdminProperties tenantProperties = new DdcTenantAdminProperties();
         tenantProperties.setBindings(List.of(enabled, disabled, encodedIdentity));
-        tenantProperties.setCredentialBindings(List.of(credentialBinding));
-        DdcAdminProperties.Credential configuredCredential = new DdcAdminProperties.Credential();
-        configuredCredential.setCredentialId("runtime-a");
-        configuredCredential.setAccessKey("runtime-key");
-        configuredCredential.setSecret("runtime-secret");
-        configuredCredential.setClientType("SDK");
-        configuredCredential.setAllowedOperations(List.of("CONFIG_PULL", "AI_READ"));
-        DdcAdminProperties adminProperties = new DdcAdminProperties();
-        adminProperties.getRpc().setCredentials(List.of(configuredCredential));
-        DdcTenantRegistry registry = new DdcTenantRegistry(tenantProperties, adminProperties);
+        DdcTenantRegistry registry = new DdcTenantRegistry(tenantProperties);
         registry.initialize();
         return registry;
     }

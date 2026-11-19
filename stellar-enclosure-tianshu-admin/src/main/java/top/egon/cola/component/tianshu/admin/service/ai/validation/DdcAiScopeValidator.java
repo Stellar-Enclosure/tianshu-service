@@ -9,7 +9,6 @@ import org.slf4j.MDC;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
-import org.springframework.util.PatternMatchUtils;
 import org.springframework.validation.annotation.Validated;
 import top.egon.cola.component.common.core.exception.CommonException;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcAiResourceBO;
@@ -17,7 +16,6 @@ import top.egon.cola.component.tianshu.admin.model.bo.DdcNamespaceBO;
 import top.egon.cola.component.tianshu.admin.repository.DdcAiResourceRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcNamespaceEnvAppBindingRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcNamespaceRepository;
-import top.egon.cola.component.tianshu.admin.security.rpc.DdcServicePrincipal;
 import top.egon.cola.component.tianshu.admin.service.metadata.DdcScopeGate;
 import top.egon.cola.component.tianshu.error.DdcErrorStatus;
 import top.egon.cola.component.tianshu.model.ai.DdcAiScopeDTO;
@@ -121,6 +119,16 @@ public class DdcAiScopeValidator {
             Permission permission,
             DdcAiScopeDTO scope) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication != null && authentication.getPrincipal()
+                instanceof top.egon.cola.platform.tianquan.shoubing.contract.ServiceIdentityPrincipal) {
+            try {
+                top.egon.cola.component.tianshu.admin.security.ai.DdcAiServiceCallerResolver.current(
+                        top.egon.cola.component.tianshu.api.ai.DdcAiHttpContract.Operation.valueOf(permission.name()), scope);
+                return;
+            } catch (top.egon.cola.component.tianshu.admin.security.ai.DdcAiServiceCallerResolver.Rejected denied) {
+                throw scopeForbidden();
+            }
+        }
         if (authentication != null) {
             if (permission == Permission.REPORT) {
                 throw scopeForbidden();
@@ -150,34 +158,7 @@ public class DdcAiScopeValidator {
             return;
         }
 
-        DdcServicePrincipal principal;
-        try {
-            principal = DdcServicePrincipal.current();
-        } catch (IllegalStateException missingPrincipal) {
-            throw scopeForbidden();
-        }
-        boolean namespaceAllowed = principal.namespacePatterns().stream()
-                .anyMatch(pattern -> PatternMatchUtils.simpleMatch(pattern, scope.namespaceCode()));
-        if (!"SDK".equals(principal.clientType())
-                || !Objects.equals(MDC.get("tenantId"), Long.toString(principal.tenantId()))
-                || !scopeMatches(principal.bizCode(), principal.bizCodePatterns(), scope.bizCode())
-                || !scopeMatches(principal.env(), principal.envPatterns(), scope.env())
-                || !scopeMatches(principal.appCode(), principal.appCodePatterns(), scope.appCode())
-                || !principal.allowedOperations().contains(permission.rpcOperation())
-                || !namespaceAllowed) {
-            throw scopeForbidden();
-        }
-    }
-
-    /**
-     * 请求自带作用域时精确比较；未带作用域的 AI 写请求按凭据模式匹配资源作用域。
-     * / Compares exactly when the request carried a scope; unscoped AI writes match the resource scope against the
-     * credential patterns.
-     */
-    private static boolean scopeMatches(String principalValue, java.util.Set<String> patterns, String expected) {
-        if (expected == null) return false;
-        if (principalValue != null) return principalValue.equals(expected);
-        return patterns.stream().anyMatch(pattern -> PatternMatchUtils.simpleMatch(pattern, expected));
+        throw scopeForbidden();
     }
 
     private static CommonException scopeForbidden() {
@@ -198,21 +179,15 @@ public class DdcAiScopeValidator {
     }
 
     private enum Permission {
-        READ("AI_READ", false),
-        WRITE("AI_WRITE", true),
-        PUBLISH("AI_PUBLISH", true),
-        REPORT("AI_REPORT", false);
+        READ(false),
+        WRITE(true),
+        PUBLISH(true),
+        REPORT(false);
 
-        private final String rpcOperation;
         private final boolean locksParents;
 
-        Permission(String rpcOperation, boolean locksParents) {
-            this.rpcOperation = rpcOperation;
+        Permission(boolean locksParents) {
             this.locksParents = locksParents;
-        }
-
-        String rpcOperation() {
-            return rpcOperation;
         }
 
         boolean locksParents() {

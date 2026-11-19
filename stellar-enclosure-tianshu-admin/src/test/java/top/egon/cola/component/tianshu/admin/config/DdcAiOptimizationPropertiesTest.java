@@ -50,14 +50,6 @@ class DdcAiOptimizationPropertiesTest {
         assertThat(properties.getFeedback().getMaxOutputExcerptBytes()).isEqualTo(32768);
     }
 
-    @Test
-    void runtimeCredentialAllowsUsageReports() {
-        Properties profile = load("application.yml");
-
-        assertThat(profile.getProperty("egon.cola.component.tianshu.admin.rpc.credentials[0].allowed-operations"))
-                .contains("AI_READ", "AI_REPORT").doesNotContain("AI_WRITE", "AI_PUBLISH");
-    }
-
     private static Set<String> aiKeys(String profile) {
         return load(profile).keySet().stream().map(Object::toString)
                 .filter(key -> key.startsWith(PREFIX))

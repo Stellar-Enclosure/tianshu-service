@@ -1,10 +1,38 @@
 package top.egon.cola.component.tianshu.admin.contract;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.grpc.Context;
-import io.grpc.Status;
-import io.grpc.StatusRuntimeException;
 import org.junit.jupiter.api.Test;
+import org.mapstruct.factory.Mappers;
+import org.slf4j.MDC;
+import org.springframework.context.annotation.Bean;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Primary;
+import org.springframework.mock.web.MockServletContext;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.support.AnnotationConfigWebApplicationContext;
+import org.springframework.web.servlet.config.annotation.EnableWebMvc;
+import top.egon.cola.component.common.core.validation.ValidationUtils;
+import top.egon.cola.component.tianshu.admin.internal.controller.DdcAiInternalController;
+import top.egon.cola.component.tianshu.admin.model.convertor.DdcAiInternalConverter;
+import top.egon.cola.component.tianshu.admin.security.ai.DdcAiInternalSecurityConfiguration;
+import top.egon.cola.component.tianshu.admin.security.ai.DdcAiServiceCallerResolver;
+import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantBindingDTO;
+import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextExecutor;
+import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantRegistry;
+import top.egon.cola.component.tianshu.api.ai.DdcAiHttpContract;
+import top.egon.cola.component.tianshu.api.ai.DdcAiHttpContract.Operation;
+import top.egon.cola.platform.tianquan.shoubing.contract.ServiceIdentityPrincipal;
+import top.egon.cola.platform.tianquan.shoubing.contract.ServiceTokenContext;
+import top.egon.cola.platform.tianquan.shoubing.starter.security.AccessTokenVerification;
+import top.egon.cola.platform.tianquan.shoubing.starter.security.IdpEndpointAuthenticationPolicy;
+import top.egon.cola.platform.tianquan.shoubing.starter.security.IdpObservedVerificationComponent;
+import top.egon.cola.platform.tianquan.shoubing.starter.security.IdpSecurityObservationFilter;
+import top.egon.cola.platform.tianquan.shoubing.starter.security.ServiceAccessTokenVerifier;
+import top.egon.cola.platform.tianquan.shoubing.starter.security.UserAccessTokenVerifier;
+import top.egon.cola.platform.tianquan.shoubing.starter.security.domain.TokenAuditProofBO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -13,9 +41,6 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import top.egon.cola.component.common.core.exception.CommonException;
-import top.egon.cola.component.rpc.tianshu.client.ai.DdcAiProtoConverterImpl;
-import top.egon.cola.component.rpc.tianshu.contract.proto.v1.AiPromptResult;
-import top.egon.cola.component.rpc.tianshu.contract.proto.v1.AiResourceQuery;
 import top.egon.cola.component.tianshu.admin.config.DdcAiWebConfiguration;
 import top.egon.cola.component.tianshu.admin.controller.ai.DdcAiResourceController;
 import top.egon.cola.component.tianshu.admin.model.command.DdcAiCreateCommand;
@@ -27,8 +52,6 @@ import top.egon.cola.component.tianshu.admin.model.query.DdcAiIdQuery;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcAiPublicationResult;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcAiResourceResult;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcAiVersionResult;
-import top.egon.cola.component.tianshu.admin.rpc.provider.DdcAiResourceRpcProvider;
-import top.egon.cola.component.tianshu.admin.security.rpc.DdcServicePrincipal;
 import top.egon.cola.component.tianshu.admin.service.ai.DdcAiFeedbackService;
 import top.egon.cola.component.tianshu.admin.service.ai.DdcAiOptimizationService;
 import top.egon.cola.component.tianshu.admin.service.ai.DdcAiResourceService;
@@ -37,19 +60,25 @@ import top.egon.cola.component.tianshu.model.ai.DdcAiKindEnum;
 import top.egon.cola.component.tianshu.model.ai.DdcAiResourceQuery;
 import top.egon.cola.component.tianshu.model.ai.DdcAiScopeDTO;
 
+import java.net.URI;
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.Map;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.Callable;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -90,7 +119,7 @@ class DdcEndToEndContractTest {
     private DdcAiFeedbackService feedbackService;
 
     @Test
-    void restDraftPublishPromotionAndDirectRpcReadKeepOneFixedSnapshotAndSeparateReceipts() throws Exception {
+    void restDraftPublishPromotionAndOAuthHttpReadKeepOneFixedSnapshotAndSeparateReceipts() throws Exception {
         DdcAiResourceResult created = resourceResult(SOURCE_RESOURCE_ID, SOURCE_SCOPE, RESOURCE_KEY,
                 "draft prompt", null, null);
         DdcAiResourceResult saved = resourceResult(SOURCE_RESOURCE_ID, SOURCE_SCOPE, RESOURCE_KEY,
@@ -108,7 +137,11 @@ class DdcEndToEndContractTest {
         when(service.promote(any(), any(), eq("promote_order_0001"))).thenReturn(promotionReceipt);
         when(service.getPublishedVersion(any(), eq(DdcAiKindEnum.PROMPT))).thenAnswer(invocation -> {
             DdcAiResourceQuery query = invocation.getArgument(0);
-            long callerTenant = DdcServicePrincipal.current().tenantId();
+            DdcAiScopeDTO actualScope = SOURCE_SCOPE.namespaceCode().equals(query.namespaceCode()) ? SOURCE_SCOPE : TARGET_SCOPE;
+            var caller = DdcAiServiceCallerResolver.current(Operation.READ, actualScope);
+            long callerTenant = caller.tenant().tenantId();
+            assertThat(MDC.get("tenantId")).isEqualTo(Long.toString(callerTenant));
+            assertThat(MDC.get("userId")).isEqualTo("service:runtime-reader");
             if (callerTenant != TENANT_ID) {
                 throw new CommonException(56307, "TIANSHU_AI_SCOPE_FORBIDDEN",
                         "AI permission is required for the requested namespace");
@@ -172,33 +205,43 @@ class DdcEndToEndContractTest {
                         && command.getTargetScope().equals(TARGET_SCOPE)
                         && command.getExpectedTargetRevision() == null), eq("promote_order_0001"));
 
-        DdcAiResourceRpcProvider provider = new DdcAiResourceRpcProvider(service,
-                new DdcAiProtoConverterImpl(),
-                org.mockito.Mockito.mock(top.egon.cola.component.tianshu.admin.service.ai.DdcAiFeedbackService.class),
-                new top.egon.cola.component.tianshu.admin.model.convertor.DdcAiSyncCommandConverterImpl());
-        AiPromptResult prompt = withPrincipal(principal(TENANT_ID), () -> provider.getPrompt(targetQuery()));
-        assertThat(prompt.getResourceId()).isEqualTo(Long.toString(TARGET_RESOURCE_ID));
-        assertThat(prompt.getVersionId()).isEqualTo(Long.toString(TARGET_VERSION_ID));
-        assertThat(prompt.getVersionNo()).isEqualTo(1L);
-        assertThat(prompt.getTemplate()).isEqualTo("approved prompt");
-        verify(service).getPublishedVersion(argThat(query -> query.resourceId() == TARGET_RESOURCE_ID
-                && query.versionNo().equals(1L) && query.resourceKey().equals(RESOURCE_KEY)),
-                eq(DdcAiKindEnum.PROMPT));
+        try (var internal = new InternalHttpFixture(service, feedbackService)) {
+            internal.mvc.perform(promptRead(TARGET_RESOURCE_ID, TARGET_SCOPE, 1L))
+                    .andExpect(status().isUnauthorized())
+                    .andExpect(header().string("WWW-Authenticate", "Bearer"))
+                    .andExpect(header().string("Cache-Control", "no-store"))
+                    .andExpect(jsonPath("$.code").value(DdcAiHttpContract.ERROR_UNAUTHENTICATED));
+            internal.mvc.perform(promptRead(TARGET_RESOURCE_ID, TARGET_SCOPE, 1L)
+                            .header("Authorization", "Bearer approved")
+                            .header("X-Egon-Tianshu-Tenant", "tenant-999").header("X-Tenant-Id", "999"))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("Cache-Control", "no-store"))
+                    .andExpect(header().doesNotExist("Set-Cookie"))
+                    .andExpect(jsonPath("$.resourceId").value(Long.toString(TARGET_RESOURCE_ID)))
+                    .andExpect(jsonPath("$.versionId").value(Long.toString(TARGET_VERSION_ID)))
+                    .andExpect(jsonPath("$.versionNo").value("1"))
+                    .andExpect(jsonPath("$.template").value("approved prompt"));
+            verify(service).getPublishedVersion(argThat(query -> query.resourceId() == TARGET_RESOURCE_ID
+                            && query.versionNo().equals(1L) && query.resourceKey().equals(RESOURCE_KEY)),
+                    eq(DdcAiKindEnum.PROMPT));
 
-        mockMvc.perform(delete("/api/v1/tianshu/ai/resources/{id}", SOURCE_RESOURCE_ID)
-                        .header("X-Egon-Tianshu-Tenant", "tenant-101")
-                        .param("expectedRevision", "4"))
-                .andExpect(status().isNoContent());
+            mockMvc.perform(delete("/api/v1/tianshu/ai/resources/{id}", SOURCE_RESOURCE_ID)
+                            .header("X-Egon-Tianshu-Tenant", "tenant-101")
+                            .param("expectedRevision", "4"))
+                    .andExpect(status().isNoContent());
 
-        assertThatThrownBy(() -> withPrincipal(principal(TENANT_ID), () -> provider.getPrompt(
-                query(SOURCE_RESOURCE_ID, SOURCE_SCOPE, 4L))))
-                .isInstanceOf(StatusRuntimeException.class)
-                .satisfies(failure -> assertThat(((StatusRuntimeException) failure).getStatus().getCode())
-                        .isEqualTo(Status.Code.NOT_FOUND));
-        assertThatThrownBy(() -> withPrincipal(principal(TENANT_ID + 1), () -> provider.getPrompt(targetQuery())))
-                .isInstanceOf(StatusRuntimeException.class)
-                .satisfies(failure -> assertThat(((StatusRuntimeException) failure).getStatus().getCode())
-                .isEqualTo(Status.Code.PERMISSION_DENIED));
+            internal.mvc.perform(promptRead(SOURCE_RESOURCE_ID, SOURCE_SCOPE, 4L).header("Authorization", "Bearer approved"))
+                    .andExpect(status().isNotFound())
+                    .andExpect(jsonPath("$.code").value(DdcAiHttpContract.ERROR_NOT_FOUND));
+            internal.mvc.perform(promptRead(TARGET_RESOURCE_ID, TARGET_SCOPE, 1L).header("Authorization", "Bearer foreign"))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value(DdcAiHttpContract.ERROR_FORBIDDEN));
+            internal.mvc.perform(promptRead(102L, TARGET_RESOURCE_ID, TARGET_SCOPE, 1L)
+                            .header("Authorization", "Bearer approved"))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value(DdcAiHttpContract.ERROR_FORBIDDEN));
+            verify(service, times(2)).getPublishedVersion(any(), eq(DdcAiKindEnum.PROMPT));
+        }
 
         verify(service).delete(eq(new DdcAiIdQuery(SOURCE_RESOURCE_ID)), any());
     }
@@ -256,33 +299,90 @@ class DdcEndToEndContractTest {
                 .build());
     }
 
-    private static AiResourceQuery targetQuery() {
-        return query(TARGET_RESOURCE_ID, TARGET_SCOPE, 1L);
+    private static MockHttpServletRequestBuilder promptRead(long resourceId, DdcAiScopeDTO scope, long versionNo) {
+        return promptRead(TENANT_ID, resourceId, scope, versionNo);
     }
 
-    private static AiResourceQuery query(long resourceId, DdcAiScopeDTO scope, long versionNo) {
-        return AiResourceQuery.newBuilder().setBizCode(scope.bizCode()).setNamespaceCode(scope.namespaceCode())
-                .setEnv(scope.env()).setAppCode(scope.appCode()).setResourceKey(RESOURCE_KEY)
-                .setResourceId(Long.toString(resourceId)).setVersionNo(versionNo).build();
+    private static MockHttpServletRequestBuilder promptRead(long tenantId, long resourceId, DdcAiScopeDTO scope, long versionNo) {
+        return get(DdcAiHttpContract.PROMPTS_PATH).param("tenantId", Long.toString(tenantId))
+                .param("bizCode", scope.bizCode()).param("env", scope.env()).param("appCode", scope.appCode())
+                .param("namespaceCode", scope.namespaceCode()).param("resourceKey", RESOURCE_KEY)
+                .param("resourceId", Long.toString(resourceId)).param("versionNo", Long.toString(versionNo));
     }
 
-    private static DdcServicePrincipal principal(long tenantId) {
-        return new DdcServicePrincipal("runtime-reader", "SDK", Set.of("assistant-app"), Set.of("prod"),
-                Set.of("retail"), Set.of("AI_READ"), "assistant-app", "prod", "retail", tenantId,
-                "tenant-" + tenantId, Set.of("production-space"));
+    /** Real stateless OAuth filter chain and MVC; only token authority and business storage are test doubles. */
+    private static final class InternalHttpFixture implements AutoCloseable {
+        private final AnnotationConfigWebApplicationContext context = new AnnotationConfigWebApplicationContext();
+        private final MockMvc mvc;
+        private final Map<String, String> previousMdc = MDC.getCopyOfContextMap();
+        private final org.springframework.security.core.Authentication previousAuthentication = SecurityContextHolder.getContext().getAuthentication();
+
+        private InternalHttpFixture(DdcAiResourceService resources, DdcAiFeedbackService feedback) {
+            context.setServletContext(new MockServletContext());
+            context.addBeanFactoryPostProcessor(factory -> {
+                factory.registerSingleton("ddcAiResourceService", resources);
+                factory.registerSingleton("ddcAiFeedbackService", feedback);
+            });
+            context.register(InternalHttpConfiguration.class);
+            context.refresh();
+            mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+            ServiceAccessTokenVerifier tokens = context.getBean(ServiceAccessTokenVerifier.class);
+            when(tokens.verify("approved")).thenReturn(verifiedService("tenant-101"));
+            when(tokens.verify("foreign")).thenReturn(verifiedService("tenant-102"));
+            when(context.getBean(DdcTenantRegistry.class).requireByIdentityTenantId("tenant-101"))
+                    .thenReturn(new DdcTenantBindingDTO(TENANT_ID, "tenant-101", true));
+        }
+
+        @Override public void close() {
+            context.close();
+            if (previousMdc == null) MDC.clear(); else MDC.setContextMap(previousMdc);
+            if (previousAuthentication == null) SecurityContextHolder.clearContext();
+            else SecurityContextHolder.getContext().setAuthentication(previousAuthentication);
+        }
     }
 
-    private static <T> T withPrincipal(DdcServicePrincipal principal, Callable<T> action) {
-        Context context = principal.bind(Context.current());
-        Context previous = context.attach();
-        try {
-            return action.call();
-        } catch (RuntimeException failure) {
-            throw failure;
-        } catch (Exception failure) {
-            throw new AssertionError(failure);
-        } finally {
-            context.detach(previous);
+    private static final URI ISSUER = URI.create("https://identity.example.test/tenants/tenant-101");
+    private static final URI RESOURCE = URI.create("https://tianshu.example.test");
+    private static final String READ_SCOPE = "fixture:ai-read";
+
+    private static AccessTokenVerification.Valid<ServiceIdentityPrincipal> verifiedService(String tenant) {
+        var principal = new ServiceIdentityPrincipal("runtime-reader", tenant, "runtime-reader", "synthetic-jti", RESOURCE,
+                1L, Set.of(READ_SCOPE), "retail", "assistant-app", "prod", "rotated-credential", CREATED_AT.minusSeconds(1),
+                CREATED_AT.plusSeconds(300), "assistant-app-id", ServiceTokenContext.TENANT);
+        return new AccessTokenVerification.Valid<>(principal, principal.scopes(),
+                new TokenAuditProofBO(ISSUER, RESOURCE, "a".repeat(64), "b".repeat(64), "c".repeat(64)), ISSUER);
+    }
+
+    @TestConfiguration(proxyBeanMethods = false)
+    @EnableWebMvc
+    @EnableWebSecurity
+    @Import({DdcAiInternalSecurityConfiguration.class, DdcAiInternalController.class})
+    static class InternalHttpConfiguration {
+        @Bean("jacksonObjectMapper") ObjectMapper mapper() { return new ObjectMapper().findAndRegisterModules(); }
+        @Bean("ddcPublishClock") Clock clock() { return Clock.fixed(CREATED_AT, ZoneOffset.UTC); }
+        @Bean("ddcTenantRegistry") DdcTenantRegistry tenants() { return mock(DdcTenantRegistry.class); }
+        @Bean("ddcTenantContextExecutor") DdcTenantContextExecutor tenantContext() { return new DdcTenantContextExecutor(); }
+        @Bean("userAccessTokenVerifier") UserAccessTokenVerifier users() { return mock(UserAccessTokenVerifier.class); }
+        @Bean("serviceAccessTokenVerifier") ServiceAccessTokenVerifier services() { return mock(ServiceAccessTokenVerifier.class); }
+        @Bean("ddcAiInternalConverterImpl") DdcAiInternalConverter converter() { return Mappers.getMapper(DdcAiInternalConverter.class); }
+        @Bean(destroyMethod = "close") jakarta.validation.ValidatorFactory validatorFactory() { return jakarta.validation.Validation.buildDefaultValidatorFactory(); }
+        @Bean("egonColaValidationUtils") ValidationUtils validation(@org.springframework.beans.factory.annotation.Qualifier("validatorFactory") jakarta.validation.ValidatorFactory factory) { return new ValidationUtils(factory.getValidator()); }
+        @Bean("idpObservedVerificationComponent") IdpObservedVerificationComponent observation() {
+            var recorder = mock(IdpObservedVerificationComponent.class);
+            when(recorder.enabled()).thenReturn(true);
+            when(recorder.authenticationFailure()).thenReturn(true);
+            when(recorder.authorizationDenied(any(), any())).thenReturn(true);
+            return recorder;
+        }
+        @Bean("idpSecurityObservationFilter") IdpSecurityObservationFilter observationFilter(IdpObservedVerificationComponent recorder) {
+            return new IdpSecurityObservationFilter(recorder,
+                    new IdpEndpointAuthenticationPolicy(List.of(), List.of(DdcAiHttpContract.BASE_PATH + "/**"), false));
+        }
+        @Bean @Primary DdcAiInternalSecurityConfiguration.InternalProperties internalPolicy() {
+            var caller = new DdcAiInternalSecurityConfiguration.CallerBinding(TENANT_ID, "tenant-101", ISSUER, RESOURCE,
+                    "runtime-reader", "assistant-app-id", "retail", "assistant-app", "prod", "runtime-reader",
+                    Set.of(SOURCE_SCOPE, TARGET_SCOPE), Set.of(Operation.READ));
+            return new DdcAiInternalSecurityConfiguration.InternalProperties(Map.of(Operation.READ, READ_SCOPE), List.of(caller));
         }
     }
 }

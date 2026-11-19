@@ -3,7 +3,6 @@ package top.egon.cola.component.tianshu.admin.integration;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -19,7 +18,6 @@ import top.egon.cola.component.tianshu.admin.DynamicConfigCenterAdminApplication
 import top.egon.cola.component.tianshu.admin.migration.DdcPersistenceMigrationCli;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcAppBO;
 import top.egon.cola.component.tianshu.admin.repository.DdcAppRepository;
-import top.egon.cola.component.tianshu.admin.security.rpc.DdcNonceStore;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextDTO;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextExecutor;
 import top.egon.cola.component.tianshu.admin.service.metadata.DdcBizService;
@@ -35,8 +33,6 @@ import static org.awaitility.Awaitility.await;
 class DdcActiveActiveAdminIT {
 
     private static final String APP_CODE = "active-active-app";
-    private static final String ACCESS_KEY = "active-active-access";
-    private static final String SECRET = "active-active-secret";
     private static final DdcTenantContextDTO TENANT = new DdcTenantContextDTO(1L, "active-active-it", "test:active-active");
 
     @Container
@@ -96,12 +92,12 @@ class DdcActiveActiveAdminIT {
     }
 
     @Test
-    void remainingSignedAdaptersShareNonceAuthorityAcrossReplicas() {
-        String nonce = UUID.randomUUID().toString();
-        var storeA = nodeA.getBean("ddcNonceStore", DdcNonceStore.class);
-        var storeB = nodeB.getBean("ddcNonceStore", DdcNonceStore.class);
-        assertThat(storeA.markIfAbsent("active-active", nonce, Duration.ofSeconds(30))).isTrue();
-        assertThat(storeB.markIfAbsent("active-active", nonce, Duration.ofSeconds(30))).isFalse();
+    void retiredSigningBeansAreAbsentOnBothReplicas() {
+        for (ConfigurableApplicationContext node : java.util.List.of(nodeA, nodeB)) {
+            assertThat(node.containsBean("ddcHmacCredentialRegistry")).isFalse();
+            assertThat(node.containsBean("ddcNonceStore")).isFalse();
+            assertThat(node.containsBean("ddcRpcServerInterceptor")).isFalse();
+        }
     }
 
     @Test
@@ -140,25 +136,12 @@ class DdcActiveActiveAdminIT {
                 "--egon.cola.platform.tianquan.shoubing.enabled=false",
                 "--egon.cola.platform.tianquan.jianshen.enabled=false",
                 "--egon.cola.component.tianshu.enabled=false",
-                "--egon.cola.component.tianshu.registry.enabled=false",
                 "--egon.cola.component.tianshu.admin.security.local-dev=true",
                 "--egon.cola.component.tianshu.admin.redis.host=" + REDIS.getHost(),
                 "--egon.cola.component.tianshu.admin.redis.port=" + REDIS.getMappedPort(6379),
-                "--egon.cola.component.tianshu.admin.rpc.signature-enabled=true",
-                "--egon.cola.component.tianshu.admin.rpc.credentials[0].credential-id=active-active",
-                "--egon.cola.component.tianshu.admin.rpc.credentials[0].access-key=" + ACCESS_KEY,
-                "--egon.cola.component.tianshu.admin.rpc.credentials[0].secret=" + SECRET,
-                "--egon.cola.component.tianshu.admin.rpc.credentials[0].client-type=*",
-                "--egon.cola.component.tianshu.admin.rpc.credentials[0].app-code-patterns[0]=*",
-                "--egon.cola.component.tianshu.admin.rpc.credentials[0].env-patterns[0]=*",
-                "--egon.cola.component.tianshu.admin.rpc.credentials[0].biz-code-patterns[0]=*",
-                "--egon.cola.component.tianshu.admin.rpc.credentials[0].allowed-operations[0]=*",
                 "--egon.cola.component.tianshu.admin.tenancy.bindings[0].tenant-id=1",
                 "--egon.cola.component.tianshu.admin.tenancy.bindings[0].identity-tenant-id=active-active-it",
                 "--egon.cola.component.tianshu.admin.tenancy.bindings[0].enabled=true",
-                "--egon.cola.component.tianshu.admin.tenancy.credential-bindings[0].credential-id=active-active",
-                "--egon.cola.component.tianshu.admin.tenancy.credential-bindings[0].tenant-id=1",
-                "--egon.cola.component.tianshu.admin.tenancy.credential-bindings[0].namespace-patterns[0]=*",
                 "--egon.cola.component.rpc.enabled=false"
         };
     }

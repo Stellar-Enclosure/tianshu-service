@@ -1,208 +1,76 @@
 package top.egon.cola.component.tianshu.test;
 
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
-import org.redisson.api.RTopic;
-import org.redisson.api.RedissonClient;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Import;
-import org.springframework.context.ApplicationContextInitializer;
-import org.springframework.context.ApplicationContext;
-import org.springframework.context.ConfigurableApplicationContext;
-import org.springframework.test.context.ContextConfiguration;
-import top.egon.cola.component.common.id.snowflake.SnowflakeIdGenerator;
-import top.egon.cola.component.tianshu.api.client.DdcConfigClient;
-import top.egon.cola.component.tianshu.model.config.DdcAckRequest;
-import top.egon.cola.component.tianshu.model.config.DdcHeartbeatRequest;
-import top.egon.cola.component.tianshu.model.config.DdcInstanceRegisterRequest;
-import top.egon.cola.component.tianshu.model.config.DdcPublishMessage;
-import top.egon.cola.component.tianshu.model.lease.DdcLeaseOperationStatus;
-import top.egon.cola.component.tianshu.model.lease.DdcLeaseRole;
-import top.egon.cola.component.tianshu.model.config.DdcConfigValue;
-import top.egon.cola.component.tianshu.model.lease.DdcLeaseOperationResult;
-import top.egon.cola.component.tianshu.model.lease.DdcLeaseSession;
-import top.egon.cola.component.tianshu.format.DdcYamlConfigFormatStrategy;
-import top.egon.cola.platform.tianquan.shoubing.starter.client.IdpServiceOAuth2Client;
-import top.egon.cola.platform.tianquan.shoubing.starter.client.IdpServiceTokenRequest;
-import top.egon.cola.component.tianshu.service.lifecycle.DdcRuntimeCoordinator;
-import top.egon.cola.component.tianshu.model.instance.DdcRuntimeState;
-import top.egon.cola.component.tianshu.test.service.SampleConfigService;
-
-import java.time.Duration;
-import java.net.URI;
-import java.time.Instant;
-import java.util.ArrayList;
-import java.util.List;
-
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
-import org.springframework.security.oauth2.core.OAuth2AccessToken;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE, properties = {
-        "egon.cola.component.tianshu.enabled=true",
-        "egon.cola.component.tianshu.tenant-id=1001",
-        "egon.cola.component.mybatis-plus.enabled=false",
-        "egon.cola.component.cache.enabled=false",
-        "egon.cola.component.transactional-outbox.enabled=false",
-        "egon.cola.component.dtp.enabled=false",
-        "egon.cola.component.tianshu.biz-code=demo-biz",
-        "egon.cola.component.tianshu.app-code=demo-app",
-        "egon.cola.component.tianshu.env=dev",
-        "egon.cola.component.tianshu.namespace=default",
-        "egon.cola.component.tianshu.rpc.target=dns:///127.0.0.1:19080",
-        "egon.cola.component.tianshu.rpc.tls.development-plaintext=true",
-        "egon.cola.component.tianshu.redis.enabled=true",
-        "egon.cola.component.tianshu.consistency.fail-fast=true",
-        "egon.cola.component.tianshu.instance.lease-seconds=7200",
-        "egon.cola.component.tianshu.instance.heartbeat-interval-seconds=3600",
-        "egon.cola.platform.tianquan.shoubing.resource-uri=https://api.example/tianshu",
-        "egon.cola.platform.tianquan.shoubing.service-client.app-id=tianshu-app",
-        "egon.cola.platform.tianquan.shoubing.service-client.registration-id=tianshu-registration",
-        "spring.autoconfigure.exclude=top.egon.cola.component.common.mybatis.autoconfigure.EgonColaShardingAutoConfiguration,"
-                + "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,"
-                + "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration,"
-                + "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration"
-})
-@Import(DdcStarterRuntimeFlowTest.RuntimeTestConfiguration.class)
-@ContextConfiguration(initializers =
-        DdcStarterRuntimeFlowTest.DdcPropertySourceInitializer.class)
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.ZoneOffset;
+import java.util.Map;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import top.egon.cola.component.tianshu.format.DdcConfigCanonicalJson;
+import top.egon.cola.component.tianshu.model.config.DdcConfigReceiptCommand;
+import top.egon.cola.component.tianshu.model.config.DdcConfigReceiptStatusEnum;
+import top.egon.cola.component.tianshu.service.config.DdcConfigSnapshotCoordinator;
+import top.egon.cola.component.tianshu.service.config.DdcConfigSnapshotHttpClient;
+import top.egon.cola.component.tianshu.service.config.DdcConfigSnapshotHttpClient.SnapshotResultVO;
+import top.egon.cola.component.tianshu.state.DdcConfigLkgStore;
+import top.egon.cola.component.tianshu.state.DdcLocalConfigState;
+
 class DdcStarterRuntimeFlowTest {
-
-    @BeforeAll
-    static void bindTheProcessWideEngine() {
-        SnowflakeIdGenerator.initialize(0L, Duration.ofMillis(5));
-    }
-
-    @Autowired
-    private DdcRuntimeCoordinator runtimeCoordinator;
-
-    @Autowired
-    private RecordingDdcConfigClient adminClient;
-
-    @Autowired
-    private SampleConfigService sampleConfigService;
-
-    @Autowired
-    private ApplicationContext applicationContext;
+    @TempDir Path temp;
 
     @Test
-    void starterRegistersPullsAppliesAndGoesOfflineWithoutAdminBeans() {
-        assertThat(runtimeCoordinator.state()).isEqualTo(DdcRuntimeState.READY);
-        assertThat(adminClient.events()).containsExactly("register", "pull");
-        assertThat(sampleConfigService.getRateLimit()).isEqualTo(250);
-        assertThat(applicationContext.containsBean("ddcConfigService")).isFalse();
-
-        runtimeCoordinator.stop();
-
-        assertThat(adminClient.events())
-                .containsExactly("register", "pull", "offline");
-    }
-
-    @TestConfiguration(proxyBeanMethods = false)
-    static class RuntimeTestConfiguration {
-
-        @Bean("ddcConfigClient")
-        RecordingDdcConfigClient recordingDdcConfigClient() {
-            return new RecordingDdcConfigClient();
-        }
-
-        @Bean("idpServiceOAuth2Client")
-        IdpServiceOAuth2Client serviceClient() {
-            IdpServiceOAuth2Client client = mock(IdpServiceOAuth2Client.class);
-            Instant issuedAt = Instant.now();
-            when(client.authorize(org.mockito.ArgumentMatchers.any(
-                    IdpServiceTokenRequest.class
-            ))).thenReturn(new OAuth2AccessToken(
-                    OAuth2AccessToken.TokenType.BEARER,
-                    "service-token",
-                    issuedAt,
-                    issuedAt.plusSeconds(300)
-            ));
-            return client;
-        }
-
-        @Bean(name = "ddcRedissonClient", destroyMethod = "")
-        RedissonClient ddcRedissonClient() {
-            RedissonClient client = mock(RedissonClient.class);
-            RTopic topic = mock(RTopic.class);
-            when(client.getTopic(anyString())).thenReturn(topic);
-            when(topic.addListener(eq(DdcPublishMessage.class), any()))
-                    .thenReturn(1);
-            return client;
-        }
-    }
-
-    static class DdcPropertySourceInitializer implements
-            ApplicationContextInitializer<ConfigurableApplicationContext> {
-
-        @Override
-        public void initialize(ConfigurableApplicationContext context) {
-            context.getEnvironment().getPropertySources().addFirst(
-                    new DdcYamlConfigFormatStrategy()
-                            .empty("application.yml")
-            );
-        }
-    }
-
-    static final class RecordingDdcConfigClient implements DdcConfigClient {
-
-        private final List<String> events = new ArrayList<>();
-
-        @Override
-        public DdcLeaseSession register(DdcInstanceRegisterRequest request) {
-            assertThat(request.getRegistrationToken())
-                    .isEqualTo("service-token");
-            events.add("register");
-            Instant registeredAt = Instant.now();
-            return new DdcLeaseSession(
-                    request.getInstanceId(),
-                    "lease-1",
-                    DdcLeaseRole.CONFIG_CLIENT,
-                    request.getLeaseSeconds(),
-                    request.getHeartbeatIntervalSeconds(),
-                    registeredAt,
-                    registeredAt.plusSeconds(request.getLeaseSeconds())
-            );
-        }
-
-        @Override
-        public DdcLeaseOperationResult heartbeat(DdcHeartbeatRequest request) {
-            return new DdcLeaseOperationResult(
-                    DdcLeaseOperationStatus.RENEWED,
-                    Instant.now().plusSeconds(7200)
-            );
-        }
-
-        @Override
-        public DdcLeaseOperationResult offline(DdcHeartbeatRequest request) {
-            events.add("offline");
-            return new DdcLeaseOperationResult(DdcLeaseOperationStatus.DELETED, null);
-        }
-
-        @Override
-        public List<DdcConfigValue> pull() {
-            events.add("pull");
-            DdcConfigValue value = new DdcConfigValue();
-            value.setResourceName("application.yml");
-            value.setContent("order:\n  rate-limit:\n    permits-per-second: 250\n");
-            value.setFormat("YAML");
-            value.setVersion(1L);
-            return List.of(value);
-        }
-
-        @Override
-        public void ack(DdcAckRequest request) {
-        }
-
-        List<String> events() {
-            return List.copyOf(events);
+    void currentSdkAppliesTheSampleThenDurablyRecordsItsReceiptWithoutAdminOrRegistration() throws Exception {
+        try (var h = new DdcSampleRefreshFlowTest.Harness(temp)) {
+            var http = mock(DdcConfigSnapshotHttpClient.class);
+            var store = new DdcConfigLkgStore(temp.resolve("state"));
+            var observation = new DdcLocalConfigState(1001L);
+            var policy = new DdcConfigSnapshotCoordinator.PolicyVO(
+                "pod-a", Duration.ofMinutes(1), Duration.ofSeconds(30), false, null);
+            var snapshot =
+                h.snapshot(2, Map.of("order.rate-limit.permits-per-second", JsonNodeFactory.instance.numberNode(250)));
+            when(http.snapshot(anyString(), isNull()))
+                .thenReturn(new SnapshotResultVO(snapshot, DdcConfigCanonicalJson.etag(snapshot),
+                    snapshot.getValidUntil(), "fixture-delivery-proof", "containerd://current"));
+            var key = new DdcConfigLkgStore.ScopeKeyVO(
+                DdcSampleRefreshFlowTest.SCOPE, "42", "demo-local", "test-cluster", "sample", "workload-a", "app");
+            doAnswer(invocation -> {
+                DdcConfigReceiptCommand receipt = invocation.getArgument(2);
+                var durable = store.read(key).orElseThrow();
+                assertThat(h.sample.getRateLimit()).isEqualTo(250);
+                assertThat(durable.applied().getReleaseRevision()).isEqualTo("2");
+                assertThat(durable.pendingReceipt().path("receiptDigest").textValue())
+                    .isEqualTo(receipt.getReceiptDigest());
+                assertThat(durable.pendingReceipt().has("deliveryToken")).isFalse();
+                assertThat(receipt.getStatus()).isEqualTo(DdcConfigReceiptStatusEnum.APPLIED);
+                assertThat(receipt.getReportSeq()).isEqualTo("1");
+                assertThat(receipt.getAppliedRevision()).isEqualTo("2");
+                return null;
+            })
+                .when(http)
+                .report(anyString(), anyString(), any());
+            try (var coordinator = new DdcConfigSnapshotCoordinator(h.metadata, policy, http, store, h.applier,
+                     observation, event -> {}, Clock.fixed(DdcSampleRefreshFlowTest.NOW, ZoneOffset.UTC))) {
+                assertThat(coordinator.ready()).isFalse();
+                coordinator.pollOnce();
+                assertThat(coordinator.ready()).isTrue();
+                assertThat(h.sample.getRateLimit()).isEqualTo(250);
+                assertThat(store.read(key).orElseThrow().pendingReceipt()).isNull();
+                verify(http).snapshot(anyString(), isNull());
+                verify(http).report(anyString(), anyString(), any());
+                assertThat(h.context.containsBean("ddcConfigService")).isFalse();
+                assertThat(h.context.containsBean("ddcRuntimeCoordinator")).isFalse();
+                coordinator.close();
+                clearInvocations(http);
+                coordinator.pollOnce();
+                assertThat(coordinator.ready()).isFalse();
+                verifyNoInteractions(http);
+            }
         }
     }
 }

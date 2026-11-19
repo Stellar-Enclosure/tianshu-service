@@ -11,11 +11,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import top.egon.cola.component.tianshu.admin.repository.DdcRedisRepository;
-import top.egon.cola.component.tianshu.admin.security.rpc.DdcNonceStore;
-import top.egon.cola.component.tianshu.admin.security.rpc.RedisDdcNonceStore;
 
 import top.egon.cola.component.tianshu.redis.DdcRedisClientFactory;
-
 
 @Configuration
 @EnableScheduling
@@ -53,15 +50,6 @@ public class DdcAdminRedisConfig {
             @Qualifier("ddcAdminRedissonClient") RedissonClient redissonClient,
             @Qualifier("jacksonObjectMapper") ObjectMapper objectMapper) {
         return new DdcRedisRepository(redissonClient, objectMapper);
-    }
-
-    @Bean("ddcNonceStore")
-    @ConditionalOnBean(name = "ddcAdminRedissonClient")
-    @ConditionalOnMissingBean(DdcNonceStore.class)
-    public DdcNonceStore redisDdcNonceStore(
-            @Qualifier("ddcAdminRedissonClient")
-            RedissonClient redissonClient) {
-        return new RedisDdcNonceStore(redissonClient);
     }
 
 }

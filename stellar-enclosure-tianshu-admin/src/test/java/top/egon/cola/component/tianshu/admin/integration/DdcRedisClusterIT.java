@@ -14,11 +14,9 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
 import org.testcontainers.containers.wait.strategy.Wait;
 import top.egon.cola.component.tianshu.admin.repository.DdcRedisRepository;
-import top.egon.cola.component.tianshu.admin.security.rpc.RedisDdcNonceStore;
 import top.egon.cola.component.tianshu.redis.DdcRedisClientFactory;
 import top.egon.cola.component.tianshu.model.config.DdcPublishMessage;
 
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -91,16 +89,6 @@ class DdcRedisClusterIT {
         assertThat(configs.readConfigVersion(
                 "demo", "test", "default", "switch"
         )).isEqualTo(1L);
-    }
-
-    @Test
-    void nonceAdmissionSeparatesCredentialsAndRejectsReplayAcrossStores() {
-        var first = new RedisDdcNonceStore(redisson);
-        var second = new RedisDdcNonceStore(redisson);
-        var ttl = Duration.ofSeconds(30);
-        assertThat(first.markIfAbsent("credential-a", "nonce-1", ttl)).isTrue();
-        assertThat(second.markIfAbsent("credential-a", "nonce-1", ttl)).isFalse();
-        assertThat(second.markIfAbsent("credential-b", "nonce-1", ttl)).isTrue();
     }
 
     private GenericContainer<?> node(int index) {

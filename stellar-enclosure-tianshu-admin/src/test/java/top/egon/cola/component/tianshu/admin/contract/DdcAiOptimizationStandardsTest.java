@@ -49,7 +49,7 @@ class DdcAiOptimizationStandardsTest {
             "model.command.DdcAiUsageReportBatchCommand", "model.command.DdcAiUsageReportCommand",
             "model.convertor.DdcAiOptimizationPolicyConverter", "model.convertor.DdcAiOptimizationPolicyResultConverter",
             "model.convertor.DdcAiOptimizationRunConverter", "model.convertor.DdcAiOptimizationRunResultConverter",
-            "model.convertor.DdcAiPublicationEventConverter", "model.convertor.DdcAiSyncCommandConverter",
+            "model.convertor.DdcAiPublicationEventConverter", "model.convertor.DdcAiInternalConverter",
             "model.convertor.DdcAiUsageFeedbackConverter", "model.convertor.DdcAiUsageFeedbackResultConverter",
             "model.dto.DdcAiJudgeVerdictDTO", "model.dto.DdcAiModelRequestDTO", "model.dto.DdcAiModelResultDTO",
             "model.enums.DdcAiJudgeStatePersistenceEnum", "model.enums.DdcAiOutcomePersistenceEnum",
@@ -69,7 +69,7 @@ class DdcAiOptimizationStandardsTest {
             "service.ai.impl.DdcAiOptimizationStateTransition", "service.ai.impl.DdcAiPromptTemplateLoader",
             "service.ai.impl.DdcDefaultAiJudgeStrategy", "service.ai.impl.DdcPromptOptimizerStrategy",
             "service.ai.impl.DdcSkillOptimizerStrategy", "service.ai.notification.DdcAiPublicationDeliveryHandler",
-            "service.ai.notification.DdcAiPublicationNotifier");
+            "service.ai.notification.DdcAiPublicationNotifier", "internal.controller.DdcAiInternalController");
 
     private static final List<String> NEW_FACTORY_BEANS = List.of(
             "service.ai.job.DdcAiFeedbackRetentionScanner", "service.ai.job.DdcAiJudgeScanner",
@@ -78,6 +78,20 @@ class DdcAiOptimizationStandardsTest {
 
     private static final List<String> FORBIDDEN_TEXT = List.of(
             "java.util.Date", "java.util.Calendar", "java.text.SimpleDateFormat", "cn.hutool", "org.joda");
+
+    @Test
+    void internalAiReceiverIsANamedHttpBeanWithoutRetiredWireDependencies() throws Exception {
+        Class<?> receiver = Class.forName(BASE + "internal.controller.DdcAiInternalController");
+        assertThat(receiver.getAnnotation(org.springframework.web.bind.annotation.RestController.class).value()).isNotBlank();
+        assertThat(hasStaticLogger(receiver)).isTrue();
+        String source = Files.readString(SOURCE_ROOT.resolve("internal/controller/DdcAiInternalController.java"), StandardCharsets.UTF_8);
+        assertThat(source).doesNotContain("component.rpc.tianshu", "DdcServicePrincipal", "io.grpc");
+        Class<?> converter = load("model.convertor.DdcAiInternalConverter");
+        assertThat(top.egon.cola.component.common.core.converter.BaseForwardConverter.class.isAssignableFrom(converter)).isTrue();
+        String conversion = Files.readString(SOURCE_ROOT.resolve("model/convertor/DdcAiInternalConverter.java"), StandardCharsets.UTF_8);
+        assertThat(conversion).contains("@Mapper", "BaseForwardConverter")
+                .doesNotContain("component.rpc.tianshu", "io.grpc");
+    }
 
     @Test
     void newModelTypesUseSemanticSuffixes() {
@@ -152,6 +166,9 @@ class DdcAiOptimizationStandardsTest {
         if (type.isAnnotationPresent(Service.class)) return type.getAnnotation(Service.class).value();
         if (type.isAnnotationPresent(Component.class)) return type.getAnnotation(Component.class).value();
         if (type.isAnnotationPresent(Repository.class)) return type.getAnnotation(Repository.class).value();
+        if (type.isAnnotationPresent(org.springframework.web.bind.annotation.RestController.class)) {
+            return type.getAnnotation(org.springframework.web.bind.annotation.RestController.class).value();
+        }
         return "";
     }
 

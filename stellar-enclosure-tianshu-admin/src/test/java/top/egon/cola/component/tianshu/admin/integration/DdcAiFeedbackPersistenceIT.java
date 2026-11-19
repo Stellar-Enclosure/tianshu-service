@@ -1,6 +1,7 @@
 package top.egon.cola.component.tianshu.admin.integration;
 
 import org.junit.jupiter.api.Test;
+import org.postgresql.util.PSQLException;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -47,8 +48,12 @@ class DdcAiFeedbackPersistenceIT {
             connection.commit();
             assertThatThrownBy(() -> insertFeedback(connection, first, DdcAiPersistenceIT.nextId(), usageId,
                     "PENDING", Instant.now()))
-                    .isInstanceOf(SQLException.class)
-                    .satisfies(failure -> assertThat(((SQLException) failure).getSQLState()).isEqualTo("23505"));
+                    .isInstanceOfSatisfying(PSQLException.class, failure -> {
+                        assertThat(failure.getSQLState()).isEqualTo("23505");
+                        assertThat(failure.getServerErrorMessage()).isNotNull();
+                        assertThat(failure.getServerErrorMessage().getConstraint())
+                                .isEqualTo("uk_ai_usage_feedback_usage");
+                    });
             connection.rollback();
             insertFeedback(connection, second, DdcAiPersistenceIT.nextId(), usageId, "PENDING", Instant.now());
             connection.commit();
@@ -102,11 +107,11 @@ class DdcAiFeedbackPersistenceIT {
                 List<Long> second = b.get(60, TimeUnit.SECONDS);
                 Set<Long> union = new HashSet<>(first);
                 union.addAll(second);
-                assertThat(first).doesNotContainAnyElementsOf(second);
-                assertThat(union).isNotEmpty();
+                // Both workers may select the same version window before either can commit a claim.
+                assertThat(union).hasSize(first.size() + second.size()).isNotEmpty();
                 try (Connection verify = open()) {
                     List<Long> remaining = claim(verify, fixture, 40, Instant.now()).stream().map(Candidate::id).toList();
-                    assertThat(remaining).doesNotContainAnyElementsOf(union);
+                    assertThat(remaining).noneMatch(union::contains);
                     assertThat(union.size() + remaining.size()).isEqualTo(40);
                     verify.rollback();
                 }

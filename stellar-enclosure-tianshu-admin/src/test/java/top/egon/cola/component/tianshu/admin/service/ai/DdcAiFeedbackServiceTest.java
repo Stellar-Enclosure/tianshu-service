@@ -1,6 +1,5 @@
 package top.egon.cola.component.tianshu.admin.service.ai;
 
-import io.grpc.Context;
 import jakarta.validation.Validation;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,11 +26,14 @@ import top.egon.cola.component.tianshu.admin.model.vo.DdcAiUsageReportReceiptRes
 import top.egon.cola.component.tianshu.admin.repository.DdcAiResourceRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcAiUsageFeedbackRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcAiVersionRepository;
-import top.egon.cola.component.tianshu.admin.security.rpc.DdcServicePrincipal;
 import top.egon.cola.component.tianshu.admin.service.ai.impl.DdcAiFeedbackServiceImpl;
 import top.egon.cola.component.tianshu.admin.service.ai.validation.DdcAiScopeValidator;
 import top.egon.cola.component.tianshu.model.ai.DdcAiOutcomeEnum;
 import top.egon.cola.component.tianshu.model.ai.DdcAiUsageReportStatusEnum;
+
+import top.egon.cola.component.tianshu.admin.security.ai.DdcAiServiceCallerTestFixture;
+import top.egon.cola.component.tianshu.api.ai.DdcAiHttpContract.Operation;
+import top.egon.cola.component.tianshu.model.ai.DdcAiScopeDTO;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -102,23 +104,17 @@ class DdcAiFeedbackServiceTest {
     }
 
     @Test
-    void unscopedReporterIsAttributedToTheAuthorizedResourceScope() {
-        DdcServicePrincipal unscoped = new DdcServicePrincipal("runtime", "SDK", Set.of("*"), Set.of("*"),
-                Set.of("*"), Set.of("AI_REPORT"), null, null, null, 42L, "tenant-42", Set.of("*"));
-        Context context = unscoped.bind(Context.current());
-        Context previous = context.attach();
-        try {
-            service.accept(DdcAiUsageReportBatchCommand.builder()
-                    .reports(List.of(report("01JAX0M7Q9K2R5T8V1W4X7Y0ZB"))).build());
-        } finally {
-            context.detach(previous);
-        }
-
+    void attributionComesFromVerifiedSourceRatherThanTheResourceOwner() {
+        DdcAiServiceCallerTestFixture.call(Operation.REPORT, scope(),
+                new DdcAiScopeDTO("runtime-biz", "unused", "runtime-env", "runtime-app"),
+                42L, "runtime", "rotated-secret", NOW, () -> service.accept(DdcAiUsageReportBatchCommand.builder()
+                        .reports(List.of(report("01JAX0M7Q9K2R5T8V1W4X7Y0ZB"))).build()));
         ArgumentCaptor<DdcAiUsageFeedbackBO> inserted = ArgumentCaptor.forClass(DdcAiUsageFeedbackBO.class);
         verify(feedbackRepository).insert(inserted.capture());
-        assertThat(inserted.getValue().getBizCode()).isEqualTo("retail");
-        assertThat(inserted.getValue().getEnvCode()).isEqualTo("prod");
-        assertThat(inserted.getValue().getAppCode()).isEqualTo("assistant-app");
+        assertThat(inserted.getValue().getBizCode()).isEqualTo("runtime-biz");
+        assertThat(inserted.getValue().getEnvCode()).isEqualTo("runtime-env");
+        assertThat(inserted.getValue().getAppCode()).isEqualTo("runtime-app");
+        assertThat(inserted.getValue().getReporterCredentialId()).isEqualTo("runtime");
     }
 
     @Test
@@ -135,7 +131,8 @@ class DdcAiFeedbackServiceTest {
     void acceptMapsUniqueViolationToDuplicateAndKeepsOrder() {
         when(feedbackRepository.insert(any()))
                 .thenAnswer(invocation -> invocation.getArgument(0))
-                .thenThrow(new DuplicateKeyException("uk_ai_usage_feedback_usage"))
+                .thenThrow(new DuplicateKeyException("usage duplicate", new org.postgresql.util.PSQLException(
+                        new org.postgresql.util.ServerErrorMessage("SERROR\u0000C23505\u0000nuk_ai_usage_feedback_usage\u0000\u0000"))))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
         DdcAiUsageReportReceiptResult receipt = accept(report("01JAX0M7Q9K2R5T8V1W4X7Y0Z1"),
@@ -144,6 +141,13 @@ class DdcAiFeedbackServiceTest {
         assertThat(receipt.getItems()).extracting(DdcAiUsageReportReceiptResult.ItemResult::getStatus).containsExactly(
                 DdcAiUsageReportStatusEnum.ACCEPTED, DdcAiUsageReportStatusEnum.ACCEPTED_DUPLICATE,
                 DdcAiUsageReportStatusEnum.ACCEPTED);
+    }
+
+    @Test
+    void unrelatedStorageIntegrityFailureIsNeverAcknowledgedAsAUsageDuplicate() {
+        when(feedbackRepository.insert(any())).thenThrow(new org.springframework.dao.DataIntegrityViolationException("foreign-key-storage-failure"));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> accept(report("01JAX0M7Q9K2R5T8V1W4X7Y0Z1")))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
     }
 
     @Test
@@ -228,16 +232,12 @@ class DdcAiFeedbackServiceTest {
     }
 
     private DdcAiUsageReportReceiptResult accept(DdcAiUsageReportCommand... reports) {
-        DdcServicePrincipal principal = new DdcServicePrincipal("runtime", "SDK", Set.of("assistant-app"),
-                Set.of("prod"), Set.of("retail"), Set.of("AI_REPORT"), "assistant-app", "prod", "retail", 42L,
-                "tenant-42", Set.of("prod-*"));
-        Context context = principal.bind(Context.current());
-        Context previous = context.attach();
-        try {
-            return service.accept(DdcAiUsageReportBatchCommand.builder().reports(List.of(reports)).build());
-        } finally {
-            context.detach(previous);
-        }
+        return DdcAiServiceCallerTestFixture.call(Operation.REPORT, scope(), 42L, "runtime", "secret-v1", NOW,
+                () -> service.accept(DdcAiUsageReportBatchCommand.builder().reports(List.of(reports)).build()));
+    }
+
+    private static DdcAiScopeDTO scope() {
+        return new DdcAiScopeDTO("retail", "prod-space", "prod", "assistant-app");
     }
 
     private static DdcAiUsageReportCommand report(String usageId) {

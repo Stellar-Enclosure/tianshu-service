@@ -17,7 +17,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
 import top.egon.cola.component.common.mybatis.autoconfigure.EgonColaMybatisPlusProperties;
 import top.egon.cola.component.common.mybatis.model.EgonColaIdentifierGenerator;
-import top.egon.cola.component.tianshu.admin.config.DdcAdminProperties;
 import top.egon.cola.component.tianshu.admin.config.DdcServiceObservationBindings;
 import top.egon.cola.component.tianshu.admin.controller.register.DdcRegistryAdminController;
 import top.egon.cola.component.tianshu.admin.dao.DdcServiceObservationMapper;
@@ -347,7 +346,7 @@ class DdcServiceObservationRepositoryTest {
                     .withUserConfiguration(DdcServiceObservationBindings.class)
                     .withBean("ddcTenantRegistry", DdcTenantRegistry.class, () -> new DdcTenantRegistry(
                             new DdcTenantAdminProperties().setBindings(List.of(new DdcTenantBindingDTO(
-                                    TENANT.tenantId(), TENANT.identityTenantId(), true))), new DdcAdminProperties()))
+                                    TENANT.tenantId(), TENANT.identityTenantId(), true)))))
                     .withPropertyValues(DdcServiceObservationBindings.PREFIX + ".bindings-file=" + path,
                             DdcServiceObservationBindings.PREFIX + ".bindings-sha256=" + sha256)
                     .run(reader -> {
