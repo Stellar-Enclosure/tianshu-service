@@ -1,5 +1,9 @@
 package top.egon.cola.component.tianshu.admin.service.si;
 
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
+import org.springframework.lang.Nullable;
 import top.egon.cola.component.common.core.pojo.PageQuery;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcSiBindingBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcSiReferenceBO;
@@ -74,6 +78,12 @@ public interface DdcSiResourceService {
             Long tenantId, String bizCode, String namespaceCode, String envCode,
             String ownerAppCode, String callerAppCode, DdcSiKindEnum kind, String resourceKey,
             Integer requestedVersionNo);
+
+    /** Consumes the independently verified service caller and a separately requested owner. */
+    Optional<DdcSiResourceDescriptor> resolveExecutionResource(
+            @NotNull @Positive Long tenantId, @NotBlank String bizCode, @NotBlank String namespaceCode,
+            @NotBlank String envCode, @Nullable String ownerAppCode, @NotBlank String callerAppCode,
+            @NotNull DdcSiKindEnum kind, @NotBlank String resourceKey, @Nullable @Positive Long requestedVersionNo);
 
     DdcSiResourceDescriptor registerManaged(DdcSiSelfRegistrationRequest request, boolean allowOverwriteConsole);
 

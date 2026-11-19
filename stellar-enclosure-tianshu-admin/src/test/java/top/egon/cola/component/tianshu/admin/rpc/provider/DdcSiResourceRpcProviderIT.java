@@ -2,6 +2,7 @@ package top.egon.cola.component.tianshu.admin.rpc.provider;
 
 import io.grpc.Context;
 import io.grpc.Contexts;
+import io.grpc.ConnectivityState;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
 import io.grpc.Server;
@@ -12,6 +13,14 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
+import io.grpc.stub.MetadataUtils;
+import jakarta.validation.Validation;
+import jakarta.validation.ValidatorFactory;
+import org.slf4j.MDC;
+import org.springframework.beans.factory.support.StaticListableBeanFactory;
+import org.springframework.dao.TransientDataAccessResourceException;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import top.egon.cola.component.common.core.exception.CommonException;
@@ -22,6 +31,23 @@ import top.egon.cola.component.rpc.tianshu.contract.proto.v1.RegisterManagedSiRe
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.ResolveSiResourceRequest;
 import top.egon.cola.component.rpc.tianshu.contract.proto.v1.SemanticSearchSiRequest;
 import top.egon.cola.component.rpc.tianshu.mapping.DdcSiProtoMapperImpl;
+import top.egon.cola.component.rpc.tianshu.mapping.DdcRpcStatusExceptionMapper;
+import top.egon.cola.component.rpc.context.invocation.RpcMetadataKeys;
+import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantBindingDTO;
+import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextExecutor;
+import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantRegistry;
+import top.egon.cola.component.tianshu.model.si.DdcSiDependencyManifestVO;
+import top.egon.cola.platform.tianquan.shoubing.contract.ServiceIdentityPrincipal;
+import top.egon.cola.platform.tianquan.shoubing.contract.ServiceTokenContext;
+import top.egon.cola.platform.tianquan.shoubing.starter.autoconfigure.IdpStarterProperties;
+import top.egon.cola.platform.tianquan.shoubing.starter.security.AccessTokenVerification;
+import top.egon.cola.platform.tianquan.shoubing.starter.security.IdpAuthenticationToken;
+import top.egon.cola.platform.tianquan.shoubing.starter.security.IdpJwtVerifier;
+import top.egon.cola.platform.tianquan.shoubing.starter.security.UserAccessTokenVerifier;
+import top.egon.cola.platform.tianquan.shoubing.starter.security.domain.TokenAuditProofBO;
+import top.egon.cola.platform.tianquan.shoubing.starter.security.rpc.IdpRpcAdmissionIdentityResolver;
+import top.egon.cola.platform.tianquan.shoubing.starter.security.rpc.IdpRpcBearerServerInterceptor;
+import top.egon.cola.platform.tianquan.shoubing.starter.security.rpc.IdpRpcSecurityContext;
 import top.egon.cola.component.tianshu.admin.security.rpc.DdcRpcScopeExtractor;
 import top.egon.cola.component.tianshu.admin.security.rpc.DdcServicePrincipal;
 import top.egon.cola.component.tianshu.admin.service.si.DdcSiResourceService;
@@ -31,7 +57,15 @@ import top.egon.cola.component.tianshu.model.si.DdcSiResourceDescriptor;
 import top.egon.cola.component.tianshu.model.si.DdcSiSearchHit;
 import top.egon.cola.component.tianshu.model.si.DdcSiSourceTypeEnum;
 
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.HexFormat;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -43,6 +77,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -51,8 +88,28 @@ class DdcSiResourceRpcProviderIT {
     private static final long TENANT_ID = 1001L;
     private static final Instant NOW = Instant.parse("2026-11-16T10:00:00Z");
 
+    private static final URI ISSUER = URI.create("https://idp.example/tenant");
+    private static final URI RESOURCE = URI.create("https://tianshu.example/si");
+    private static final Instant NATIVE_NOW = Instant.now();
+    private static final String FULL_RESOLVE = DdcSiResourceGrpcServiceGrpc.getResolveSiResourceMethod().getFullMethodName();
+
     private Server server;
     private ManagedChannel channel;
+
+    @Test
+    void executionRequiredRejectsLegacyScopeOnlyBeforeResourceServiceInvocation() throws Exception {
+        var resources = mock(DdcSiResourceService.class);
+        var provider = new DdcSiResourceRpcProvider(resources, new DdcSiProtoMapperImpl());
+        var request = ResolveSiResourceRequest.newBuilder().setTenantId(TENANT_ID).setBizCode("ai")
+                .setNamespaceCode("core").setEnvCode("prod").setOwnerAppCode("owner-app")
+                .setCallerAppCode("caller-app").setKind("AGENT").setResourceKey("planner")
+                .setExactVersionNo(1).setExecutionRequired(true).build();
+        Throwable rejected = principal(TENANT_ID).bind(Context.current()).call(() ->
+                org.assertj.core.api.Assertions.catchThrowable(() -> provider.resolveSiResource(request)));
+        assertThat(rejected).isInstanceOfSatisfying(StatusRuntimeException.class,
+                failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAUTHENTICATED));
+        verifyNoInteractions(resources);
+    }
 
     @AfterEach
     void tearDown() throws InterruptedException {
@@ -152,6 +209,217 @@ class DdcSiResourceRpcProviderIT {
                 .isInstanceOf(StatusRuntimeException.class)
                 .satisfies(ex -> assertThat(((StatusRuntimeException) ex).getStatus().getCode())
                         .isEqualTo(Status.Code.ABORTED));
+    }
+
+    @Test
+    void nativeServiceProofUsesMappedLocalTenantAndVerifiedCallerWithoutOwnerConflation() throws Exception {
+        var resources = mock(DdcSiResourceService.class);
+        when(resources.resolveExecutionResource(TENANT_ID, "ai", "core", "prod", "owner-app", "tianji",
+                DdcSiKindEnum.AGENT, "planner", 3_000_000_001L)).thenAnswer(invocation -> {
+            assertThat(MDC.get("tenantId")).isEqualTo("1001");
+            assertThat(MDC.get("userId")).isEqualTo("service:runtime-client");
+            return Optional.of(executionDescriptor(3_000_000_001L));
+        });
+        try (var fixture = new NativeFixture(resources, servicePrincipal(), true)) {
+            var response = fixture.stub().resolveSiResource(executionRequest().setExactVersionNo(3_000_000_001L).build());
+            assertThat(response.getResource().getResolvedVersionNo()).isEqualTo(3_000_000_001L);
+            assertThat(response.getResource().getResolvedVersionId()).isEqualTo(920001L);
+            assertThat(response.getResource().hasDependencyManifest()).isTrue();
+            assertThat(response.getResource().getOwnerAppCode()).isEqualTo("owner-app");
+            verify(resources, times(1)).resolveExecutionResource(TENANT_ID, "ai", "core", "prod", "owner-app", "tianji",
+                    DdcSiKindEnum.AGENT, "planner", 3_000_000_001L);
+            verify(fixture.verifier, times(1)).verifyAny("verified-fixture");
+        }
+    }
+
+    @Test
+    void nativeProofRejectsSpoofedCallerSourceOrTenantBeforeDomain() throws Exception {
+        var resources = mock(DdcSiResourceService.class);
+        try (var fixture = new NativeFixture(resources, servicePrincipal(), true)) {
+            for (var request : List.of(executionRequest().setCallerAppCode("owner-app").build(),
+                    executionRequest().setBizCode("another-biz").build(),
+                    executionRequest().setEnvCode("dev").build(),
+                    executionRequest().setTenantId(90001L).build())) {
+                rejected(Status.Code.PERMISSION_DENIED, () -> fixture.stub().resolveSiResource(request));
+            }
+            verifyNoInteractions(resources);
+        }
+    }
+
+    @Test
+    void nativeProofWithoutMethodAuthorizationFrameCannotInvokeExecution() throws Exception {
+        var resources = mock(DdcSiResourceService.class);
+        var principal = servicePrincipal();
+        var identityBeans = new StaticListableBeanFactory(Map.of("idpRpcAdmissionIdentityResolver", new IdpRpcAdmissionIdentityResolver()));
+        var provider = new DdcSiResourceRpcProvider(resources, new DdcSiProtoMapperImpl(),
+                identityBeans.getBeanProvider(IdpRpcAdmissionIdentityResolver.class), tenantRegistry(),
+                new DdcTenantContextExecutor(), Clock.fixed(NATIVE_NOW, ZoneOffset.UTC));
+        var prior = SecurityContextHolder.getContext();
+        var bare = new IdpAuthenticationToken(principal, List.of(new SimpleGrantedAuthority("SCOPE_si:read")), ISSUER);
+        bare.setDetails(proof());
+        var springContext = SecurityContextHolder.createEmptyContext();
+        springContext.setAuthentication(bare);
+        try {
+            SecurityContextHolder.setContext(springContext);
+            IdpRpcSecurityContext.with(principal, "verified-fixture", proof(), null, principal.scopes()).run(() ->
+                    rejected(Status.Code.UNAUTHENTICATED, () -> provider.resolveSiResource(executionRequest().build())));
+        } finally { SecurityContextHolder.setContext(prior); }
+        verifyNoInteractions(resources);
+    }
+
+    @Test
+    void nativeVerifiedMethodWithoutConfiguredAuthorityFailsUnavailable() throws Exception {
+        var resources = mock(DdcSiResourceService.class);
+        try (var fixture = new NativeFixture(resources, servicePrincipal(), false)) {
+            rejected(Status.Code.UNAVAILABLE, () -> fixture.stub().resolveSiResource(executionRequest().build()));
+            verifyNoInteractions(resources);
+        }
+    }
+
+    @Test
+    void executionSelectorsAreStrictAndNeverDowngradeToLegacyMetadata() throws Exception {
+        var resources = mock(DdcSiResourceService.class);
+        try (var fixture = new NativeFixture(resources, servicePrincipal(), true)) {
+            for (var request : List.of(executionRequest().setAppCode("legacy").build(),
+                    executionRequest().setPinnedVersionNo(1).build(), executionRequest().setExactVersionNo(0).build(),
+                    executionRequest().setOwnerAppCode("").build(), executionRequest().setCallerAppCode(" tianji").build(),
+                    executionRequest().setExecutionRequired(false).build())) {
+                rejected(Status.Code.INVALID_ARGUMENT, () -> fixture.stub().resolveSiResource(request));
+            }
+            verifyNoInteractions(resources);
+        }
+    }
+
+    @Test
+    void namespaceOwnedResourceKeepsOwnerAbsentAndDoesNotDefaultToCaller() throws Exception {
+        var resources = mock(DdcSiResourceService.class);
+        var descriptor = executionDescriptor(1L).setOwnerAppCode(null);
+        when(resources.resolveExecutionResource(TENANT_ID, "ai", "core", "prod", null, "tianji",
+                DdcSiKindEnum.AGENT, "planner", 1L)).thenReturn(Optional.of(descriptor));
+        try (var fixture = new NativeFixture(resources, servicePrincipal(), true)) {
+            var response = fixture.stub().resolveSiResource(executionRequest().clearOwnerAppCode().build());
+            assertThat(response.getResource().hasOwnerAppCode()).isFalse();
+            verify(resources).resolveExecutionResource(TENANT_ID, "ai", "core", "prod", null, "tianji",
+                    DdcSiKindEnum.AGENT, "planner", 1L);
+        }
+    }
+
+    @Test
+    void fixedHistoryForbiddenAndUnavailableRemainDistinctWithNoMetadataFallback() throws Exception {
+        var resources = mock(DdcSiResourceService.class);
+        when(resources.resolveExecutionResource(TENANT_ID, "ai", "core", "prod", "owner-app", "tianji",
+                DdcSiKindEnum.AGENT, "planner", 1L))
+                .thenThrow(new CommonException(56999, "SI_PINNED_HISTORY_UNAVAILABLE", "Fixed history is unavailable"))
+                .thenThrow(new CommonException(56403, "TIANSHU_SI_FORBIDDEN", "Execution is forbidden"))
+                .thenThrow(new TransientDataAccessResourceException("synthetic-store-detail"))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(executionDescriptor(1L).setDependencyManifest(null)));
+        try (var fixture = new NativeFixture(resources, servicePrincipal(), true)) {
+            var failure = org.assertj.core.api.Assertions.catchThrowable(() -> fixture.stub().resolveSiResource(executionRequest().build()));
+            assertThat(failure).isInstanceOfSatisfying(StatusRuntimeException.class, status -> {
+                assertThat(status.getStatus().getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+                assertThat(status.getTrailers().get(DdcRpcStatusExceptionMapper.ERROR_DETAIL).getCode())
+                        .isEqualTo("SI_PINNED_HISTORY_UNAVAILABLE");
+            });
+            rejected(Status.Code.PERMISSION_DENIED, () -> fixture.stub().resolveSiResource(executionRequest().build()));
+            rejected(Status.Code.UNAVAILABLE, () -> fixture.stub().resolveSiResource(executionRequest().build()));
+            rejected(Status.Code.FAILED_PRECONDITION, () -> fixture.stub().resolveSiResource(executionRequest().build()));
+            rejected(Status.Code.FAILED_PRECONDITION, () -> fixture.stub().resolveSiResource(executionRequest().build()));
+            verify(resources, times(5)).resolveExecutionResource(TENANT_ID, "ai", "core", "prod", "owner-app", "tianji",
+                    DdcSiKindEnum.AGENT, "planner", 1L);
+        }
+    }
+
+    private static ResolveSiResourceRequest.Builder executionRequest() {
+        return ResolveSiResourceRequest.newBuilder().setTenantId(TENANT_ID).setBizCode("ai")
+                .setNamespaceCode("core").setEnvCode("prod").setOwnerAppCode("owner-app").setCallerAppCode("tianji")
+                .setKind("AGENT").setResourceKey("planner").setExactVersionNo(1).setExecutionRequired(true);
+    }
+
+    private static ServiceIdentityPrincipal servicePrincipal() {
+        return new ServiceIdentityPrincipal("runtime-client", "90001", "runtime-client", "fixture-jti", RESOURCE,
+                1L, Set.of("si:read"), "ai", "tianji", "prod", "fixture-credential",
+                NATIVE_NOW.minusSeconds(30), NATIVE_NOW.plusSeconds(300), "runtime-app", ServiceTokenContext.TENANT);
+    }
+
+    private static TokenAuditProofBO proof() {
+        return new TokenAuditProofBO(ISSUER, RESOURCE, "a".repeat(64), "b".repeat(64), "c".repeat(64));
+    }
+
+    private static DdcTenantRegistry tenantRegistry() {
+        var tenants = mock(DdcTenantRegistry.class);
+        when(tenants.requireByIdentityTenantId("90001")).thenReturn(new DdcTenantBindingDTO(TENANT_ID, "90001", true));
+        return tenants;
+    }
+
+    private static DdcSiResourceDescriptor executionDescriptor(long version) throws Exception {
+        var digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest("{}".getBytes(StandardCharsets.UTF_8)));
+        var manifest = DdcSiDependencyManifestVO.create(new DdcSiDependencyManifestVO.VersionIdentityVO("1001", "910001",
+                "920001", Long.toString(version), DdcSiKindEnum.AGENT, "prod", digest), null, List.of(), List.of());
+        return DdcSiResourceDescriptor.builder().tenantId(TENANT_ID).bizCode("ai").namespaceCode("core").envCode("prod")
+                .ownerAppCode("owner-app").resourceId(910001L).kind(DdcSiKindEnum.AGENT).resourceKey("planner")
+                .displayName("Planner").status(DdcSiLifecycleStatusEnum.PUBLISHED).sourceType(DdcSiSourceTypeEnum.AUTO_REPORTED)
+                .activeVersionNo(2).resolvedVersionId(920001L).resolvedVersionNo(version).digestSha256(digest).specJson("{}")
+                .dependencyManifest(manifest).publishedAt(NOW).updatedAt(NOW).build();
+    }
+
+    private static void rejected(Status.Code code, Runnable action) {
+        assertThatThrownBy(action::run).isInstanceOfSatisfying(StatusRuntimeException.class,
+                failure -> assertThat(failure.getStatus().getCode()).isEqualTo(code));
+    }
+
+    /** The real official OAuth interceptor creates the non-public method authorization frame over TCP. */
+    private static final class NativeFixture implements AutoCloseable {
+        private final ValidatorFactory validators = Validation.buildDefaultValidatorFactory();
+        private final IdpJwtVerifier verifier = mock(IdpJwtVerifier.class);
+        private final Server server;
+        private final ManagedChannel channel;
+
+        private NativeFixture(DdcSiResourceService resources, ServiceIdentityPrincipal principal, boolean configuredAuthority) throws Exception {
+            doAnswer(invocation -> new AccessTokenVerification.Valid<>(principal, principal.scopes(), proof(), ISSUER))
+                    .when(verifier).verifyAny("verified-fixture");
+            var policies = new IdpStarterProperties();
+            policies.getRpc().setEnabled(true);
+            policies.getRpc().getProvider().setEnabled(true);
+            policies.getRpc().getProvider().setMethods(Map.of(FULL_RESOLVE, new IdpStarterProperties.RpcProviderMethodProperties()
+                    .setRequired(true).setPrincipalKind(IdpStarterProperties.RpcPrincipalKindEnum.SERVICE)
+                    .setScopeContext(ServiceTokenContext.TENANT).setRequiredScopes(Set.of("si:read")).setExpectedResourceUri(RESOURCE)));
+            var interceptor = IdpRpcBearerServerInterceptor.createConfigured(mock(UserAccessTokenVerifier.class), verifier,
+                    policies, null, validators.getValidator());
+            interceptor.validateConfiguration();
+            var identities = new StaticListableBeanFactory(configuredAuthority
+                    ? Map.of("idpRpcAdmissionIdentityResolver", new IdpRpcAdmissionIdentityResolver()) : Map.of());
+            var provider = new DdcSiResourceRpcProvider(resources, new DdcSiProtoMapperImpl(),
+                    identities.getBeanProvider(IdpRpcAdmissionIdentityResolver.class), tenantRegistry(),
+                    new DdcTenantContextExecutor(), Clock.fixed(NATIVE_NOW, ZoneOffset.UTC));
+            server = NettyServerBuilder.forPort(0).addService(provider).intercept(interceptor).build().start();
+            channel = NettyChannelBuilder.forAddress("127.0.0.1", server.getPort()).usePlaintext().disableRetry()
+                    .disableServiceConfigLookUp().build();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            ConnectivityState state = channel.getState(true);
+            while (state != ConnectivityState.READY && System.nanoTime() < deadline) {
+                var changed = new CountDownLatch(1);
+                channel.notifyWhenStateChanged(state, changed::countDown);
+                changed.await(Math.max(1, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+                state = channel.getState(true);
+            }
+            if (state != ConnectivityState.READY) { close(); throw new IllegalStateException("Synthetic native channel did not become ready"); }
+        }
+
+        private DdcSiResourceGrpcServiceGrpc.DdcSiResourceGrpcServiceBlockingStub stub() {
+            var headers = new Metadata();
+            headers.put(RpcMetadataKeys.AUTHORIZATION, "Bearer verified-fixture");
+            return DdcSiResourceGrpcServiceGrpc.newBlockingStub(channel)
+                    .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(headers)).withDeadlineAfter(3, TimeUnit.SECONDS);
+        }
+
+        @Override public void close() throws InterruptedException {
+            try { channel.shutdownNow().awaitTermination(3, TimeUnit.SECONDS); }
+            finally {
+                try { server.shutdownNow().awaitTermination(3, TimeUnit.SECONDS); }
+                finally { validators.close(); }
+            }
+        }
     }
 
     @Test

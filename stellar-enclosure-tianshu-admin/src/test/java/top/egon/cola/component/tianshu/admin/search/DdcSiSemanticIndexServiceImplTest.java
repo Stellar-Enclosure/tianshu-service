@@ -17,9 +17,12 @@ import top.egon.cola.component.tianshu.admin.model.bo.DdcSiResourceBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcSiVersionBO;
 import top.egon.cola.component.tianshu.admin.model.po.DdcSiEmbeddingChunkPO;
 import top.egon.cola.component.tianshu.admin.repository.DdcSiResourceRepository;
+import top.egon.cola.component.tianshu.admin.service.si.DdcSiDependencyValidator;
 import top.egon.cola.component.tianshu.admin.service.si.strategy.DdcSiAgentContentStrategy;
 import top.egon.cola.component.tianshu.admin.service.si.strategy.DdcSiContentStrategy;
 import top.egon.cola.component.tianshu.model.si.DdcSiKindEnum;
+import top.egon.cola.component.tianshu.model.si.DdcSiDependencyManifestVO;
+import top.egon.cola.component.tianshu.model.si.DdcSiDependencyManifestVO.VersionIdentityVO;
 import top.egon.cola.component.tianshu.model.si.DdcSiSearchHit;
 import top.egon.cola.component.tianshu.model.si.DdcSiSemanticSearchQuery;
 
@@ -85,7 +88,23 @@ class DdcSiSemanticIndexServiceImplTest {
                 fixedClock,
                 Duration.ofMillis(150),
                 60,
-                50);
+                50,
+                new DdcSiDependencyValidator(repository, new ObjectMapper()));
+    }
+
+    @Test
+    void missingExecutionManifestCannotMutateSearchOrEmbeddingState() {
+        var resource = DdcSiResourceBO.builder().id(101L).tenantId(1L).envCode("dev").kind(DdcSiKindEnum.AGENT)
+                .displayName("Planner").resourceKey("planner").build();
+        var version = DdcSiVersionBO.builder().id(201L).tenantId(1L).resourceId(101L).versionNo(1L)
+                .envCode("dev").kind(DdcSiKindEnum.AGENT).specJson("{\"modelKey\":\"example\"}").build();
+        when(repository.findActiveById(1L, 101L)).thenReturn(Optional.of(resource));
+        when(repository.findVersionById(1L, 201L)).thenReturn(Optional.of(version));
+        service.reindexVersionSync(1L, 101L, 201L);
+        verify(repository, never()).updateSearchTsv(anyLong(), anyLong(), anyString());
+        verify(chunkMapper, never()).deleteByVersionId(anyLong(), anyLong());
+        verify(chunkMapper, never()).insertChunk(any(), anyString());
+        verify(versionMapper, never()).updateIndexStatus(anyLong(), anyLong(), anyString(), any());
     }
 
     @Test
@@ -95,8 +114,11 @@ class DdcSiSemanticIndexServiceImplTest {
                 .kind(DdcSiKindEnum.AGENT).resourceKey("planner").displayName("Planner").description("Plan tasks")
                 .build();
         DdcSiVersionBO version = DdcSiVersionBO.builder()
-                .id(201L).resourceId(101L).versionNo(1L).kind(DdcSiKindEnum.AGENT)
+                .id(201L).tenantId(1L).resourceId(101L).versionNo(1L).envCode("dev").kind(DdcSiKindEnum.AGENT)
                 .specJson("{\"modelKey\":\"gpt-6-luna\"}").build();
+        version.setDigestSha256(DdcSiContentStrategy.sha256Hex(version.getSpecJson()));
+        var manifest = DdcSiDependencyManifestVO.create(identity(version), null, List.of(), List.of());
+        version.setDependencyManifestJson(new ObjectMapper().valueToTree(manifest));
 
         when(redisProvider.getIfAvailable()).thenReturn(redisTemplate);
         when(redisTemplate.opsForValue()).thenReturn(valueOps);
@@ -119,6 +141,35 @@ class DdcSiSemanticIndexServiceImplTest {
         service.reindexVersionSync(1L, 101L, 201L);
         verify(chunkMapper, never()).deleteByVersionId(999L, 999L);
         verify(versionMapper).updateIndexStatus(eq(1L), eq(201L), eq("FAILED"), any());
+    }
+
+    @Test
+    void invalidFrozenDependencyCannotMutateEvenIndexFailureStatus() {
+        var resource = DdcSiResourceBO.builder().id(101L).tenantId(1L).envCode("dev").kind(DdcSiKindEnum.AGENT)
+                .displayName("Planner").resourceKey("planner").build();
+        var version = DdcSiVersionBO.builder().id(201L).tenantId(1L).resourceId(101L).versionNo(1L).envCode("dev")
+                .kind(DdcSiKindEnum.AGENT).specJson("{\"modelKey\":\"example\"}").build();
+        version.setDigestSha256(DdcSiContentStrategy.sha256Hex(version.getSpecJson()));
+        var dependency = new VersionIdentityVO("1", "102", "202", "1", DdcSiKindEnum.PROMPT, "dev", "a".repeat(64));
+        var manifest = DdcSiDependencyManifestVO.create(identity(version), null, List.of(dependency),
+                List.of(new DdcSiDependencyManifestVO.EdgeVO("201", "202")));
+        version.setDependencyManifestJson(new ObjectMapper().valueToTree(manifest));
+        when(repository.findActiveById(1L, 101L)).thenReturn(Optional.of(resource));
+        when(repository.findVersionById(1L, 201L)).thenReturn(Optional.of(version));
+        when(repository.findHistoryVersionsByIds(1L, List.of(202L))).thenReturn(List.of());
+
+        service.reindexVersionSync(1L, 101L, 201L);
+
+        verify(repository, never()).updateSearchTsv(anyLong(), anyLong(), anyString());
+        verify(chunkMapper, never()).deleteByVersionId(anyLong(), anyLong());
+        verify(chunkMapper, never()).insertChunk(any(), anyString());
+        verify(versionMapper, never()).updateIndexStatus(anyLong(), anyLong(), anyString(), any());
+    }
+
+    private static VersionIdentityVO identity(DdcSiVersionBO version) {
+        return new VersionIdentityVO(version.getTenantId().toString(), version.getResourceId().toString(),
+                version.getId().toString(), version.getVersionNo().toString(), version.getKind(),
+                version.getEnvCode(), version.getDigestSha256());
     }
 
     @Test

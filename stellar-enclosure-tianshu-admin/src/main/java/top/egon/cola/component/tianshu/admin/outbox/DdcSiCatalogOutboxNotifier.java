@@ -58,9 +58,9 @@ public class DdcSiCatalogOutboxNotifier {
                                               DdcSiVersionBO version) {
         String eventId = "si-" + UUID.randomUUID().toString().replace("-", "");
         Long tenantId = resource.getTenantId();
-        Integer activeVer = version != null && version.getVersionNo() != null
-                ? version.getVersionNo().intValue()
-                : (resource.getCurrentVersionNo() == null ? null : resource.getCurrentVersionNo().intValue());
+        Long versionNo = version != null ? version.getVersionNo() : resource.getCurrentVersionNo();
+        Integer activeVer = versionNo == null || versionNo <= 0 || versionNo > Integer.MAX_VALUE
+                ? null : versionNo.intValue();
 
         DdcSiPublicationEvent event = DdcSiPublicationEvent.builder()
                 .eventId(eventId)
@@ -102,7 +102,8 @@ public class DdcSiCatalogOutboxNotifier {
         Long versionId = version != null ? version.getId() : resource.getCurrentVersionId();
         boolean reindexEligible = versionId != null
                 && (eventType == DdcSiPublicationEvent.EventType.PUBLISHED
-                || eventType == DdcSiPublicationEvent.EventType.PROMOTED);
+                || eventType == DdcSiPublicationEvent.EventType.PROMOTED
+                || eventType == DdcSiPublicationEvent.EventType.ROLLED_BACK);
         SiAfterCommitSignal signal = new SiAfterCommitSignal(
                 eventId, tenantId, resource.getBizCode(), namespaceCode, resource.getEnvCode(),
                 resource.getId(), reindexEligible ? versionId : null);

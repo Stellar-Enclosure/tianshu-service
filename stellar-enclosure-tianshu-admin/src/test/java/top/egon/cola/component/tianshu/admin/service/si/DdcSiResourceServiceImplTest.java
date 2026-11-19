@@ -23,6 +23,8 @@ import top.egon.cola.component.tianshu.admin.service.si.strategy.DdcSiContentStr
 import top.egon.cola.component.tianshu.admin.service.si.strategy.DdcSiMcpContentStrategy;
 import top.egon.cola.component.tianshu.admin.service.si.strategy.DdcSiPromptSkillContentStrategy;
 import top.egon.cola.component.tianshu.model.si.DdcSiBindingStatusEnum;
+import top.egon.cola.component.tianshu.model.si.DdcSiDependencyManifestVO;
+import top.egon.cola.component.tianshu.model.si.DdcSiDependencyManifestVO.VersionIdentityVO;
 import top.egon.cola.component.tianshu.model.si.DdcSiKindEnum;
 import top.egon.cola.component.tianshu.model.si.DdcSiLifecycleStatusEnum;
 import top.egon.cola.component.tianshu.model.si.DdcSiPublicationEvent;
@@ -59,8 +61,6 @@ class DdcSiResourceServiceImplTest {
     @Mock
     private DdcSiResourceRepository repository;
     @Mock
-    private DdcSiDependencyValidator dependencyValidator;
-    @Mock
     private DdcSiCatalogOutboxNotifier outboxNotifier;
     @Mock
     private DdcSiSemanticIndexService semanticIndexService;
@@ -92,7 +92,7 @@ class DdcSiResourceServiceImplTest {
         service = new DdcSiResourceServiceImpl(
                 repository,
                 strategies,
-                dependencyValidator,
+                new DdcSiDependencyValidator(repository, objectMapper),
                 transitionPolicy,
                 outboxNotifier,
                 semanticIndexService,
@@ -112,13 +112,11 @@ class DdcSiResourceServiceImplTest {
                 .sourceType(DdcSiSourceTypeEnum.CONSOLE).specJson(agentSpec)
                 .contentSha256("a".repeat(64)).lastVersionNo(0L).version(2L).build();
 
+        when(repository.findProjectedById(1L, 101L)).thenReturn(Optional.of(draft));
         when(repository.findActiveForUpdateById(1L, 101L)).thenReturn(Optional.of(draft));
         when(repository.allocateNextVersionNo(1L, 101L)).thenReturn(1L);
-        when(repository.insertVersion(any())).thenAnswer(inv -> {
-            DdcSiVersionBO v = inv.getArgument(0);
-            v.setId(201L);
-            return v;
-        });
+        when(repository.allocateVersionId()).thenReturn(201L);
+        when(repository.insertVersion(any())).thenAnswer(inv -> inv.getArgument(0));
         when(repository.updateVersioned(any())).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.publish(1L, 101L, 2L, "init release", "user-1"))
@@ -132,11 +130,10 @@ class DdcSiResourceServiceImplTest {
                 .lifecycleStatus(DdcSiLifecycleStatusEnum.PUBLISHED).lastVersionNo(1L)
                 .currentVersionId(201L).currentVersionNo(1L).version(3L).build();
         when(repository.updateVersioned(any())).thenReturn(Optional.of(updated));
-        when(repository.findVersionByResourceAndNo(1L, 101L, 1L)).thenReturn(Optional.of(
-                DdcSiVersionBO.builder().id(201L).resourceId(101L).versionNo(1L).digestSha256("b".repeat(64)).build()));
-
         DdcSiVersionBO published = service.publish(1L, 101L, 2L, "init release", "user-1");
         assertThat(published.getVersionNo()).isEqualTo(1L);
+        assertThat(published.getDependencyManifestJson().path("root").path("versionId").asText()).isEqualTo("201");
+        assertThat(published.getDependencyManifestJson().path("nodes").isEmpty()).isTrue();
         verify(outboxNotifier).enqueueAndScheduleAfterCommit(
                 eq(DdcSiPublicationEvent.EventType.PUBLISHED), any(DdcSiResourceBO.class), any(DdcSiVersionBO.class));
     }
@@ -152,25 +149,21 @@ class DdcSiResourceServiceImplTest {
         DdcSiBindingBO pinned = DdcSiBindingBO.builder()
                 .id(501L).appCode("tianji-agent-server").resourceId(101L).pinnedVersionNo(2L)
                 .status(DdcSiBindingStatusEnum.ACTIVE).build();
-        DdcSiVersionBO v2 = DdcSiVersionBO.builder()
-                .id(302L).resourceId(101L).versionNo(2L).kind(DdcSiKindEnum.AGENT)
-                .specJson("{\"modelKey\":\"pinned-v2\"}").digestSha256("d".repeat(64))
-                .publishedTime(fixedClock.instant()).build();
-
+        DdcSiVersionBO v2 = storedVersion(302L, 2L, "{\"modelKey\":\"pinned-v2\"}");
         when(repository.resolveNamespaceId(1L, "xingyuan", "default")).thenReturn(10L);
         when(repository.findByBusinessKey(1L, "xingyuan", 10L, "prod", "app-a", DdcSiKindEnum.AGENT, "planner"))
                 .thenReturn(Optional.of(resource));
         when(repository.findActiveBinding(1L, "xingyuan", 10L, "prod", "tianji-agent-server",
                 DdcSiKindEnum.AGENT, "planner")).thenReturn(Optional.of(pinned));
-        when(repository.findVersionByResourceAndNo(1L, 101L, 2L)).thenReturn(Optional.of(v2));
-        when(converter.toDescriptor(any(), any(), any())).thenAnswer(inv -> {
+        when(repository.findHistoryVersionByResourceAndNo(1L, 101L, 2L)).thenReturn(Optional.of(v2));
+        when(converter.toCatalogDescriptor(any(), any())).thenAnswer(inv -> {
             DdcSiResourceBO res = inv.getArgument(0);
             DdcSiVersionBO ver = inv.getArgument(1);
             return DdcSiResourceDescriptor.builder()
                     .tenantId(res.getTenantId()).bizCode(res.getBizCode()).namespaceCode(res.getNamespaceCode())
                     .envCode(res.getEnvCode()).kind(res.getKind()).resourceKey(res.getResourceKey())
                     .displayName(res.getDisplayName()).status(res.getLifecycleStatus()).sourceType(res.getSourceType())
-                    .activeVersionNo(ver.getVersionNo().intValue()).specJson(ver.getSpecJson())
+                    .activeVersionNo(ver.getVersionNo().intValue())
                     .digestSha256(ver.getDigestSha256()).build();
         });
 
@@ -178,7 +171,27 @@ class DdcSiResourceServiceImplTest {
                 1L, "xingyuan", "default", "prod", "app-a", "tianji-agent-server", DdcSiKindEnum.AGENT, "planner", null);
         assertThat(resolved).isPresent();
         assertThat(resolved.get().getActiveVersionNo()).isEqualTo(2);
-        assertThat(resolved.get().getSpecJson()).contains("pinned-v2");
+        assertThat(resolved.get().getDigestSha256()).isEqualTo(v2.getDigestSha256());
+        assertThat(resolved.get().getSpecJson()).isNull();
+    }
+
+    @Test
+    void requestedMissingVersionNeverReturnsCurrentBody() {
+        var resource = DdcSiResourceBO.builder().id(101L).tenantId(1L).bizCode("xingyuan")
+                .namespaceId(10L).namespaceCode("default").envCode("prod").appCode("app-a")
+                .kind(DdcSiKindEnum.AGENT).resourceKey("planner")
+                .lifecycleStatus(DdcSiLifecycleStatusEnum.PUBLISHED).currentVersionId(303L)
+                .currentVersionNo(3L).specJson("{\"modelKey\":\"latest\"}").build();
+        when(repository.resolveNamespaceId(1L, "xingyuan", "default")).thenReturn(10L);
+        when(repository.findByBusinessKey(1L, "xingyuan", 10L, "prod", "app-a",
+                DdcSiKindEnum.AGENT, "planner")).thenReturn(Optional.of(resource));
+        org.mockito.Mockito.lenient().when(converter.toDescriptor(eq(resource), org.mockito.ArgumentMatchers.isNull(), anyList()))
+                .thenReturn(DdcSiResourceDescriptor.builder().activeVersionNo(3).specJson(resource.getSpecJson()).build());
+
+        assertThatThrownBy(() -> service.resolveResource(1L, "xingyuan", "default", "prod", "app-a", "app-a",
+                DdcSiKindEnum.AGENT, "planner", 1)).isInstanceOf(CommonException.class);
+        verify(converter, never()).toDescriptor(any(), any(), any());
+        verify(converter, never()).toCatalogDescriptor(any(), any());
     }
 
     @Test
@@ -217,11 +230,157 @@ class DdcSiResourceServiceImplTest {
     void archivedResourceRejectsUpdatesAndPublish() {
         DdcSiResourceBO archived = DdcSiResourceBO.builder()
                 .id(101L).tenantId(1L).lifecycleStatus(DdcSiLifecycleStatusEnum.ARCHIVED).version(1L).build();
-        when(repository.findActiveForUpdateById(1L, 101L)).thenReturn(Optional.of(archived));
+        when(repository.findProjectedById(1L, 101L)).thenReturn(Optional.of(archived));
 
         assertThatThrownBy(() -> service.publish(1L, 101L, 1L, "retry", "user-1"))
                 .isInstanceOf(CommonException.class)
                 .satisfies(ex -> assertThat(((CommonException) ex).getCode()).isEqualTo(56409));
+    }
+
+    @Test
+    void rollbackPublishesANewVersionWithoutLookingUpTheEditableReferenceGraph() {
+        var resource = DdcSiResourceBO.builder().id(101L).tenantId(1L).bizCode("xingyuan")
+                .namespaceId(10L).namespaceCode("default").envCode("prod").appCode("app-a")
+                .kind(DdcSiKindEnum.AGENT).resourceKey("planner").version(10L).currentVersionId(303L)
+                .lifecycleStatus(DdcSiLifecycleStatusEnum.PUBLISHED).build();
+        var old = storedVersion(301L, 1L, "{\"modelKey\":\"original\"}");
+        when(repository.findActiveForUpdateById(1L, 101L)).thenReturn(Optional.of(resource));
+        when(repository.findHistoryVersionByResourceAndNo(1L, 101L, 1L)).thenReturn(Optional.of(old));
+        when(repository.allocateNextVersionNo(1L, 101L)).thenReturn(4L);
+        when(repository.allocateVersionId()).thenReturn(304L);
+        when(repository.insertVersion(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(repository.updateVersioned(any())).thenReturn(Optional.of(resource));
+
+        var rolledBack = service.rollback(1L, 101L, 10L, 1L, null, "operator");
+
+        assertThat(rolledBack.getId()).isEqualTo(304L);
+        assertThat(rolledBack.getVersionNo()).isEqualTo(4L);
+        assertThat(rolledBack.getDependencyManifestJson().at("/source/versionId").asText()).isEqualTo("301");
+        assertThat(rolledBack.getSpecJson()).isEqualTo(old.getSpecJson());
+        assertThat(resource.getCurrentVersionId()).isEqualTo(304L);
+        verify(outboxNotifier).enqueueAndScheduleAfterCommit(DdcSiPublicationEvent.EventType.ROLLED_BACK, resource, rolledBack);
+        verify(repository, never()).findReferencesBySource(any(), any(), any(), any());
+    }
+
+    @Test
+    void rollbackOutboxSignalSchedulesTheFreshVersionForIndexing() {
+        var adapters = new org.springframework.beans.factory.support.StaticListableBeanFactory();
+        adapters.addBean("siIndex", semanticIndexService);
+        var outbox = mock(top.egon.cola.component.outbox.api.TransactionalOutbox.class);
+        var notifier = new DdcSiCatalogOutboxNotifier(outbox,
+                adapters.getBeanProvider(org.springframework.data.redis.core.StringRedisTemplate.class),
+                adapters.getBeanProvider(DdcSiSemanticIndexService.class),
+                mock(org.springframework.context.ApplicationEventPublisher.class),
+                new ObjectMapper().findAndRegisterModules(), fixedClock);
+        var resource = DdcSiResourceBO.builder().id(101L).tenantId(1L).bizCode("xingyuan")
+                .namespaceCode("default").envCode("prod").kind(DdcSiKindEnum.AGENT).resourceKey("planner")
+                .currentVersionId(304L).build();
+        var fresh = storedVersion(304L, 4L, "{\"modelKey\":\"restored\"}");
+
+        notifier.enqueueAndScheduleAfterCommit(DdcSiPublicationEvent.EventType.ROLLED_BACK, resource, fresh);
+
+        verify(outbox).enqueue(any());
+        verify(semanticIndexService).scheduleReindex(1L, 101L, 304L);
+    }
+
+    @Test
+    void promotionRecordsTheFrozenSourceIdentityAndLocksSourceAndDestination() {
+        var source = DdcSiResourceBO.builder().id(101L).tenantId(1L).bizCode("xingyuan")
+                .namespaceId(10L).namespaceCode("default").envCode("staging").appCode("app-a")
+                .kind(DdcSiKindEnum.AGENT).resourceKey("planner").version(10L)
+                .currentVersionId(301L).currentVersionNo(1L).lifecycleStatus(DdcSiLifecycleStatusEnum.PUBLISHED).build();
+        var destination = DdcSiResourceBO.builder().id(99L).tenantId(1L).bizCode("xingyuan").namespaceId(10L)
+                .envCode("prod").appCode("app-a").kind(DdcSiKindEnum.AGENT).resourceKey("planner")
+                .version(0L).lifecycleStatus(DdcSiLifecycleStatusEnum.DRAFT).build();
+        var version = storedVersion(301L, 1L, "{\"modelKey\":\"original\"}", "staging");
+        when(repository.findProjectedById(1L, 101L)).thenReturn(Optional.of(source));
+        when(repository.findHistoryVersionByResourceAndNo(1L, 101L, 1L)).thenReturn(Optional.of(version));
+        when(repository.findHistoryVersionsByIds(1L, List.of(301L))).thenReturn(List.of(version));
+        when(repository.findByBusinessKey(1L, "xingyuan", 10L, "prod", "app-a", DdcSiKindEnum.AGENT, "planner"))
+                .thenReturn(Optional.of(destination));
+        when(repository.findActiveForUpdateById(1L, 99L)).thenReturn(Optional.of(destination));
+        when(repository.findActiveForUpdateById(1L, 101L)).thenReturn(Optional.of(source));
+        when(repository.allocateNextVersionNo(1L, 99L)).thenReturn(1L);
+        when(repository.allocateVersionId()).thenReturn(401L);
+        when(repository.insertVersion(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(repository.updateVersioned(any())).thenReturn(Optional.of(destination));
+
+        var promoted = service.promote(1L, 101L, "prod", null, "operator");
+
+        var order = org.mockito.Mockito.inOrder(repository);
+        order.verify(repository).findActiveForUpdateById(1L, 99L);
+        order.verify(repository).findActiveForUpdateById(1L, 101L);
+        order.verify(repository).allocateNextVersionNo(1L, 99L);
+        assertThat(promoted.getDependencyManifestJson().at("/root/envCode").asText()).isEqualTo("prod");
+        assertThat(promoted.getDependencyManifestJson().at("/source/versionId").asText()).isEqualTo("301");
+        assertThat(promoted.getDependencyManifestJson().at("/source/digestSha256").asText()).isEqualTo(version.getDigestSha256());
+        verify(outboxNotifier).enqueueAndScheduleAfterCommit(DdcSiPublicationEvent.EventType.PROMOTED, destination, promoted);
+    }
+
+    @Test
+    void strictExecutionRequiresAnActiveBindingForAnotherOwner() {
+        var resource = DdcSiResourceBO.builder().id(101L).tenantId(1L).bizCode("xingyuan")
+                .namespaceId(10L).envCode("prod").appCode("owner").kind(DdcSiKindEnum.AGENT).resourceKey("planner")
+                .lifecycleStatus(DdcSiLifecycleStatusEnum.PUBLISHED).currentVersionId(303L).build();
+        when(repository.resolveNamespaceId(1L, "xingyuan", "default")).thenReturn(10L);
+        when(repository.findByBusinessKey(1L, "xingyuan", 10L, "prod", "owner", DdcSiKindEnum.AGENT, "planner"))
+                .thenReturn(Optional.of(resource));
+
+        assertThatThrownBy(() -> service.resolveExecutionResource(1L, "xingyuan", "default", "prod",
+                "owner", "caller", DdcSiKindEnum.AGENT, "planner", 2L))
+                .isInstanceOfSatisfying(CommonException.class, exception -> assertThat(exception.getCode()).isEqualTo(56403));
+        verify(repository, never()).findHistoryVersionByResourceAndNo(any(), any(), any());
+    }
+
+    @Test
+    void catalogProjectionOmitsTheBodyWhileAuthorizedExecutionKeepsTheExactSnapshot() throws Exception {
+        var actual = org.mapstruct.factory.Mappers.getMapper(DdcSiResourceConverter.class);
+        var resource = DdcSiResourceBO.builder().id(101L).tenantId(1L).bizCode("xingyuan")
+                .namespaceCode("default").envCode("prod").appCode("").kind(DdcSiKindEnum.AGENT)
+                .resourceKey("planner").lifecycleStatus(DdcSiLifecycleStatusEnum.PUBLISHED)
+                .sourceType(DdcSiSourceTypeEnum.CONSOLE).specJson("{\"modelKey\":\"draft\"}").build();
+        var pinned = storedVersion(301L, 1L, "{\"modelKey\":\"fixed\"}");
+        var manifest = new ObjectMapper().treeToValue(pinned.getDependencyManifestJson(), DdcSiDependencyManifestVO.class);
+        var metadata = actual.toCatalogDescriptor(resource, pinned);
+        var executable = actual.toExecutionDescriptor(resource, pinned, manifest);
+
+        assertThat(metadata.getSpecJson()).isNull();
+        assertThat(metadata.getDependencyManifest()).isNull();
+        assertThat(metadata.getDigestSha256()).isEqualTo(pinned.getDigestSha256());
+        assertThat(executable.getOwnerAppCode()).isNull();
+        assertThat(executable.getSpecJson()).isEqualTo(pinned.getSpecJson());
+        assertThat(executable.isExecutionSnapshotShapeValid()).isTrue();
+    }
+
+    @Test
+    void strictUnpinnedResolutionUsesThePhysicalCurrentIdWithoutProjection() {
+        var resource = DdcSiResourceBO.builder().id(101L).tenantId(1L).bizCode("xingyuan")
+                .namespaceId(10L).envCode("prod").appCode("").kind(DdcSiKindEnum.AGENT).resourceKey("planner")
+                .lifecycleStatus(DdcSiLifecycleStatusEnum.PUBLISHED).currentVersionId(303L).build();
+        var version = storedVersion(303L, 3L, "{\"modelKey\":\"current\"}");
+        when(repository.resolveNamespaceId(1L, "xingyuan", "default")).thenReturn(10L);
+        when(repository.findByBusinessKey(1L, "xingyuan", 10L, "prod", "", DdcSiKindEnum.AGENT, "planner"))
+                .thenReturn(Optional.of(resource));
+        when(repository.findHistoryVersionsByIds(1L, List.of(303L))).thenReturn(List.of(version));
+        var descriptor = new DdcSiResourceDescriptor().setResolvedVersionNo(3L);
+        when(converter.toExecutionDescriptor(eq(resource), eq(version), any())).thenReturn(descriptor);
+
+        assertThat(service.resolveExecutionResource(1L, "xingyuan", "default", "prod",
+                null, "caller", DdcSiKindEnum.AGENT, "planner", null)).contains(descriptor);
+        assertThat(resource.getNamespaceCode()).isEqualTo("default");
+    }
+
+    private static DdcSiVersionBO storedVersion(Long id, Long versionNo, String body) {
+        return storedVersion(id, versionNo, body, "prod");
+    }
+
+    private static DdcSiVersionBO storedVersion(Long id, Long versionNo, String body, String env) {
+        String digest = DdcSiContentStrategy.sha256Hex(body);
+        var root = new VersionIdentityVO("1", "101", id.toString(), versionNo.toString(), DdcSiKindEnum.AGENT, env, digest);
+        return DdcSiVersionBO.builder().id(id).tenantId(1L).resourceId(101L).versionNo(versionNo)
+                .kind(DdcSiKindEnum.AGENT).envCode(env).specJson(body).digestSha256(digest)
+                .dependencyManifestJson(new ObjectMapper().valueToTree(DdcSiDependencyManifestVO.create(root, null, List.of(), List.of())))
+                .build();
     }
 
     private static final class DdcAiKindEnumHolder {

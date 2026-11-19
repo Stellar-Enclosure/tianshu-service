@@ -20,6 +20,7 @@ import top.egon.cola.component.tianshu.admin.model.bo.DdcSiVersionBO;
 import top.egon.cola.component.tianshu.admin.model.enums.DdcAiKindPersistenceEnum;
 import top.egon.cola.component.tianshu.admin.model.po.DdcSiEmbeddingChunkPO;
 import top.egon.cola.component.tianshu.admin.repository.DdcSiResourceRepository;
+import top.egon.cola.component.tianshu.admin.service.si.DdcSiDependencyValidator;
 import top.egon.cola.component.tianshu.admin.service.si.strategy.DdcSiContentStrategy;
 import top.egon.cola.component.tianshu.model.si.DdcSiKindEnum;
 import top.egon.cola.component.tianshu.model.si.DdcSiLifecycleStatusEnum;
@@ -36,6 +37,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
@@ -56,6 +58,7 @@ public class DdcSiSemanticIndexServiceImpl implements DdcSiSemanticIndexService 
     private final DdcSiResourceRepository repository;
     private final DdcSiEmbeddingChunkMapper chunkMapper;
     private final DdcSiVersionMapper versionMapper;
+    private final DdcSiDependencyValidator dependencyValidator;
     private final List<DdcSiContentStrategy> strategies;
     private final ObjectProvider<org.springframework.ai.embedding.EmbeddingModel> embeddingModelProvider;
     private final ObjectProvider<StringRedisTemplate> redisProvider;
@@ -78,11 +81,12 @@ public class DdcSiSemanticIndexServiceImpl implements DdcSiSemanticIndexService 
             ObjectProvider<StringRedisTemplate> redisProvider,
             @Qualifier("siIndexTaskExecutor") ObjectProvider<Executor> indexExecutorProvider,
             ObjectProvider<MeterRegistry> meterRegistryProvider,
-            @Qualifier("ddcPublishClock") Clock clock) {
+            @Qualifier("ddcPublishClock") Clock clock,
+            @Qualifier("ddcSiDependencyValidator") DdcSiDependencyValidator dependencyValidator) {
         this(repository, chunkMapper, versionMapper, strategies, embeddingModelProvider, redisProvider,
                 indexExecutorProvider.getIfAvailable(() -> Runnable::run),
                 meterRegistryProvider.getIfAvailable(io.micrometer.core.instrument.simple.SimpleMeterRegistry::new),
-                clock, Duration.ofMillis(1500), 60, 50);
+                clock, Duration.ofMillis(1500), 60, 50, dependencyValidator);
     }
 
     public DdcSiSemanticIndexServiceImpl(
@@ -97,10 +101,12 @@ public class DdcSiSemanticIndexServiceImpl implements DdcSiSemanticIndexService 
             Clock clock,
             Duration embeddingTimeout,
             int rrfK,
-            int candidateLimit) {
+            int candidateLimit,
+            DdcSiDependencyValidator dependencyValidator) {
         this.repository = repository;
         this.chunkMapper = chunkMapper;
         this.versionMapper = versionMapper;
+        this.dependencyValidator = Objects.requireNonNull(dependencyValidator, "dependencyValidator");
         this.strategies = strategies;
         this.embeddingModelProvider = embeddingModelProvider;
         this.redisProvider = redisProvider;
@@ -126,6 +132,7 @@ public class DdcSiSemanticIndexServiceImpl implements DdcSiSemanticIndexService 
             log.debug("Skipping concurrent SI embedding rebuild versionId={}", versionId);
             return;
         }
+        boolean historicalMaterialVerified = false;
         try {
             Optional<DdcSiResourceBO> resOpt = repository.findActiveById(tenantId, resourceId);
             Optional<DdcSiVersionBO> verOpt = repository.findVersionById(tenantId, versionId);
@@ -134,6 +141,14 @@ public class DdcSiSemanticIndexServiceImpl implements DdcSiSemanticIndexService 
             }
             DdcSiResourceBO resource = resOpt.get();
             DdcSiVersionBO version = verOpt.get();
+            if (!Objects.equals(tenantId, resource.getTenantId()) || !Objects.equals(resourceId, resource.getId())
+                    || !Objects.equals(tenantId, version.getTenantId()) || !Objects.equals(versionId, version.getId())
+                    || !Objects.equals(resourceId, version.getResourceId()) || resource.getKind() != version.getKind()
+                    || !Objects.equals(resource.getEnvCode(), version.getEnvCode())) {
+                throw new IllegalStateException("TIANSHU_SI_INDEX_SCOPE_MISMATCH");
+            }
+            dependencyValidator.requireHistorical(version);
+            historicalMaterialVerified = true;
             DdcSiContentStrategy strategy = selectStrategy(resource.getKind());
             String searchable = strategy.extractSearchableText(
                     resource.getKind(), version.getSpecJson(), resource.getDisplayName(), resource.getDescription());
@@ -186,9 +201,11 @@ public class DdcSiSemanticIndexServiceImpl implements DdcSiSemanticIndexService 
                 meterRegistry.counter("tianshu.si.index.success").increment();
             }
         } catch (Exception failure) {
-            log.warn("SI embedding index rebuild failed tenantId={} resourceId={} versionId={}: {}",
-                    tenantId, resourceId, versionId, failure.getMessage());
-            versionMapper.updateIndexStatus(tenantId, versionId, "FAILED", clock.instant());
+            log.warn("SI embedding index rebuild failed tenantId={} resourceId={} versionId={}",
+                    tenantId, resourceId, versionId);
+            if (historicalMaterialVerified) {
+                versionMapper.updateIndexStatus(tenantId, versionId, "FAILED", clock.instant());
+            }
             if (meterRegistry != null) {
                 meterRegistry.counter("tianshu.si.index.failed").increment();
             }

@@ -39,7 +39,7 @@ public interface DdcSiResourceRepository {
             @NotBlank @Size(max = 128) String bizCode,
             @NotNull @Positive Long namespaceId,
             @NotBlank @Size(max = 32) String envCode,
-            @NotBlank @Size(max = 128) String appCode,
+            @NotNull @Size(max = 128) String appCode,
             @NotNull DdcSiKindEnum kind,
             @NotBlank @Size(max = 128) String resourceKey);
 
@@ -78,6 +78,9 @@ public interface DdcSiResourceRepository {
 
     long allocateNextVersionNo(@NotNull @Positive Long tenantId, @NotNull @Positive Long resourceId);
 
+    /** Allocates the immutable version identity before its dependency manifest is frozen. */
+    long allocateVersionId();
+
     DdcSiVersionBO insertVersion(@NotNull DdcSiVersionBO version);
 
     Optional<DdcSiVersionBO> findVersionById(@NotNull @Positive Long tenantId, @NotNull @Positive Long versionId);
@@ -86,6 +89,16 @@ public interface DdcSiResourceRepository {
             @NotNull @Positive Long tenantId,
             @NotNull @Positive Long resourceId,
             @NotNull @Positive Long versionNo);
+
+    /** Exact historical material; deleted versions remain resolvable only through this explicit port. */
+    Optional<DdcSiVersionBO> findHistoryVersionByResourceAndNo(
+            @NotNull @Positive Long tenantId,
+            @NotNull @Positive Long resourceId,
+            @NotNull @Positive Long versionNo);
+
+    List<DdcSiVersionBO> findHistoryVersionsByIds(
+            @NotNull @Positive Long tenantId,
+            @NotNull @Size(max = 100) List<@NotNull @Positive Long> versionIds);
 
     DdcPageResult<DdcSiVersionBO> pageVersions(
             @NotNull @Positive Long tenantId,

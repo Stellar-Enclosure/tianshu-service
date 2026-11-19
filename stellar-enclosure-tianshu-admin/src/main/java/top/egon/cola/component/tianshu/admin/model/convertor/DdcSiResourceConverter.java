@@ -18,6 +18,7 @@ import top.egon.cola.component.tianshu.admin.model.po.DdcSiReferencePO;
 import top.egon.cola.component.tianshu.admin.model.po.DdcSiResourcePO;
 import top.egon.cola.component.tianshu.admin.model.po.DdcSiVersionPO;
 import top.egon.cola.component.tianshu.model.si.DdcSiBindingDescriptor;
+import top.egon.cola.component.tianshu.model.si.DdcSiDependencyManifestVO;
 import top.egon.cola.component.tianshu.model.si.DdcSiLifecycleStatusEnum;
 import top.egon.cola.component.tianshu.model.si.DdcSiReferenceDescriptor;
 import top.egon.cola.component.tianshu.model.si.DdcSiResourceDescriptor;
@@ -87,10 +88,39 @@ public interface DdcSiResourceConverter extends BaseConverter<DdcSiResourcePO, D
     @Mapping(target = "specJson", expression = "java(resolvedVersion != null ? resolvedVersion.getSpecJson() : resource.getSpecJson())")
     @Mapping(target = "publishedAt", expression = "java(resolvedVersion != null ? resolvedVersion.getPublishedTime() : resource.getPublishedTime())")
     @Mapping(target = "updatedAt", source = "resource.updateTime")
+    @Mapping(target = "ownerAppCode", source = "resource.appCode", qualifiedByName = "siOwnerApp")
+    @Mapping(target = "resolvedVersionId", ignore = true)
+    @Mapping(target = "resolvedVersionNo", ignore = true)
+    @Mapping(target = "dependencyManifest", ignore = true)
     DdcSiResourceDescriptor toDescriptor(
             DdcSiResourceBO resource,
             DdcSiVersionBO resolvedVersion,
             List<DdcSiReferenceBO> refs);
+
+    default DdcSiResourceDescriptor toCatalogDescriptor(DdcSiResourceBO resource) {
+        return toCatalogDescriptor(resource, null);
+    }
+
+    default DdcSiResourceDescriptor toCatalogDescriptor(DdcSiResourceBO resource, DdcSiVersionBO version) {
+        var descriptor = toDescriptor(resource, version, List.of()).setSpecJson(null);
+        if (version == null) {
+            descriptor.setDigestSha256(null);
+        }
+        return descriptor;
+    }
+
+    default DdcSiResourceDescriptor toExecutionDescriptor(DdcSiResourceBO resource, DdcSiVersionBO version,
+                                                         DdcSiDependencyManifestVO manifest) {
+        java.util.Objects.requireNonNull(version);
+        java.util.Objects.requireNonNull(manifest);
+        return toDescriptor(resource, version, List.of()).setResolvedVersionId(version.getId())
+                .setResolvedVersionNo(version.getVersionNo()).setDependencyManifest(manifest);
+    }
+
+    @Named("siOwnerApp")
+    default String toOwnerAppCode(String value) {
+        return value == null || value.isEmpty() ? null : value;
+    }
 
     DdcSiReferenceDescriptor toReferenceDescriptor(DdcSiReferenceBO ref);
 
@@ -150,13 +180,9 @@ public interface DdcSiResourceConverter extends BaseConverter<DdcSiResourcePO, D
     }
 
     default Integer resolveActiveVersionInt(DdcSiResourceBO resource, DdcSiVersionBO resolvedVersion) {
-        if (resolvedVersion != null && resolvedVersion.getVersionNo() != null) {
-            return resolvedVersion.getVersionNo().intValue();
-        }
-        if (resource != null && resource.getCurrentVersionNo() != null) {
-            return resource.getCurrentVersionNo().intValue();
-        }
-        return null;
+        Long selected = resolvedVersion != null ? resolvedVersion.getVersionNo()
+                : resource == null ? null : resource.getCurrentVersionNo();
+        return selected == null || selected <= 0 || selected > Integer.MAX_VALUE ? null : selected.intValue();
     }
 
     default Integer longToInt(Long value) {

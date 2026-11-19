@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.transaction.support.TransactionTemplate;
 import top.egon.cola.component.common.core.exception.CommonException;
 import top.egon.cola.component.common.core.pojo.PageQuery;
@@ -40,12 +41,14 @@ import java.time.Instant;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.Objects;
 
 /**
  * SI 统一治理服务核心编排实现：执行短事务落库、乐观锁保护、Outbox 投递与异构资源生命周期流转。
  */
 @Slf4j
 @Service("ddcSiResourceService")
+@Validated
 @RequiredArgsConstructor(onConstructor_ = @Autowired)
 public class DdcSiResourceServiceImpl implements DdcSiResourceService {
 
@@ -170,56 +173,19 @@ public class DdcSiResourceServiceImpl implements DdcSiResourceService {
     @Override
     public DdcSiVersionBO publish(Long tenantId, Long resourceId, Long expectedVersion, String changeNote, String actor) {
         return transactionTemplate.execute(status -> {
-            DdcSiResourceBO locked = repository.findActiveForUpdateById(tenantId, resourceId)
+            DdcSiResourceBO resource = repository.findProjectedById(tenantId, resourceId)
                     .orElseThrow(() -> notFound(resourceId));
-            transitionPolicy.assertCanTransition(locked.getLifecycleStatus(), DdcSiLifecycleStatusEnum.PUBLISHED);
-            assertVersionMatch(locked.getVersion(), expectedVersion);
+            transitionPolicy.assertCanTransition(resource.getLifecycleStatus(), DdcSiLifecycleStatusEnum.PUBLISHED);
+            assertVersionMatch(resource.getVersion(), expectedVersion);
 
-            DdcSiContentStrategy strategy = selectStrategy(locked.getKind());
-            NormalizedContent normalized = strategy.validateAndNormalize(locked.getKind(), locked.getSpecJson());
-            List<DdcSiReferenceBO> outgoing = strategy.extractReferences(locked.getKind(), normalized.getNormalizedJson());
-            dependencyValidator.validateAcyclicAndPublishedTargets(
-                    tenantId, locked.getBizCode(), locked.getNamespaceId(), locked.getEnvCode(), locked.getAppCode(),
-                    locked.getKind(), locked.getResourceKey(), outgoing);
-
-            long nextVersionNo = repository.allocateNextVersionNo(tenantId, resourceId);
+            DdcSiContentStrategy strategy = selectStrategy(resource.getKind());
+            NormalizedContent normalized = strategy.validateAndNormalize(resource.getKind(), resource.getSpecJson());
+            var outgoing = strategy.extractReferences(resource.getKind(), normalized.getNormalizedJson());
             Instant now = clock.instant();
-            DdcSiVersionBO createdVersion = repository.insertVersion(DdcSiVersionBO.builder()
-                    .tenantId(tenantId)
-                    .createUserId(actor)
-                    .updateUserId(actor)
-                    .createTime(now)
-                    .updateTime(now)
-                    .version(0L)
-                    .resourceId(resourceId)
-                    .versionNo(nextVersionNo)
-                    .kind(locked.getKind())
-                    .specJson(normalized.getNormalizedJson())
-                    .digestSha256(normalized.getDigestSha256())
-                    .changeNote(changeNote == null ? "" : changeNote)
-                    .indexStatus("PENDING")
-                    .publishedTime(now)
-                    .envCode(locked.getEnvCode())
-                    .build());
-
-            repository.replaceReferences(tenantId, locked.getEnvCode(), toSourceType(locked.getKind()),
-                    locked.getResourceKey(), resourceId, nextVersionNo, locked.getNamespaceId(), outgoing, actor, now);
-
-            locked.setLifecycleStatus(DdcSiLifecycleStatusEnum.PUBLISHED)
-                    .setLastVersionNo(nextVersionNo)
-                    .setCurrentVersionId(createdVersion.getId())
-                    .setCurrentVersionNo(nextVersionNo)
-                    .setPublishedTime(now)
-                    .setContentSha256(normalized.getDigestSha256())
-                    .setSpecJson(normalized.getNormalizedJson())
-                    .setUpdateUserId(actor)
-                    .setUpdateTime(now);
-            DdcSiResourceBO updated = repository.updateVersioned(locked)
-                    .orElseThrow(() -> new CommonException(CODE_CONFLICT, "TIANSHU_SI_CONFLICT", "concurrent publish conflict"));
-            repository.updateSearchTsv(tenantId, resourceId, strategy.extractSearchableText(
-                    updated.getKind(), updated.getSpecJson(), updated.getDisplayName(), updated.getDescription()));
-            outboxNotifier.enqueueAndScheduleAfterCommit(EventType.PUBLISHED, updated, createdVersion);
-            return repository.findVersionByResourceAndNo(tenantId, resourceId, nextVersionNo).orElse(createdVersion);
+            var candidate = publication(resource, normalized.getNormalizedJson(), normalized.getDigestSha256(),
+                    changeNote == null ? "" : changeNote, actor, now);
+            dependencyValidator.freezePublication(resource, candidate, null, outgoing, List.of());
+            return commitPublication(resource, candidate, outgoing, EventType.PUBLISHED, actor, now);
         });
     }
 
@@ -232,32 +198,16 @@ public class DdcSiResourceServiceImpl implements DdcSiResourceService {
             transitionPolicy.assertCanTransition(locked.getLifecycleStatus(), DdcSiLifecycleStatusEnum.PUBLISHED);
             assertVersionMatch(locked.getVersion(), expectedVersion);
 
-            DdcSiVersionBO target = repository.findVersionByResourceAndNo(tenantId, resourceId, targetVersionNo)
-                    .orElseThrow(() -> new CommonException(CODE_NOT_FOUND, "TIANSHU_SI_VERSION_NOT_FOUND",
-                            "target version not found: " + targetVersionNo));
-
-            DdcSiContentStrategy strategy = selectStrategy(locked.getKind());
-            List<DdcSiReferenceBO> outgoing = strategy.extractReferences(locked.getKind(), target.getSpecJson());
-            dependencyValidator.validateAcyclicAndPublishedTargets(
-                    tenantId, locked.getBizCode(), locked.getNamespaceId(), locked.getEnvCode(), locked.getAppCode(),
-                    locked.getKind(), locked.getResourceKey(), outgoing);
-
+            var prior = exactVersion(locked, targetVersionNo);
+            var manifest = dependencyValidator.requireHistorical(prior);
             Instant now = clock.instant();
-            repository.replaceReferences(tenantId, locked.getEnvCode(), toSourceType(locked.getKind()),
-                    locked.getResourceKey(), resourceId, target.getVersionNo(), locked.getNamespaceId(), outgoing, actor, now);
-
-            locked.setLifecycleStatus(DdcSiLifecycleStatusEnum.PUBLISHED)
-                    .setCurrentVersionId(target.getId())
-                    .setCurrentVersionNo(target.getVersionNo())
-                    .setSpecJson(target.getSpecJson())
-                    .setContentSha256(target.getDigestSha256())
-                    .setPublishedTime(now)
-                    .setUpdateUserId(actor)
-                    .setUpdateTime(now);
-            DdcSiResourceBO updated = repository.updateVersioned(locked)
-                    .orElseThrow(() -> new CommonException(CODE_CONFLICT, "TIANSHU_SI_CONFLICT", "concurrent rollback conflict"));
-            outboxNotifier.enqueueAndScheduleAfterCommit(EventType.ROLLED_BACK, updated, target);
-            return target;
+            var candidate = publication(locked, prior.getSpecJson(), prior.getDigestSha256(),
+                    changeNote == null ? "rollback to version " + targetVersionNo : changeNote, actor, now)
+                    .setSourceEnvCode(prior.getEnvCode()).setSourceVersionNo(prior.getVersionNo());
+            dependencyValidator.freezeRollback(candidate, manifest);
+            // The editable reference projection is recreated from the historical body only.
+            var outgoing = selectStrategy(locked.getKind()).extractReferences(locked.getKind(), prior.getSpecJson());
+            return commitPublication(locked, candidate, outgoing, EventType.ROLLED_BACK, actor, now);
         });
     }
 
@@ -267,18 +217,18 @@ public class DdcSiResourceServiceImpl implements DdcSiResourceService {
             DdcSiResourceBO source = repository.findProjectedById(tenantId, sourceResourceId)
                     .orElseThrow(() -> notFound(sourceResourceId));
             transitionPolicy.assertCanPromote(source.getEnvCode(), targetEnvCode);
-            if (source.getCurrentVersionNo() == null || source.getCurrentVersionId() == null) {
+            if (!source.getLifecycleStatus().isQueryableByRuntime()
+                    || source.getCurrentVersionNo() == null || source.getCurrentVersionId() == null) {
                 throw new CommonException(CODE_CONFLICT, "TIANSHU_SI_NOT_PUBLISHED",
                         "source SI resource has no active published snapshot to promote");
             }
-            DdcSiVersionBO sourceVer = repository.findVersionById(tenantId, source.getCurrentVersionId())
-                    .orElseThrow(() -> notFound(sourceResourceId));
-
+            var sourceVer = exactVersion(source, source.getCurrentVersionNo());
+            if (!source.getCurrentVersionId().equals(sourceVer.getId())) {
+                throw DdcSiDependencyValidator.unavailable();
+            }
+            var sourceManifest = dependencyValidator.requireHistorical(sourceVer);
             DdcSiContentStrategy strategy = selectStrategy(source.getKind());
-            List<DdcSiReferenceBO> outgoing = strategy.extractReferences(source.getKind(), sourceVer.getSpecJson());
-            dependencyValidator.validateAcyclicAndPublishedTargets(
-                    tenantId, source.getBizCode(), source.getNamespaceId(), targetEnvCode, source.getAppCode(),
-                    source.getKind(), source.getResourceKey(), outgoing);
+            var outgoing = strategy.extractReferences(source.getKind(), sourceVer.getSpecJson());
 
             Instant now = clock.instant();
             DdcSiResourceBO target = repository.findByBusinessKey(tenantId, source.getBizCode(), source.getNamespaceId(),
@@ -308,48 +258,14 @@ public class DdcSiResourceServiceImpl implements DdcSiResourceService {
                             .build()));
 
             transitionPolicy.assertCanTransition(target.getLifecycleStatus(), DdcSiLifecycleStatusEnum.PUBLISHED);
-            long nextVerNo = repository.allocateNextVersionNo(tenantId, target.getId());
-            DdcSiVersionBO promotedVer = repository.insertVersion(DdcSiVersionBO.builder()
-                    .tenantId(tenantId)
-                    .createUserId(actor)
-                    .updateUserId(actor)
-                    .createTime(now)
-                    .updateTime(now)
-                    .version(0L)
-                    .resourceId(target.getId())
-                    .versionNo(nextVerNo)
-                    .kind(source.getKind())
-                    .specJson(sourceVer.getSpecJson())
-                    .digestSha256(sourceVer.getDigestSha256())
-                    .sourceEnvCode(source.getEnvCode())
-                    .sourceVersionNo(sourceVer.getVersionNo())
-                    .changeNote(changeNote == null ? "promote from " + source.getEnvCode() : changeNote)
-                    .indexStatus("PENDING")
-                    .publishedTime(now)
-                    .envCode(targetEnvCode)
-                    .build());
-
-            repository.replaceReferences(tenantId, targetEnvCode, toSourceType(target.getKind()),
-                    target.getResourceKey(), target.getId(), nextVerNo, target.getNamespaceId(), outgoing, actor, now);
-
-            target.setDisplayName(source.getDisplayName())
+            var candidate = publication(target, sourceVer.getSpecJson(), sourceVer.getDigestSha256(),
+                    changeNote == null ? "promote from " + source.getEnvCode() : changeNote, actor, now)
+                    .setSourceEnvCode(source.getEnvCode()).setSourceVersionNo(sourceVer.getVersionNo());
+            dependencyValidator.freezePublication(target, candidate, sourceManifest.root(), outgoing, List.of(source));
+            target.setNamespaceCode(source.getNamespaceCode()).setDisplayName(source.getDisplayName())
                     .setDescription(source.getDescription())
-                    .setTags(source.getTags())
-                    .setLifecycleStatus(DdcSiLifecycleStatusEnum.PUBLISHED)
-                    .setLastVersionNo(nextVerNo)
-                    .setCurrentVersionId(promotedVer.getId())
-                    .setCurrentVersionNo(nextVerNo)
-                    .setPublishedTime(now)
-                    .setSpecJson(sourceVer.getSpecJson())
-                    .setContentSha256(sourceVer.getDigestSha256())
-                    .setUpdateUserId(actor)
-                    .setUpdateTime(now);
-            DdcSiResourceBO updatedTarget = repository.updateVersioned(target)
-                    .orElseThrow(() -> new CommonException(CODE_CONFLICT, "TIANSHU_SI_CONFLICT", "concurrent promotion conflict"));
-            repository.updateSearchTsv(tenantId, updatedTarget.getId(), strategy.extractSearchableText(
-                    updatedTarget.getKind(), updatedTarget.getSpecJson(), updatedTarget.getDisplayName(), updatedTarget.getDescription()));
-            outboxNotifier.enqueueAndScheduleAfterCommit(EventType.PROMOTED, updatedTarget, promotedVer);
-            return promotedVer;
+                    .setTags(source.getTags());
+            return commitPublication(target, candidate, outgoing, EventType.PROMOTED, actor, now);
         });
     }
 
@@ -441,7 +357,7 @@ public class DdcSiResourceServiceImpl implements DdcSiResourceService {
     @Override
     public DdcSiVersionBO getVersion(Long tenantId, Long resourceId, Long versionNo) {
         get(tenantId, resourceId);
-        return repository.findVersionByResourceAndNo(tenantId, resourceId, versionNo)
+        return repository.findHistoryVersionByResourceAndNo(tenantId, resourceId, versionNo)
                 .orElseThrow(() -> new CommonException(CODE_NOT_FOUND, "TIANSHU_SI_VERSION_NOT_FOUND",
                         "SI version not found: " + resourceId + "@" + versionNo));
     }
@@ -484,7 +400,7 @@ public class DdcSiResourceServiceImpl implements DdcSiResourceService {
                 query.getKind(), query.isIncludeDeprecated(), query.getKeyword(), null,
                 new PageQuery(pageNo, pageSize));
         return page.getRecords().stream()
-                .map(res -> converter.toDescriptor(res, null, List.of()))
+                .map(converter::toCatalogDescriptor)
                 .toList();
     }
 
@@ -493,34 +409,48 @@ public class DdcSiResourceServiceImpl implements DdcSiResourceService {
                                                              String envCode, String ownerAppCode, String callerAppCode,
                                                              DdcSiKindEnum kind, String resourceKey,
                                                              Integer requestedVersionNo) {
-        Long namespaceId = repository.resolveNamespaceId(tenantId, bizCode, namespaceCode);
-        String effectiveOwnerApp = ownerAppCode == null || ownerAppCode.isBlank() ? callerAppCode : ownerAppCode;
-        Optional<DdcSiResourceBO> resOpt = repository.findByBusinessKey(
-                tenantId, bizCode, namespaceId, envCode, effectiveOwnerApp, kind, resourceKey);
-        if (resOpt.isEmpty()) {
-            return Optional.empty();
+        String owner = ownerAppCode == null || ownerAppCode.isBlank() ? callerAppCode : ownerAppCode;
+        if (owner != null && owner.isBlank()) {
+            owner = null;
         }
-        DdcSiResourceBO resource = resOpt.get();
-        if (!resource.getLifecycleStatus().isQueryableByRuntime()) {
-            return Optional.empty();
-        }
+        return resolveSelected(tenantId, bizCode, namespaceCode, envCode, owner, callerAppCode,
+                kind, resourceKey, requestedVersionNo == null ? null : requestedVersionNo.longValue(), false);
+    }
 
-        Long chosenVersionNo = requestedVersionNo != null ? requestedVersionNo.longValue() : null;
-        if (chosenVersionNo == null && callerAppCode != null && !callerAppCode.isBlank()) {
-            chosenVersionNo = repository.findActiveBinding(
-                            tenantId, bizCode, namespaceId, envCode, callerAppCode, kind, resourceKey)
-                    .map(DdcSiBindingBO::getPinnedVersionNo)
-                    .orElse(null);
+    @Override
+    public Optional<DdcSiResourceDescriptor> resolveExecutionResource(Long tenantId, String bizCode, String namespaceCode,
+                                                                      String envCode, String ownerAppCode, String callerAppCode,
+                                                                      DdcSiKindEnum kind, String resourceKey, Long requestedVersionNo) {
+        return resolveSelected(tenantId, bizCode, namespaceCode, envCode, ownerAppCode, callerAppCode,
+                kind, resourceKey, requestedVersionNo, true);
+    }
+
+    private Optional<DdcSiResourceDescriptor> resolveSelected(Long tenantId, String bizCode, String namespaceCode,
+                                                              String envCode, String ownerAppCode, String callerAppCode,
+                                                              DdcSiKindEnum kind, String resourceKey, Long requestedVersionNo,
+                                                              boolean execution) {
+        Long namespaceId = repository.resolveNamespaceId(tenantId, bizCode, namespaceCode);
+        String storedOwner = ownerAppCode == null ? "" : ownerAppCode;
+        var found = repository.findByBusinessKey(tenantId, bizCode, namespaceId, envCode, storedOwner, kind, resourceKey);
+        if (found.isEmpty() || !found.get().getLifecycleStatus().isQueryableByRuntime()) {
+            return Optional.empty();
         }
-        if (chosenVersionNo == null) {
-            chosenVersionNo = resource.getCurrentVersionNo();
+        var resource = found.get().setNamespaceCode(namespaceCode);
+        var binding = callerAppCode == null || callerAppCode.isBlank() ? Optional.<DdcSiBindingBO>empty()
+                : repository.findActiveBinding(tenantId, bizCode, namespaceId, envCode, callerAppCode, kind, resourceKey)
+                        .filter(candidate -> DdcSiBindingStatusEnum.ACTIVE == candidate.getStatus()
+                                && resource.getId().equals(candidate.getResourceId()));
+        if (execution && (callerAppCode == null || callerAppCode.isBlank()
+                || ownerAppCode != null && !ownerAppCode.equals(callerAppCode) && binding.isEmpty())) {
+            throw new CommonException(56403, "TIANSHU_SI_SCOPE_DENIED",
+                    "SERVICE caller is not authorized for this SI resource");
         }
-        DdcSiVersionBO resolvedVersion = chosenVersionNo == null
-                ? null
-                : repository.findVersionByResourceAndNo(tenantId, resource.getId(), chosenVersionNo).orElse(null);
-        List<DdcSiReferenceBO> refs = repository.findReferencesBySource(
-                tenantId, envCode, toSourceType(kind), resourceKey);
-        return Optional.of(converter.toDescriptor(resource, resolvedVersion, refs));
+        Long selected = requestedVersionNo != null ? requestedVersionNo
+                : binding.map(DdcSiBindingBO::getPinnedVersionNo).orElse(null);
+        var version = selected == null ? exactCurrentVersion(resource) : exactVersion(resource, selected);
+        var manifest = dependencyValidator.requireHistorical(version);
+        return Optional.of(execution ? converter.toExecutionDescriptor(resource, version, manifest)
+                : converter.toCatalogDescriptor(resource, version));
     }
 
     @Override
@@ -538,7 +468,7 @@ public class DdcSiResourceServiceImpl implements DdcSiResourceService {
                     request.getEnvCode(), request.getServiceName(), request.getKind(), request.getResourceKey());
 
             if (existingOpt.isPresent()) {
-                DdcSiResourceBO existing = existingOpt.get();
+                DdcSiResourceBO existing = existingOpt.get().setNamespaceCode(request.getNamespaceCode());
                 if (normalized.getDigestSha256().equals(existing.getContentSha256())) {
                     return converter.toDescriptor(existing, null, List.of());
                 }
@@ -578,47 +508,35 @@ public class DdcSiResourceServiceImpl implements DdcSiResourceService {
                         .lastVersionNo(0L)
                         .build());
             } else {
-                DdcSiResourceBO existing = existingOpt.get();
-                existing.setDisplayName(request.getDisplayName())
+                resource = existingOpt.orElseThrow();
+            }
+            resource.setNamespaceCode(request.getNamespaceCode());
+
+            final String actor = "system:auto-register";
+            if (request.isAutoPublishIfNew()) {
+                transitionPolicy.assertCanTransition(resource.getLifecycleStatus(), DdcSiLifecycleStatusEnum.PUBLISHED);
+                var outgoing = strategy.extractReferences(resource.getKind(), normalized.getNormalizedJson());
+                var candidate = publication(resource, normalized.getNormalizedJson(), normalized.getDigestSha256(),
+                        "auto-registered", actor, now);
+                dependencyValidator.freezePublication(resource, candidate, null, outgoing, List.of());
+                resource.setDisplayName(request.getDisplayName())
+                        .setDescription(request.getDescription() == null ? "" : request.getDescription());
+                var version = commitPublication(resource, candidate, outgoing, EventType.PUBLISHED, actor, now);
+                return converter.toDescriptor(resource, version, List.of());
+            }
+            if (existingOpt.isPresent()) {
+                dependencyValidator.lockCurrentPointers(resource.getTenantId(), List.of(resource));
+                resource.setDisplayName(request.getDisplayName())
                         .setDescription(request.getDescription() == null ? "" : request.getDescription())
                         .setSpecJson(normalized.getNormalizedJson())
                         .setContentSha256(normalized.getDigestSha256())
-                        .setUpdateUserId("system:auto-register")
+                        .setUpdateUserId(actor)
                         .setUpdateTime(now);
-                resource = repository.updateVersioned(existing)
+                resource = repository.updateVersioned(resource)
                         .orElseThrow(() -> new CommonException(CODE_CONFLICT, "TIANSHU_SI_CONFLICT",
                                 "concurrent auto-registration conflict"));
             }
             repository.updateSearchTsv(request.getTenantId(), resource.getId(), searchable);
-
-            if (request.isAutoPublishIfNew()) {
-                long nextVer = repository.allocateNextVersionNo(request.getTenantId(), resource.getId());
-                DdcSiVersionBO ver = repository.insertVersion(DdcSiVersionBO.builder()
-                        .tenantId(request.getTenantId())
-                        .createUserId("system:auto-register")
-                        .updateUserId("system:auto-register")
-                        .createTime(now)
-                        .updateTime(now)
-                        .version(0L)
-                        .resourceId(resource.getId())
-                        .versionNo(nextVer)
-                        .kind(resource.getKind())
-                        .specJson(normalized.getNormalizedJson())
-                        .digestSha256(normalized.getDigestSha256())
-                        .changeNote("auto-registered")
-                        .indexStatus("PENDING")
-                        .publishedTime(now)
-                        .envCode(resource.getEnvCode())
-                        .build());
-                resource.setLifecycleStatus(DdcSiLifecycleStatusEnum.PUBLISHED)
-                        .setLastVersionNo(nextVer)
-                        .setCurrentVersionId(ver.getId())
-                        .setCurrentVersionNo(nextVer)
-                        .setPublishedTime(now);
-                DdcSiResourceBO published = repository.updateVersioned(resource).orElse(resource);
-                outboxNotifier.enqueueAndScheduleAfterCommit(EventType.PUBLISHED, published, ver);
-                return converter.toDescriptor(published, ver, List.of());
-            }
             return converter.toDescriptor(resource, null, List.of());
         });
     }
@@ -644,6 +562,69 @@ public class DdcSiResourceServiceImpl implements DdcSiResourceService {
     public void deleteProcessReferences(Long tenantId, String envCode, String processKey, String actor) {
         transactionTemplate.executeWithoutResult(status ->
                 repository.deleteProcessReferences(tenantId, envCode, processKey, actor, clock.instant()));
+    }
+
+    private DdcSiVersionBO exactVersion(DdcSiResourceBO resource, Long versionNo) {
+        if (versionNo == null || versionNo <= 0) {
+            throw DdcSiDependencyValidator.unavailable();
+        }
+        var version = repository.findHistoryVersionByResourceAndNo(resource.getTenantId(), resource.getId(), versionNo)
+                .orElseThrow(DdcSiDependencyValidator::unavailable);
+        assertVersionOwner(resource, version);
+        if (!versionNo.equals(version.getVersionNo())) {
+            throw DdcSiDependencyValidator.unavailable();
+        }
+        return version;
+    }
+
+    private DdcSiVersionBO exactCurrentVersion(DdcSiResourceBO resource) {
+        Long currentId = resource.getCurrentVersionId();
+        if (currentId == null) {
+            throw DdcSiDependencyValidator.unavailable();
+        }
+        var versions = repository.findHistoryVersionsByIds(resource.getTenantId(), List.of(currentId));
+        if (versions.size() != 1 || !currentId.equals(versions.getFirst().getId())) {
+            throw DdcSiDependencyValidator.unavailable();
+        }
+        var version = versions.getFirst();
+        assertVersionOwner(resource, version);
+        return version;
+    }
+
+    private static void assertVersionOwner(DdcSiResourceBO resource, DdcSiVersionBO version) {
+        if (!Objects.equals(resource.getTenantId(), version.getTenantId())
+                || !Objects.equals(resource.getId(), version.getResourceId())
+                || resource.getKind() != version.getKind()
+                || !Objects.equals(resource.getEnvCode(), version.getEnvCode())) {
+            throw DdcSiDependencyValidator.unavailable();
+        }
+    }
+
+    private static DdcSiVersionBO publication(DdcSiResourceBO resource, String body, String digest,
+                                              String note, String actor, Instant now) {
+        return DdcSiVersionBO.builder().tenantId(resource.getTenantId()).resourceId(resource.getId())
+                .kind(resource.getKind()).envCode(resource.getEnvCode()).specJson(body).digestSha256(digest)
+                .version(0L).changeNote(note).indexStatus("PENDING").publishedTime(now)
+                .createUserId(actor).updateUserId(actor).createTime(now).updateTime(now).build();
+    }
+
+    private DdcSiVersionBO commitPublication(DdcSiResourceBO resource, DdcSiVersionBO candidate,
+                                            List<DdcSiReferenceBO> references, EventType event, String actor, Instant now) {
+        var version = repository.insertVersion(candidate);
+        repository.replaceReferences(resource.getTenantId(), resource.getEnvCode(), toSourceType(resource.getKind()),
+                resource.getResourceKey(), resource.getId(), version.getVersionNo(), resource.getNamespaceId(),
+                references, actor, now);
+        resource.setLifecycleStatus(DdcSiLifecycleStatusEnum.PUBLISHED)
+                .setLastVersionNo(version.getVersionNo()).setCurrentVersionNo(version.getVersionNo())
+                .setCurrentVersionId(version.getId()).setPublishedTime(now)
+                .setSpecJson(version.getSpecJson()).setContentSha256(version.getDigestSha256())
+                .setUpdateUserId(actor).setUpdateTime(now);
+        var published = repository.updateVersioned(resource)
+                .orElseThrow(() -> new CommonException(CODE_CONFLICT, "TIANSHU_SI_CONFLICT", "concurrent publication conflict"));
+        repository.updateSearchTsv(resource.getTenantId(), resource.getId(), selectStrategy(resource.getKind())
+                .extractSearchableText(resource.getKind(), version.getSpecJson(), resource.getDisplayName(), resource.getDescription()));
+        outboxNotifier.enqueueAndScheduleAfterCommit(event, published, version);
+        return version;
     }
 
     private DdcSiResourceBO transitionLifecycle(Long tenantId, Long resourceId, Long expectedVersion,

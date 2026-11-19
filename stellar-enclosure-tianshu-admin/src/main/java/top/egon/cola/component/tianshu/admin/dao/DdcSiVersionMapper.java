@@ -80,6 +80,24 @@ public interface DdcSiVersionMapper extends EgonColaMapper<DdcSiVersionPO> {
             @Positive(groups = EgonColaModelValidationGroups.Query.class) Long versionNo);
 
     @Validated(EgonColaModelValidationGroups.Query.class)
+    DdcSiVersionPO selectHistoryByResourceIdAndVersionNo(
+            @Param("tenantId") @NotNull(groups = EgonColaModelValidationGroups.Query.class)
+            @Positive(groups = EgonColaModelValidationGroups.Query.class) Long tenantId,
+            @Param("resourceId") @NotNull(groups = EgonColaModelValidationGroups.Query.class)
+            @Positive(groups = EgonColaModelValidationGroups.Query.class) Long resourceId,
+            @Param("versionNo") @NotNull(groups = EgonColaModelValidationGroups.Query.class)
+            @Positive(groups = EgonColaModelValidationGroups.Query.class) Long versionNo);
+
+    @Validated(EgonColaModelValidationGroups.Query.class)
+    List<DdcSiVersionPO> selectHistoryByIds(
+            @Param("tenantId") @NotNull(groups = EgonColaModelValidationGroups.Query.class)
+            @Positive(groups = EgonColaModelValidationGroups.Query.class) Long tenantId,
+            @Param("ids") @NotNull(groups = EgonColaModelValidationGroups.Query.class)
+            @Size(min = 1, max = 100, groups = EgonColaModelValidationGroups.Query.class)
+            List<@NotNull(groups = EgonColaModelValidationGroups.Query.class)
+                    @Positive(groups = EgonColaModelValidationGroups.Query.class) Long> ids);
+
+    @Validated(EgonColaModelValidationGroups.Query.class)
     List<DdcSiVersionPO> selectPage(
             @Param("tenantId") @NotNull(groups = EgonColaModelValidationGroups.Query.class)
             @Positive(groups = EgonColaModelValidationGroups.Query.class) Long tenantId,

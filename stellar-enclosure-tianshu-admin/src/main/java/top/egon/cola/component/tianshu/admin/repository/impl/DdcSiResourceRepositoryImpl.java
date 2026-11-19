@@ -11,6 +11,7 @@ import top.egon.cola.component.common.core.exception.CommonException;
 import top.egon.cola.component.common.core.pojo.PageQuery;
 import top.egon.cola.component.common.mybatis.autoconfigure.EgonColaMybatisPlusProperties;
 import top.egon.cola.component.common.mybatis.extension.EgonColaRepository;
+import top.egon.cola.component.common.mybatis.model.EgonColaIdentifierGenerator;
 import top.egon.cola.component.tianshu.admin.dao.DdcSiBindingMapper;
 import top.egon.cola.component.tianshu.admin.dao.DdcSiReferenceMapper;
 import top.egon.cola.component.tianshu.admin.dao.DdcSiResourceMapper;
@@ -64,6 +65,8 @@ public class DdcSiResourceRepositoryImpl extends EgonColaRepository<DdcSiResourc
     private final DdcSiEnumConverter enumConverter;
     @Qualifier("egon.cola.component.mybatis-plus-top.egon.cola.component.common.mybatis.autoconfigure.EgonColaMybatisPlusProperties")
     private final EgonColaMybatisPlusProperties properties;
+    @Qualifier("egonColaIdentifierGenerator")
+    private final EgonColaIdentifierGenerator identifierGenerator;
 
     @Override
     public DdcSiResourceMapper getBaseMapper() {
@@ -181,11 +184,27 @@ public class DdcSiResourceRepositoryImpl extends EgonColaRepository<DdcSiResourc
     @Override
     public long allocateNextVersionNo(Long tenantId, Long resourceId) {
         Long next = versionMapper.selectNextVersionNo(tenantId, resourceId);
-        return next == null || next <= 0 ? 1L : next;
+        if (next == null || next <= 0) {
+            throw new IllegalStateException("TIANSHU_SI_VERSION_NUMBER_UNAVAILABLE");
+        }
+        return next;
+    }
+
+    @Override
+    public long allocateVersionId() {
+        Long id = identifierGenerator.nextId(new DdcSiVersionPO());
+        if (id == null || id <= 0) {
+            throw new IllegalStateException("TIANSHU_SI_VERSION_ID_UNAVAILABLE");
+        }
+        return id;
     }
 
     @Override
     public DdcSiVersionBO insertVersion(DdcSiVersionBO version) {
+        if (version == null || version.getId() == null || version.getId() <= 0
+                || version.getDependencyManifestJson() == null || !version.getDependencyManifestJson().isObject()) {
+            throw new IllegalArgumentException("TIANSHU_SI_VERSION_SNAPSHOT_REQUIRED");
+        }
         DdcSiVersionPO po = converter.toVersionPo(version);
         try {
             if (versionMapper.insert(po) <= 0) {
@@ -206,6 +225,26 @@ public class DdcSiResourceRepositoryImpl extends EgonColaRepository<DdcSiResourc
     public Optional<DdcSiVersionBO> findVersionByResourceAndNo(Long tenantId, Long resourceId, Long versionNo) {
         return Optional.ofNullable(versionMapper.selectByResourceIdAndVersionNo(tenantId, resourceId, versionNo))
                 .map(converter::toVersionBo);
+    }
+
+    @Override
+    public Optional<DdcSiVersionBO> findHistoryVersionByResourceAndNo(Long tenantId, Long resourceId, Long versionNo) {
+        return Optional.ofNullable(versionMapper.selectHistoryByResourceIdAndVersionNo(tenantId, resourceId, versionNo))
+                .map(converter::toVersionBo);
+    }
+
+    @Override
+    public List<DdcSiVersionBO> findHistoryVersionsByIds(Long tenantId, List<Long> versionIds) {
+        if (tenantId == null || tenantId <= 0 || versionIds == null || versionIds.size() > 100
+                || versionIds.stream().anyMatch(id -> id == null || id <= 0)
+                || versionIds.stream().distinct().count() != versionIds.size()) {
+            throw new IllegalArgumentException("TIANSHU_SI_HISTORY_BATCH_INVALID");
+        }
+        if (versionIds.isEmpty()) {
+            return List.of();
+        }
+        List<Long> ids = versionIds.stream().sorted().toList();
+        return versionMapper.selectHistoryByIds(tenantId, ids).stream().map(converter::toVersionBo).toList();
     }
 
     @Override

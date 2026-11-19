@@ -12,6 +12,20 @@ egon:
           history-read-statements: [top.egon.cola.component.tianshu.admin.dao.DdcAiResourceMapper.selectIncludingDeletedById]
           restore-statements: []
           statement-policies:
+            "[top.egon.cola.component.tianshu.admin.dao.DdcSiVersionMapper.selectNextVersionNo]":
+              scope: ALL_PARENT
+              table: ddc_si_version
+              key-column: resource_id
+              parent-table: ddc_si_resource
+            "[top.egon.cola.component.tianshu.admin.dao.DdcSiVersionMapper.selectHistoryByResourceIdAndVersionNo]":
+              scope: ALL_PARENT
+              table: ddc_si_version
+              key-column: resource_id
+              parent-table: ddc_si_resource
+            "[top.egon.cola.component.tianshu.admin.dao.DdcSiVersionMapper.selectHistoryByIds]":
+              scope: ALL_PARENT
+              table: ddc_si_version
+              key-column: tenant_id
             "[top.egon.cola.component.tianshu.admin.dao.DdcAiOptimizationRunMapper.selectMaxRunNo]":
               scope: ALL_PARENT
               table: ddc_ai_optimization_run

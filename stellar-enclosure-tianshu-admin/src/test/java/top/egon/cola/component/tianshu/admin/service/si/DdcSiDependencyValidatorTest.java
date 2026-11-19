@@ -1,5 +1,6 @@
 package top.egon.cola.component.tianshu.admin.service.si;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -10,6 +11,7 @@ import top.egon.cola.component.tianshu.admin.model.bo.DdcSiBindingBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcSiReferenceBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcSiResourceBO;
 import top.egon.cola.component.tianshu.admin.repository.DdcSiResourceRepository;
+import top.egon.cola.component.tianshu.admin.model.bo.DdcSiVersionBO;
 import top.egon.cola.component.tianshu.model.si.DdcSiBindingStatusEnum;
 import top.egon.cola.component.tianshu.model.si.DdcSiKindEnum;
 import top.egon.cola.component.tianshu.model.si.DdcSiLifecycleStatusEnum;
@@ -37,58 +39,30 @@ class DdcSiDependencyValidatorTest {
 
     @BeforeEach
     void setUp() {
-        validator = new DdcSiDependencyValidator(repository);
+        validator = new DdcSiDependencyValidator(repository, new ObjectMapper());
     }
 
     @Test
-    void rejectsDirectSelfCycleAndIndirectMultiHopCycle() {
-        when(repository.findAgentGraphEdges(1L, "dev")).thenReturn(List.of(
-                edge(DdcSiReferenceTargetTypeEnum.AGENT, "agent-b", DdcSiReferenceTargetTypeEnum.AGENT, "agent-c"),
-                edge(DdcSiReferenceTargetTypeEnum.AGENT, "agent-c", DdcSiReferenceTargetTypeEnum.AGENT, "agent-a")));
-
-        assertThatThrownBy(() -> validator.validateAcyclicAndPublishedTargets(
-                1L, "xingyuan", 10L, "dev", "app-a", DdcSiKindEnum.AGENT, "agent-a",
-                List.of(edge(DdcSiReferenceTargetTypeEnum.AGENT, "agent-a", DdcSiReferenceTargetTypeEnum.AGENT, "agent-a"))))
-                .isInstanceOf(CommonException.class)
-                .satisfies(ex -> assertThat(((CommonException) ex).getCode()).isEqualTo(56422))
-                .hasMessageContaining("cycle");
-
-        assertThatThrownBy(() -> validator.validateAcyclicAndPublishedTargets(
-                1L, "xingyuan", 10L, "dev", "app-a", DdcSiKindEnum.AGENT, "agent-a",
-                List.of(edge(DdcSiReferenceTargetTypeEnum.AGENT, "agent-a", DdcSiReferenceTargetTypeEnum.AGENT, "agent-b"))))
-                .isInstanceOf(CommonException.class)
-                .satisfies(ex -> assertThat(((CommonException) ex).getCode()).isEqualTo(56422))
-                .hasMessageContaining("agent-a");
+    void rejectsDirectSelfCycleBeforeLockingOrReservingAVersion() {
+        assertThatThrownBy(() -> validator.freezePublication(resource(), new DdcSiVersionBO(), null,
+                List.of(edge(DdcSiReferenceTargetTypeEnum.AGENT, "agent-a", DdcSiReferenceTargetTypeEnum.AGENT, "agent-a")),
+                List.of())).isInstanceOf(CommonException.class).hasMessageContaining("itself");
+        org.mockito.Mockito.verifyNoInteractions(repository);
     }
 
     @Test
     void requiresAllDependenciesToBePublishedInTargetScope() {
-        when(repository.findAgentGraphEdges(1L, "prod")).thenReturn(List.of());
         when(repository.findByBusinessKey(1L, "xingyuan", 10L, "prod", "app-a", DdcSiKindEnum.MCP, "github-mcp"))
-                .thenReturn(Optional.of(DdcSiResourceBO.builder()
-                        .id(55L)
-                        .resourceKey("github-mcp")
-                        .lifecycleStatus(DdcSiLifecycleStatusEnum.DRAFT)
-                        .build()));
+                .thenReturn(Optional.of(DdcSiResourceBO.builder().id(55L).resourceKey("github-mcp")
+                        .lifecycleStatus(DdcSiLifecycleStatusEnum.DRAFT).build()));
+        assertThatThrownBy(() -> validator.freezePublication(resource(), new DdcSiVersionBO(), null,
+                List.of(edge(DdcSiReferenceTargetTypeEnum.AGENT, "agent-a", DdcSiReferenceTargetTypeEnum.MCP, "github-mcp")),
+                List.of())).isInstanceOf(CommonException.class).hasMessageContaining("not published");
+    }
 
-        assertThatThrownBy(() -> validator.validateAcyclicAndPublishedTargets(
-                1L, "xingyuan", 10L, "prod", "app-a", DdcSiKindEnum.AGENT, "agent-a",
-                List.of(edge(DdcSiReferenceTargetTypeEnum.AGENT, "agent-a", DdcSiReferenceTargetTypeEnum.MCP, "github-mcp"))))
-                .isInstanceOf(CommonException.class)
-                .satisfies(ex -> assertThat(((CommonException) ex).getCode()).isEqualTo(56422))
-                .hasMessageContaining("github-mcp");
-
-        when(repository.findByBusinessKey(1L, "xingyuan", 10L, "prod", "app-a", DdcSiKindEnum.MCP, "github-mcp"))
-                .thenReturn(Optional.of(DdcSiResourceBO.builder()
-                        .id(55L)
-                        .resourceKey("github-mcp")
-                        .lifecycleStatus(DdcSiLifecycleStatusEnum.PUBLISHED)
-                        .build()));
-
-        assertThatCode(() -> validator.validateAcyclicAndPublishedTargets(
-                1L, "xingyuan", 10L, "prod", "app-a", DdcSiKindEnum.AGENT, "agent-a",
-                List.of(edge(DdcSiReferenceTargetTypeEnum.AGENT, "agent-a", DdcSiReferenceTargetTypeEnum.MCP, "github-mcp"))))
-                .doesNotThrowAnyException();
+    private static DdcSiResourceBO resource() {
+        return DdcSiResourceBO.builder().id(100L).tenantId(1L).bizCode("xingyuan").namespaceId(10L)
+                .envCode("prod").appCode("app-a").kind(DdcSiKindEnum.AGENT).resourceKey("agent-a").build();
     }
 
     @Test
