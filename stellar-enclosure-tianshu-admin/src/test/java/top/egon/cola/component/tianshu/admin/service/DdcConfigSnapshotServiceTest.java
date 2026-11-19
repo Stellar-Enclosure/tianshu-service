@@ -17,15 +17,18 @@ import top.egon.cola.component.tianshu.admin.security.config.DdcConfigDeliveryTo
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextDTO;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextExecutor;
 import top.egon.cola.component.tianshu.admin.service.config.DdcConfigSnapshotService;
+import top.egon.cola.component.tianshu.admin.service.publish.DdcConfigManifestFactory;
 import top.egon.cola.component.tianshu.format.DdcConfigCanonicalJson;
 import top.egon.cola.component.tianshu.model.config.DdcConfigScopeVO;
 import top.egon.cola.component.tianshu.model.config.DdcConfigSnapshotDTO;
+import top.egon.cola.component.tianshu.model.config.DdcConfigBaselineVO;
 
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Map;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -92,13 +95,14 @@ class DdcConfigSnapshotServiceTest {
         stubPublication(manifest, YAML.replace("40","41"), 42L);
         assertStatus(HttpStatus.SERVICE_UNAVAILABLE);
         ((ObjectNode) manifest.withArray("targetBindings").get(0)).put("bindingRevision", "8");
+        stubPublication(manifest, YAML, 42L);
         assertStatus(HttpStatus.FORBIDDEN);
         verifyNoInteractions(boots, tokens);
     }
 
     @Test
     void conditionalDisabledReleaseStillHasNewRevisionAndEmptyHotProjection() {
-        stubPublication(manifest(false), null, 42L);
+        stubPublication(manifest(false), YAML, 42L);
         var snapshot = service.requireCurrent(WORKLOAD).snapshot();
         assertThat(snapshot.getEnabled()).isFalse();
         assertThat(snapshot.getReleaseRevision()).isEqualTo("42");
@@ -131,33 +135,30 @@ class DdcConfigSnapshotServiceTest {
 
     private void stubPublication(ObjectNode manifest, String yaml, long revision) {
         when(items.findByBizCodeAndEnvAndAppCodeAndResourceName("reader", "test", "app", "application.yml"))
-                .thenReturn(Optional.of(DdcConfigItemBO.builder().id(441L).publishedVersion(revision).build()));
+                .thenReturn(Optional.of(item().setPublishedVersion(revision)));
         when(versions.findByConfigItemIdAndRevision(441L, revision))
-                .thenReturn(Optional.of(DdcConfigVersionBO.builder().manifestJson(manifest).newContent(yaml).build()));
+                .thenReturn(Optional.of(DdcConfigVersionBO.builder().tenantId(101L).configItemId(441L)
+                        .configRevision(revision).bizCode("reader").env("test").appCode("app")
+                        .resourceName("application.yml").format("YAML").manifestJson(manifest).newContent(yaml).build()));
     }
 
     private static ObjectNode manifest(boolean enabled) {
-        Map<String, JsonNode> expected = enabled ? Map.of(
-                "config.amount", JSON.getNodeFactory().numberNode(40),
-                "config.explicit-null", JSON.getNodeFactory().nullNode(),
-                "config.text", JSON.getNodeFactory().textNode("")) : Map.of();
-        var projection = new DdcConfigSnapshotDTO("1", SCOPE, "42", enabled, RESTART, RESTART, expected, null, NOW);
-        var manifest = JSON.createObjectNode();
-        manifest.put("schemaVersion", "1");
-        manifest.set("scope", JSON.valueToTree(SCOPE));
-        manifest.putObject("source").put("configId", "441").put("revision", "42");
-        manifest.put("enabled", enabled).put("restartDigest", RESTART)
-                .put("contentSha256", DdcConfigCanonicalJson.contentSha256(projection)).putNull("dependencySnapshotId");
-        var rules = manifest.putArray("rules");
-        rule(rules, "config.amount", "HOT", "INTEGER", false);
-        rule(rules, "config.explicit-null", "HOT", "STRING", true);
-        rule(rules, "config.text", "HOT", "STRING", false);
-        rule(rules, "config.secret-ref", "RESTART", "STRING", false);
-        manifest.putArray("targetBindings").addObject().put("bindingId", "binding-a").put("bindingRevision", "7")
-                .put("clusterId", "cluster-test").put("kubernetesNamespace", "reader-apps")
-                .put("workloadKind", "Deployment").put("workloadName", "reader")
-                .put("workloadUid", "deployment-uid").put("containerName", "application");
-        return manifest;
+        var target = new DdcConfigBaselineVO.TargetBindingVO("binding-a", "7", "cluster-test", "reader-apps",
+                "Deployment", "reader", "deployment-uid", "application");
+        var policy = new DdcConfigManifestFactory.PublicationPolicyVO(SCOPE, List.of(
+                new DdcConfigBaselineVO.RuleVO("config.amount", DdcConfigBaselineVO.ReloadModeEnum.HOT,
+                        "INTEGER", null, false, true),
+                new DdcConfigBaselineVO.RuleVO("config.explicit-null", DdcConfigBaselineVO.ReloadModeEnum.HOT,
+                        "STRING", null, true, true),
+                new DdcConfigBaselineVO.RuleVO("config.text", DdcConfigBaselineVO.ReloadModeEnum.HOT,
+                        "STRING", null, false, true)), List.of(target), null, Map.of(), Map.of());
+        return (ObjectNode) new DdcConfigManifestFactory(JSON).freeze(TENANT, item(), 42L, YAML, enabled, policy).manifest();
+    }
+
+    private static DdcConfigItemBO item() {
+        return DdcConfigItemBO.builder().id(441L).tenantId(101L).bizCode("reader").env("test").appCode("app")
+                .resourceName("application.yml").format("YAML").enabled(true).deleted(false)
+                .currentVersion(42L).publishedVersion(42L).build();
     }
 
     private static void rule(ArrayNode rules, String key, String mode, String type, boolean nullable) {

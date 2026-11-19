@@ -12,9 +12,85 @@ import top.egon.cola.component.tianshu.redis.DdcRedisKeys;
 
 import java.time.Clock;
 import java.util.regex.Pattern;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+import com.fasterxml.jackson.annotation.JsonAnySetter;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Min;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.experimental.Accessors;
 
 @Configuration(value = "ddcOutboxConfiguration", proxyBeanMethods = false)
 public class DdcOutboxConfiguration {
+
+    @Bean("ddcConfigRolloutOutboxRoute")
+    public DdcConfigRolloutOutboxRouteDTO ddcConfigRolloutOutboxRoute() {
+        return new DdcConfigRolloutOutboxRouteDTO("tianshu.config-rollout", "1");
+    }
+
+    public record DdcConfigRolloutOutboxRouteDTO(String channel, String schemaVersion) {
+        private static final Pattern DESTINATION = Pattern.compile("^tianshu-config/[1-9][0-9]{0,18}/[1-9][0-9]{0,18}$");
+        public DdcConfigRolloutOutboxRouteDTO {
+            if (!"tianshu.config-rollout".equals(channel) || !"1".equals(schemaVersion)) {
+                throw new IllegalArgumentException("TIANSHU_CONFIG_ROLLOUT_ROUTE_INVALID");
+            }
+        }
+        public String eventType() { return "TIANSHU_CONFIG_ROLLOUT_REQUESTED"; }
+        public String destination(DdcConfigRolloutRequestedEvent event) {
+            String destination = "tianshu-config/" + event.getTenantId() + "/" + event.getConfigId();
+            validateDestination(destination);
+            return destination;
+        }
+        public void validateDestination(String destination) {
+            if (destination == null || !DESTINATION.matcher(destination).matches()) {
+                throw new OutboxValidationException("TIANSHU_CONFIG_ROLLOUT_DESTINATION_INVALID");
+            }
+        }
+    }
+
+    /** A wake-up carries only the fixed database identity; it never embeds credentials or configuration values. */
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Accessors(chain = true)
+    @Builder
+    public static class DdcConfigRolloutRequestedEvent {
+        @NotBlank private String schemaVersion;
+        @NotBlank private String eventId;
+        @NotBlank private String tenantId;
+        @NotBlank private String configId;
+        @NotBlank private String revision;
+        @NotBlank private String changeId;
+        @NotNull @Min(1) private Integer attempt;
+
+        @com.fasterxml.jackson.annotation.JsonIgnore
+        public boolean isValid() {
+            return "1".equals(schemaVersion) && decimal(tenantId) && decimal(configId) && decimal(revision)
+                    && decimal(changeId) && attempt != null && attempt >= 1
+                    && eventId(tenantId, configId, revision, changeId, attempt).equals(eventId);
+        }
+        public static String eventId(String tenantId, String configId, String revision, String changeId, int attempt) {
+            try {
+                return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(
+                        ("tianshu-config-rollout:1\n" + tenantId + "\n" + configId + "\n" + revision + "\n"
+                                + changeId + "\n" + attempt).getBytes(StandardCharsets.UTF_8)));
+            } catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
+        }
+        private static boolean decimal(String value) {
+            if (value == null || !value.matches("[1-9][0-9]{0,18}")) { return false; }
+            try { return Long.parseLong(value) > 0; } catch (NumberFormatException invalid) { return false; }
+        }
+        @JsonAnySetter public void rejectUnknown(String name, Object value) {
+            throw new IllegalArgumentException("TIANSHU_CONFIG_ROLLOUT_FIELD_UNKNOWN");
+        }
+        @Override public String toString() { return "ConfigRollout[eventId=" + eventId + "]"; }
+    }
 
     @Bean("ddcPublishTransactionTemplate")
     public TransactionTemplate ddcPublishTransactionTemplate(

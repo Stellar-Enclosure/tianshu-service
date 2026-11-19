@@ -9,6 +9,8 @@ import org.mapstruct.ReportingPolicy;
 import top.egon.cola.component.common.core.converter.BaseForwardConverter;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcAtomicPublishCommand;
 import top.egon.cola.component.tianshu.model.event.DdcConfigDispatchPreparedEvent;
+import top.egon.cola.component.tianshu.admin.config.DdcOutboxConfiguration.DdcConfigRolloutRequestedEvent;
+import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishTaskBO;
 
 @Mapper(
         componentModel = "spring",
@@ -17,6 +19,16 @@ import top.egon.cola.component.tianshu.model.event.DdcConfigDispatchPreparedEven
 )
 public interface DdcConfigDispatchEventConverter
         extends BaseForwardConverter<DdcAtomicPublishCommand, DdcConfigDispatchPreparedEvent> {
+
+    @BeanMapping(ignoreByDefault = true)
+    @Mapping(target = "schemaVersion", constant = "1")
+    @Mapping(target = "tenantId", expression = "java(Long.toString(source.getTenantId()))")
+    @Mapping(target = "configId", expression = "java(Long.toString(source.getConfigItemId()))")
+    @Mapping(target = "revision", expression = "java(Long.toString(source.getTargetVersion()))")
+    @Mapping(target = "changeId", source = "changeId")
+    @Mapping(target = "attempt", source = "attemptCount")
+    @Mapping(target = "eventId", expression = "java(top.egon.cola.component.tianshu.admin.config.DdcOutboxConfiguration.DdcConfigRolloutRequestedEvent.eventId(Long.toString(source.getTenantId()), Long.toString(source.getConfigItemId()), Long.toString(source.getTargetVersion()), source.getChangeId(), source.getAttemptCount()))")
+    DdcConfigRolloutRequestedEvent toNative(DdcPublishTaskBO source);
 
     @Override
     @BeanMapping(ignoreByDefault = true)

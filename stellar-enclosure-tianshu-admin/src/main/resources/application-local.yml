@@ -87,6 +87,33 @@ egon:
             queue-capacity: ${TIANSHU_SI_INDEX_QUEUE_CAPACITY:256}
             await-termination: ${TIANSHU_SI_INDEX_AWAIT_TERMINATION:10s}
         admin:
+          config-publication:
+            policy-file: ${TIANSHU_CONFIG_PUBLICATION_POLICY_FILE:}
+            policy-sha256: ${TIANSHU_CONFIG_PUBLICATION_POLICY_SHA256:}
+          config-publisher:
+            cluster-id: ${TIANSHU_CONFIG_PUBLISHER_CLUSTER_ID:}
+            api-server: ${TIANSHU_CONFIG_PUBLISHER_API_SERVER:}
+            api-ca-file: ${TIANSHU_CONFIG_PUBLISHER_API_CA_FILE:}
+            api-token-file: ${TIANSHU_CONFIG_PUBLISHER_API_TOKEN_FILE:}
+            api-timeout: ${TIANSHU_CONFIG_PUBLISHER_API_TIMEOUT:5s}
+            api-max-response-bytes: ${TIANSHU_CONFIG_PUBLISHER_API_MAX_RESPONSE_BYTES:4194304}
+          config-observer:
+            cluster-id: ${TIANSHU_CONFIG_OBSERVER_CLUSTER_ID:}
+            api-server: ${TIANSHU_CONFIG_OBSERVER_API_SERVER:}
+            api-ca-file: ${TIANSHU_CONFIG_OBSERVER_API_CA_FILE:}
+            api-token-file: ${TIANSHU_CONFIG_OBSERVER_API_TOKEN_FILE:}
+            api-timeout: ${TIANSHU_CONFIG_OBSERVER_API_TIMEOUT:5s}
+            api-max-response-bytes: ${TIANSHU_CONFIG_OBSERVER_API_MAX_RESPONSE_BYTES:4194304}
+            max-stale: ${TIANSHU_CONFIG_OBSERVER_MAX_STALE:60s}
+            relist-interval: ${TIANSHU_CONFIG_OBSERVER_RELIST_INTERVAL:20s}
+            watch-timeout: ${TIANSHU_CONFIG_OBSERVER_WATCH_TIMEOUT:30s}
+            export-interval: ${TIANSHU_CONFIG_OBSERVER_EXPORT_INTERVAL:2s}
+          config-worker:
+            test-static-machine-id-enabled: ${TIANSHU_CONFIG_WORKER_TEST_STATIC_MACHINE_ID_ENABLED:false}
+            id-redis:
+              nodes: []
+              username: ${TIANSHU_CONFIG_WORKER_ID_REDIS_USERNAME:}
+              password-file: ${TIANSHU_CONFIG_WORKER_ID_REDIS_PASSWORD_FILE:}
           config-delivery:
             enabled: false
             api-server: https://127.0.0.1:1

@@ -2,6 +2,7 @@ package top.egon.cola.component.tianshu.admin.model.bo;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
@@ -51,6 +52,7 @@ public class DdcPublishTaskBO {
     private String resourceName;
     private Long targetVersion;
     private String publishMode;
+    @JsonIgnore private JsonNode platformEvidence;
     private String resourceChecksum;
     private Integer attemptCount;
     private LocalDateTime dispatchedAt;

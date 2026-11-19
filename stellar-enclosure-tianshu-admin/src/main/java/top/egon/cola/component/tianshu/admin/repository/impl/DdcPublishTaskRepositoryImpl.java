@@ -1,5 +1,6 @@
 package top.egon.cola.component.tianshu.admin.repository.impl;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
@@ -55,6 +56,18 @@ public class DdcPublishTaskRepositoryImpl extends EgonColaRepository<DdcPublishT
     }
     @Override public Optional<DdcPublishTaskBO> findForUpdateByChangeId(String changeId) {
         return Optional.ofNullable(mapper.selectForUpdateByChangeId(tenantId(), changeId)).map(converter::toTarget);
+    }
+
+    @Override
+    public int updateNativeEvidence(DdcPublishTaskBO task, JsonNode evidence, String nativeStatus,
+            String failureStage, LocalDateTime changedAt) {
+        return mapper.updateNativeEvidence(tenantId(), task, evidence, nativeStatus, failureStage, changedAt,
+                actor(), auditTime());
+    }
+
+    @Override
+    public int resetNativeForRetry(DdcPublishTaskBO task, String operator, LocalDateTime changedAt) {
+        return mapper.resetNativeForRetry(tenantId(), task, operator, changedAt, actor(), auditTime());
     }
     @Override public boolean fenceObservedVersion(DdcPublishTaskBO task) {
         return mapper.fenceObservedVersion(tenantId(), task.getId(), task.getVersion(), actor(),

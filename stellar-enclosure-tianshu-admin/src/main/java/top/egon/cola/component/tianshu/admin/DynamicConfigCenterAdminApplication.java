@@ -9,6 +9,22 @@ import org.mybatis.spring.annotation.MapperScan;
 public class DynamicConfigCenterAdminApplication {
 
     public static void main(String[] args) {
+        if (args.length > 0 && ("--config-publisher".equals(args[0]) || "--config-observer".equals(args[0]))) {
+            String[] workerArguments = java.util.Arrays.copyOfRange(args, 1, args.length);
+            for (String argument : workerArguments) {
+                if (argument.startsWith("--config-")) {
+                    throw new IllegalArgumentException("TIANSHU_CONFIG_WORKER_MODE_INVALID");
+                }
+            }
+            top.egon.cola.component.tianshu.admin.config.DdcConfigWorkerApplicationConfiguration
+                    .application(args[0].substring(2)).run(workerArguments);
+            return;
+        }
+        for (String argument : args) {
+            if (argument.startsWith("--config-")) {
+                throw new IllegalArgumentException("TIANSHU_CONFIG_WORKER_MODE_INVALID");
+            }
+        }
         if (args.length > 0 && "bootstrap-permission-metadata".equals(args[0])) {
             top.egon.cola.component.tianshu.admin.bootstrap.DdcPermissionMetadataBootstrapCli.run(java.util.Arrays.copyOfRange(args, 1, args.length));
             return;

@@ -15,6 +15,8 @@ import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
+import java.time.Instant;
+import java.util.List;
 
 @Data
 @NoArgsConstructor
@@ -159,4 +161,237 @@ public class DdcPublishTaskResult {
             plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
     @com.fasterxml.jackson.annotation.JsonFormat(shape = com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING)
     private LocalDateTime updatedAt;
+
+    /** Current evidence is additive; legacy ACK counters above retain archive semantics. */
+    @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.desiredRevision", type = ResourceType.FIELD,
+            labelPage = "tianshu.permissions", labelKey = "field.desiredRevision")
+    @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+            plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+    private String desiredRevision;
+    @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.historyOnly", type = ResourceType.FIELD,
+            labelPage = "tianshu.permissions", labelKey = "field.historyOnly")
+    @FieldPermissions(valueType = PermissionManifest.JsonFieldType.BOOLEAN,
+            plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+    private Boolean historyOnly;
+    @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.platformState", type = ResourceType.FIELD,
+            labelPage = "tianshu.permissions", labelKey = "field.platformState")
+    @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+            plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+    private String platformState;
+    @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.rolloutState", type = ResourceType.FIELD,
+            labelPage = "tianshu.permissions", labelKey = "field.rolloutState")
+    @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+            plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+    private String rolloutState;
+    @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.processState", type = ResourceType.FIELD,
+            labelPage = "tianshu.permissions", labelKey = "field.processState")
+    @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+            plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+    private String processState;
+    @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.observedAt", type = ResourceType.FIELD,
+            labelPage = "tianshu.permissions", labelKey = "field.observedAt")
+    @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+            plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+    @com.fasterxml.jackson.annotation.JsonFormat(shape = com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING,
+            pattern = "yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'", timezone = "UTC")
+    private Instant observedAt;
+    @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.observationValidUntil", type = ResourceType.FIELD,
+            labelPage = "tianshu.permissions", labelKey = "field.observationValidUntil")
+    @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+            plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+    @com.fasterxml.jackson.annotation.JsonFormat(shape = com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING,
+            pattern = "yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'", timezone = "UTC")
+    private Instant observationValidUntil;
+    @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.reasonCode", type = ResourceType.FIELD,
+            labelPage = "tianshu.permissions", labelKey = "field.reasonCode")
+    @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+            plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+    private String reasonCode;
+    @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.targets", type = ResourceType.FIELD,
+            labelPage = "tianshu.permissions", labelKey = "field.targets")
+    @FieldPermissions(valueType = PermissionManifest.JsonFieldType.ARRAY,
+            plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+    private List<TargetResult> targets;
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Accessors(chain = true)
+    @Builder
+    public static class TargetResult {
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.TargetResult.targetBindingId", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.targetBindingId")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private String targetBindingId;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.TargetResult.targetRevision", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.targetRevision")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private String targetRevision;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.TargetResult.clusterId", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.clusterId")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private String clusterId;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.TargetResult.k8sNamespace", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.k8sNamespace")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private String k8sNamespace;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.TargetResult.workloadUid", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.workloadUid")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private String workloadUid;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.TargetResult.desiredRevision", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.desiredRevision")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private String desiredRevision;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.TargetResult.workloadGeneration", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.workloadGeneration")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private String workloadGeneration;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.TargetResult.observedGeneration", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.observedGeneration")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private String observedGeneration;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.TargetResult.desiredReplicas", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.desiredReplicas")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.NUMBER,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private Integer desiredReplicas;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.TargetResult.currentCount", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.currentCount")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.NUMBER,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private Integer currentCount;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.TargetResult.appliedCount", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.appliedCount")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.NUMBER,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private Integer appliedCount;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.TargetResult.failedCount", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.failedCount")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.NUMBER,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private Integer failedCount;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.TargetResult.waitingCount", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.waitingCount")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.NUMBER,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private Integer waitingCount;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.TargetResult.platformState", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.platformState")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private String platformState;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.TargetResult.rolloutState", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.rolloutState")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private String rolloutState;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.TargetResult.processState", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.processState")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private String processState;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.TargetResult.observedAt", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.observedAt")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        @com.fasterxml.jackson.annotation.JsonFormat(shape = com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING,
+                pattern = "yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'", timezone = "UTC")
+        private Instant observedAt;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.TargetResult.reasonCode", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.reasonCode")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private String reasonCode;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.TargetResult.currentProcesses", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.currentProcesses")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.ARRAY,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private List<ProcessResult> currentProcesses;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Accessors(chain = true)
+    @Builder
+    public static class ProcessResult {
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.ProcessResult.podUid", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.podUid")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private String podUid;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.ProcessResult.podName", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.podName")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private String podName;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.ProcessResult.containerName", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.containerName")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private String containerName;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.ProcessResult.containerId", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.containerId")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private String containerId;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.ProcessResult.bootId", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.bootId")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private String bootId;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.ProcessResult.ready", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.ready")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.BOOLEAN,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private Boolean ready;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.ProcessResult.restartCount", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.restartCount")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.NUMBER,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private Integer restartCount;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.ProcessResult.startedAt", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.startedAt")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        @com.fasterxml.jackson.annotation.JsonFormat(shape = com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING,
+                pattern = "yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'", timezone = "UTC")
+        private Instant startedAt;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.ProcessResult.appliedRevision", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.appliedRevision")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private String appliedRevision;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.ProcessResult.reportSeq", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.reportSeq")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private String reportSeq;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.ProcessResult.status", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.status")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private String status;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.ProcessResult.errorCode", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.errorCode")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        private String errorCode;
+        @PermissionResource(key = "tianshu.field.DdcPublishTaskResult.ProcessResult.lastReportedAt", type = ResourceType.FIELD,
+                labelPage = "tianshu.permissions", labelKey = "field.lastReportedAt")
+        @FieldPermissions(valueType = PermissionManifest.JsonFieldType.STRING,
+                plainRead = @PermissionGroup(codes = "TIANSHU_READ"))
+        @com.fasterxml.jackson.annotation.JsonFormat(shape = com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING,
+                pattern = "yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'", timezone = "UTC")
+        private Instant lastReportedAt;
+    }
 }

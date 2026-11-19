@@ -8,6 +8,7 @@ import java.time.Clock;
 import java.time.ZoneOffset;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
 class DdcOutboxConfigurationTest {
@@ -27,6 +28,13 @@ class DdcOutboxConfigurationTest {
                     assertThat(context.getBean("egonColaMybatisPlusClock", Clock.class)).isSameAs(publication);
                     assertThat(publication.getZone()).isEqualTo(ZoneOffset.UTC);
                     assertThat(context.getBean("idpClock")).isNotSameAs(publication);
+                    var route = context.getBean("ddcConfigRolloutOutboxRoute", DdcOutboxConfiguration.DdcConfigRolloutOutboxRouteDTO.class);
+                    assertThat(route.channel()).isEqualTo("tianshu.config-rollout");
+                    assertThat(route.schemaVersion()).isEqualTo("1");
+                    assertThat(route.destination(DdcOutboxConfiguration.DdcConfigRolloutRequestedEvent.builder()
+                            .tenantId("101").configId("2001").build())).isEqualTo("tianshu-config/101/2001");
+                    assertThatThrownBy(() -> route.validateDestination("tianshu:v4:tenant:101:topic"))
+                            .hasMessage("TIANSHU_CONFIG_ROLLOUT_DESTINATION_INVALID");
                 });
     }
 }

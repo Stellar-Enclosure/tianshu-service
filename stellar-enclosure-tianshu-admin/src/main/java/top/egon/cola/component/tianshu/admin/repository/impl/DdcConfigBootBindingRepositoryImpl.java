@@ -31,6 +31,9 @@ import java.sql.SQLException;
 import java.time.Clock;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Owns boot registration commit; a returned fence is always read from committed authoritative facts. */
@@ -100,6 +103,51 @@ public class DdcConfigBootBindingRepositoryImpl
             } catch (BindingConflictException conflict) { throw conflict; }
             catch (RuntimeException unavailable) { throw unavailable(unavailable); }
         });
+    }
+
+    @Override
+    public List<DdcConfigBootBindingBO> findCurrentBindings(DdcTenantContextDTO trustedContext,
+            String clusterId, String k8sNamespace, String workloadUid, List<ObservedIncarnationVO> observed) {
+        validateTransactionConfiguration();
+        Objects.requireNonNull(trustedContext, "trustedContext");
+        if (!ascii(clusterId, 64) || !name(k8sNamespace) || !ascii(workloadUid, 64)
+                || observed == null || observed.size() > 500) throw new IllegalArgumentException("CONFIG_BOOT_CURRENT_QUERY_INVALID");
+        var identities = List.copyOf(observed);
+        var unique = new HashSet<ObservedIncarnationVO>();
+        for (var identity : identities) {
+            if (identity == null || !ascii(identity.podUid(), 64) || !name(identity.containerName())
+                    || !ascii(identity.containerId(), 256) || !unique.add(identity)) {
+                throw new IllegalArgumentException("CONFIG_BOOT_CURRENT_QUERY_INVALID");
+            }
+        }
+        return contexts.withinConfigBootBinding(trustedContext, () -> {
+            try {
+                if (identities.isEmpty()) return List.of();
+                return Objects.requireNonNull(transactions.execute(status -> {
+                    requireTransaction();
+                    var result = new ArrayList<DdcConfigBootBindingBO>();
+                    for (var identity : identities) {
+                        var row = mapper.findByIncarnation(clusterId, identity.podUid(), identity.containerName(), identity.containerId());
+                        if (row == null) continue;
+                        EgonColaModelValidationUtils.validate(row, EgonColaModelValidationGroups.Operation.LOADED);
+                        if (clusterId.equals(row.getClusterId()) && identity.podUid().equals(row.getPodUid())
+                                && identity.containerName().equals(row.getContainerName()) && identity.containerId().equals(row.getContainerId())
+                                && k8sNamespace.equals(row.getK8sNamespace()) && workloadUid.equals(row.getWorkloadUid())) {
+                            result.add(converter.toTarget(row));
+                        }
+                    }
+                    return List.copyOf(result);
+                }));
+            } catch (RuntimeException unavailable) { throw unavailable(unavailable); }
+        });
+    }
+
+    private static boolean ascii(String value, int max) {
+        return value != null && value.length() <= max && value.matches("[\\x21-\\x7e]+");
+    }
+
+    private static boolean name(String value) {
+        return value != null && value.length() <= 63 && value.matches("[a-z0-9](?:[a-z0-9-]*[a-z0-9])?");
     }
 
     private DdcConfigBootBindingBO createCommitted(DdcTenantContextDTO trustedContext, DdcConfigBootBindingPO expected) {

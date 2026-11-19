@@ -11,6 +11,8 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.context.properties.source.ConfigurationPropertyName;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.TransactionException;
@@ -22,6 +24,7 @@ import top.egon.cola.component.tianshu.admin.repository.DdcConfigItemRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcConfigVersionRepository;
 import top.egon.cola.component.tianshu.admin.security.config.DdcConfigDeliveryTokenService;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextExecutor;
+import top.egon.cola.component.tianshu.admin.service.publish.DdcConfigManifestFactory;
 import top.egon.cola.component.tianshu.environment.DdcReservedConfigurationKeys;
 import top.egon.cola.component.tianshu.format.DdcConfigCanonicalJson;
 import top.egon.cola.component.tianshu.model.config.DdcConfigBaselineVO;
@@ -33,12 +36,15 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Map;
 import java.util.Objects;
 
 @Slf4j
 @Validated
-@RequiredArgsConstructor
+@RequiredArgsConstructor(onConstructor_ = @Autowired)
 public class DdcConfigSnapshotService {
 
     private static final ObjectMapper YAML = new ObjectMapper(YAMLFactory.builder().build())
@@ -55,6 +61,15 @@ public class DdcConfigSnapshotService {
     @NonNull @Qualifier("ddcConfigDeliveryTokenService") private final DdcConfigDeliveryTokenService deliveryTokens;
     @NonNull @Qualifier("ddcConfigDeliveryClock") private final Clock clock;
     @NonNull @Qualifier("ddcConfigSnapshotValidity") private final Duration snapshotValidity;
+    @NonNull @Qualifier("ddcConfigManifestFactory") private final DdcConfigManifestFactory manifests;
+
+    /** Source-compatible local construction; production assembly supplies the shared factory Bean. */
+    public DdcConfigSnapshotService(DdcConfigItemRepository items, DdcConfigVersionRepository versions,
+            DdcConfigBootBindingRepository bootBindings, DdcTenantContextExecutor tenantContext,
+            DdcConfigDeliveryTokenService deliveryTokens, Clock clock, Duration snapshotValidity) {
+        this(items, versions, bootBindings, tenantContext, deliveryTokens, clock, snapshotValidity,
+                new DdcConfigManifestFactory(JSON));
+    }
 
     public Snapshot snapshot(@Valid @NotNull DdcConfigWorkloadIdentityVO workload, String ifNoneMatch) {
         Published published = requireCurrent(workload);
@@ -93,21 +108,29 @@ public class DdcConfigSnapshotService {
         var scope = workload.scope();
         var item = items.findByBizCodeAndEnvAndAppCodeAndResourceName(
                         scope.getBizCode(), scope.getEnv(), scope.getAppCode(), scope.getResourceName())
-                .filter(row -> !Boolean.TRUE.equals(row.getDeleted()))
                 .filter(row -> row.getPublishedVersion() != null && row.getPublishedVersion() > 0)
                 .orElseThrow(() -> new Rejected(HttpStatus.NOT_FOUND, "TIANSHU_CONFIG_NOT_PUBLISHED"));
         long configId = item.getId();
         Long revision = item.getPublishedVersion();
+        if (Boolean.TRUE.equals(item.getDeleted()) && (!Boolean.FALSE.equals(item.getEnabled())
+                || !Objects.equals(item.getCurrentVersion(), revision))) {
+            throw new Rejected(HttpStatus.NOT_FOUND, "TIANSHU_CONFIG_NOT_PUBLISHED");
+        }
         var version = versions.findByConfigItemIdAndRevision(configId, revision)
                 .orElseThrow(DdcConfigSnapshotService::unavailable);
-        JsonNode manifest = version.getManifestJson();
-        if (manifest == null || !manifest.isObject() || !textEquals(manifest, "schemaVersion", "1")
-                || !textEquals(manifest.path("source"), "configId", Long.toString(configId))
-                || !textEquals(manifest.path("source"), "revision", Long.toString(revision))
-                || !Objects.equals(manifest.get("scope"), JSON.valueToTree(scope))
-                || !manifest.path("enabled").isBoolean() || !manifest.path("targetBindings").isArray()) {
+        final DdcConfigManifestFactory.FrozenConfigVO frozen;
+        try {
+            if (!Objects.equals(version.getConfigItemId(), configId)
+                    || !Objects.equals(version.getConfigRevision(), revision)) { throw unavailable(); }
+            frozen = manifests.materialize(version, scope);
+            // A legacy tombstone cannot expose an old enabled publication. Only its exact native disable is readable.
+            if (Boolean.TRUE.equals(item.getDeleted()) && Boolean.TRUE.equals(frozen.baseline().getEnabled())) {
+                throw new Rejected(HttpStatus.NOT_FOUND, "TIANSHU_CONFIG_NOT_PUBLISHED");
+            }
+        } catch (IllegalArgumentException failure) {
             throw unavailable();
         }
+        JsonNode manifest = frozen.manifest();
         boolean authorized = false;
         for (JsonNode target : manifest.path("targetBindings")) {
             if (matchesTarget(target, workload)) {
@@ -120,23 +143,11 @@ public class DdcConfigSnapshotService {
         if (!authorized) {
             throw new Rejected(HttpStatus.FORBIDDEN, "TIANSHU_CONFIG_TARGET_NOT_AUTHORIZED");
         }
-        try {
-            var enabled = manifest.get("enabled").booleanValue();
-            var dependency = manifest.path("dependencySnapshotId");
-            if (!dependency.isNull() && !dependency.isTextual()) {
-                throw unavailable();
-            }
-            var snapshot = new DdcConfigSnapshotDTO("1", scope, Long.toString(revision), enabled,
-                    manifest.path("restartDigest").textValue(), manifest.path("contentSha256").textValue(),
-                    projectHotValues(version.getNewContent(), enabled, manifest.path("rules")),
-                    dependency.textValue(), clock.instant().plus(snapshotValidity));
-            if (!snapshot.getContentSha256().equals(DdcConfigCanonicalJson.contentSha256(snapshot))) {
-                throw unavailable();
-            }
-            return new Published(configId, snapshot, manifest.deepCopy());
-        } catch (IOException | IllegalArgumentException failure) {
-            throw unavailable();
-        }
+        var baseline = frozen.baseline();
+        var snapshot = new DdcConfigSnapshotDTO("1", scope, Long.toString(revision), baseline.getEnabled(),
+                baseline.getRestartDigest(), baseline.getContentSha256(), baseline.getHotSeed(),
+                baseline.getDependencySnapshotId(), clock.instant().plus(snapshotValidity));
+        return new Published(configId, snapshot, manifest.deepCopy());
     }
 
     /** Defines the typed projection shared with creation of an immutable release manifest. */
@@ -144,31 +155,99 @@ public class DdcConfigSnapshotService {
         if (!rules.isArray() || rules.size() > MAX_PATHS) {
             throw new IllegalArgumentException("TIANSHU_CONFIG_RULES_INVALID");
         }
-        Map<String, JsonNode> paths = enabled ? flatProperties(yaml) : Map.of();
+        List<DdcConfigBaselineVO.RuleVO> declared = new ArrayList<>();
+        for (JsonNode rule : rules) { declared.add(JSON.treeToValue(rule, DdcConfigBaselineVO.RuleVO.class)); }
+        return projectValues(yaml, enabled, declared).hotValues();
+    }
+
+    /** One pure classifier is shared by publication and exact-version materialization. */
+    public static ConfigProjectionVO projectValues(String yaml, boolean enabled,
+            List<DdcConfigBaselineVO.RuleVO> declared) throws IOException {
+        if (declared == null || declared.size() > MAX_PATHS) {
+            throw new IllegalArgumentException("TIANSHU_CONFIG_RULES_INVALID");
+        }
+        Map<String, JsonNode> paths = flatProperties(yaml);
         var seen = new HashSet<String>();
-        Map<String, JsonNode> result = new LinkedHashMap<>();
-        for (JsonNode jsonRule : rules) {
-            var rule = JSON.treeToValue(jsonRule, DdcConfigBaselineVO.RuleVO.class);
+        List<DdcConfigBaselineVO.RuleVO> effective = new ArrayList<>(declared);
+        for (var rule : declared) {
             if (rule == null || !seen.add(rule.getKey()) || DdcReservedConfigurationKeys.isReserved(rule.getKey())) {
                 throw new IllegalArgumentException("TIANSHU_CONFIG_RULES_INVALID");
             }
-            if (enabled && rule.getMode() == DdcConfigBaselineVO.ReloadModeEnum.HOT) {
-                JsonNode value = paths.get(rule.getKey());
-                validateHotValue(rule, value);
-                if (value != null) {
-                    result.put(rule.getKey(), value.deepCopy());
-                }
+            if (!java.util.Set.of("STRING", "DECIMAL_STRING", "BOOLEAN", "INTEGER", "NUMBER", "OBJECT", "ARRAY")
+                    .contains(rule.getValueType())) {
+                throw new IllegalArgumentException("TIANSHU_CONFIG_RULES_INVALID");
             }
         }
         var classified = new java.util.TreeSet<>(seen);
-        for (var entry : result.entrySet()) {
-            String path = entry.getKey();
-            if (entry.getValue().isContainerNode()
-                    && (hasPrefix(classified, path + ".") || hasPrefix(classified, path + "["))) {
+        for (String path : classified) {
+            if (hasPrefix(classified, path + ".") || hasPrefix(classified, path + "[")) {
                 throw new IllegalArgumentException("TIANSHU_CONFIG_RULES_OVERLAP");
             }
         }
-        return result;
+        for (var entry : paths.entrySet()) {
+            String path = entry.getKey();
+            if (DdcReservedConfigurationKeys.isReserved(path)) {
+                throw new IllegalArgumentException("TIANSHU_CONFIG_RULES_INVALID");
+            }
+            JsonNode value = entry.getValue();
+            boolean covered = isClassified(path, seen);
+            if (!covered && (!value.isContainerNode() || value.isEmpty())) {
+                effective.add(new DdcConfigBaselineVO.RuleVO(path, DdcConfigBaselineVO.ReloadModeEnum.RESTART,
+                        valueType(value), null, value.isNull(), true));
+            }
+        }
+        effective.sort(Comparator.comparing(DdcConfigBaselineVO.RuleVO::getKey));
+        validateDistinctPropertySlots(effective);
+        Map<String, JsonNode> restart = new LinkedHashMap<>();
+        Map<String, JsonNode> hot = new LinkedHashMap<>();
+        for (var rule : effective) {
+            JsonNode value = paths.get(rule.getKey());
+            if (!rule.acceptsValue(value)) {
+                throw new IllegalArgumentException("TIANSHU_CONFIG_RULE_VALUE_INVALID");
+            }
+            if (value != null && rule.getMode() == DdcConfigBaselineVO.ReloadModeEnum.RESTART) {
+                restart.put(rule.getKey(), value.deepCopy());
+            } else if (value != null && enabled) {
+                hot.put(rule.getKey(), value.deepCopy());
+            }
+        }
+        return new ConfigProjectionVO(effective, restart, hot);
+    }
+
+    private static boolean isClassified(String path, java.util.Set<String> classified) {
+        if (classified.contains(path)) { return true; }
+        for (int index = 0; index < path.length(); index++) {
+            if ((path.charAt(index) == '.' || path.charAt(index) == '[')
+                    && classified.contains(path.substring(0, index))) { return true; }
+        }
+        return false;
+    }
+
+    private static void validateDistinctPropertySlots(List<DdcConfigBaselineVO.RuleVO> rules) {
+        var slots = new HashSet<ConfigurationPropertyName>();
+        for (var rule : rules) {
+            var key = ConfigurationPropertyName.adapt(rule.getKey().replace('_', '.'), '.');
+            if (key.isEmpty() || !slots.add(key)) {
+                throw new IllegalArgumentException("TIANSHU_CONFIG_RULES_ALIAS_AMBIGUOUS");
+            }
+        }
+        for (var key : slots) {
+            for (var parent = key.getParent(); !parent.isEmpty(); parent = parent.getParent()) {
+                if (slots.contains(parent)) {
+                    throw new IllegalArgumentException("TIANSHU_CONFIG_RULES_ALIAS_AMBIGUOUS");
+                }
+            }
+        }
+    }
+
+    private static String valueType(JsonNode value) {
+        if (value.isNull() || value.isTextual()) { return "STRING"; }
+        if (value.isBoolean()) { return "BOOLEAN"; }
+        if (value.isIntegralNumber()) { return "INTEGER"; }
+        if (value.isNumber()) { return "NUMBER"; }
+        if (value.isObject()) { return "OBJECT"; }
+        if (value.isArray()) { return "ARRAY"; }
+        throw new IllegalArgumentException("TIANSHU_CONFIG_RULE_VALUE_INVALID");
     }
 
     private static Map<String, JsonNode> flatProperties(String yaml) throws IOException {
@@ -182,25 +261,6 @@ public class DdcConfigSnapshotService {
         Map<String, JsonNode> paths = new LinkedHashMap<>();
         flatten(source, "", paths, 0);
         return paths;
-    }
-
-    private static void validateHotValue(DdcConfigBaselineVO.RuleVO rule, JsonNode value) {
-        if (value == null && rule.getDeletionAllowed()
-                || value != null && value.isNull() && rule.getNullable()) {
-            return;
-        }
-        boolean valid = value != null && switch (rule.getValueType()) {
-            case "STRING", "DECIMAL_STRING" -> value.isTextual();
-            case "BOOLEAN" -> value.isBoolean();
-            case "INTEGER" -> value.isIntegralNumber();
-            case "NUMBER" -> value.isNumber();
-            case "OBJECT" -> value.isObject();
-            case "ARRAY" -> value.isArray();
-            default -> false;
-        };
-        if (!valid) {
-            throw new IllegalArgumentException("TIANSHU_CONFIG_RULE_VALUE_INVALID");
-        }
     }
 
     private static boolean hasPrefix(java.util.NavigableSet<String> keys, String prefix) {
@@ -241,6 +301,22 @@ public class DdcConfigSnapshotService {
 
     private static Rejected unavailable() {
         return new Rejected(HttpStatus.SERVICE_UNAVAILABLE, "TIANSHU_CONFIG_DELIVERY_UNAVAILABLE");
+    }
+
+    public record ConfigProjectionVO(List<DdcConfigBaselineVO.RuleVO> rules,
+            Map<String, JsonNode> restartValues, Map<String, JsonNode> hotValues) {
+        public ConfigProjectionVO {
+            rules = List.copyOf(rules);
+            restartValues = copyValues(restartValues);
+            hotValues = copyValues(hotValues);
+        }
+        @Override public Map<String, JsonNode> restartValues() { return copyValues(restartValues); }
+        @Override public Map<String, JsonNode> hotValues() { return copyValues(hotValues); }
+        private static Map<String, JsonNode> copyValues(Map<String, JsonNode> source) {
+            Map<String, JsonNode> copy = new LinkedHashMap<>();
+            source.forEach((key, value) -> copy.put(key, value.deepCopy()));
+            return java.util.Collections.unmodifiableMap(copy);
+        }
     }
 
     public record Snapshot(DdcConfigSnapshotDTO content, String etag, String deliveryToken, boolean notModified) {

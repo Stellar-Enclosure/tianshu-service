@@ -226,6 +226,10 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.P
         defaults = @LocalizedText(locale = "en-US", text = "App code"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.appId", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "App id"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.appliedCount", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Applied count"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.appliedRevision", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Applied revision"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.appName", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "App name"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.attemptCount", defaultLocale = "en-US",
@@ -246,6 +250,8 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.P
         defaults = @LocalizedText(locale = "en-US", text = "Biz code"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.bizName", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Biz name"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.bootId", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Boot ID"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.canInitialize", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Can initialize"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.catalogActivationVersion", defaultLocale = "en-US",
@@ -262,6 +268,8 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.P
         defaults = @LocalizedText(locale = "en-US", text = "Change reason"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.changeType", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Change type"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.clusterId", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Cluster ID"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.completedAt", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Completed at"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.completionTokens", defaultLocale = "en-US",
@@ -270,6 +278,10 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.P
         defaults = @LocalizedText(locale = "en-US", text = "Config id"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.consecutiveFailures", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Consecutive failures"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.containerId", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Container ID"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.containerName", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Container name"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.content", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Content"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.contentBytes", defaultLocale = "en-US",
@@ -288,6 +300,10 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.P
         defaults = @LocalizedText(locale = "en-US", text = "Created by"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.credentialId", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Credential id"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.currentCount", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Current count"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.currentProcesses", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Current processes"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.currentVersion", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Current version"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.currentVersionId", defaultLocale = "en-US",
@@ -308,6 +324,10 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.P
         defaults = @LocalizedText(locale = "en-US", text = "Description"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.descriptionKey", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Description key"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.desiredReplicas", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Desired replicas"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.desiredRevision", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Desired revision"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.diagnostics", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Diagnostics"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.dispatchedAt", defaultLocale = "en-US",
@@ -362,6 +382,8 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.P
         defaults = @LocalizedText(locale = "en-US", text = "Generation"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.group", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Group"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.historyOnly", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "History only"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.host", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Host"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.i18nRefs", defaultLocale = "en-US",
@@ -396,6 +418,8 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.P
         defaults = @LocalizedText(locale = "en-US", text = "Judge state"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.judgedAt", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Judged at"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.k8sNamespace", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Kubernetes namespace"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.key", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Key"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.kind", defaultLocale = "en-US",
@@ -404,6 +428,8 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.P
         defaults = @LocalizedText(locale = "en-US", text = "Label key"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.lastHeartbeatAt", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Last heartbeat at"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.lastReportedAt", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Last reported at"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.lastVersionNo", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Last version no"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.latencyMs", defaultLocale = "en-US",
@@ -450,8 +476,12 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.P
         defaults = @LocalizedText(locale = "en-US", text = "Nodes"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.note", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Note"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.observationValidUntil", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Observation valid until"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.observedAt", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Observed at"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.observedGeneration", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Observed generation"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.occurredAt", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Occurred at"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.oldContent", defaultLocale = "en-US",
@@ -490,6 +520,12 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.P
         defaults = @LocalizedText(locale = "en-US", text = "Persisted"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.pid", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Pid"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.platformState", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Platform state"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.podName", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Pod name"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.podUid", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Pod UID"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.policy", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Policy"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.policyId", defaultLocale = "en-US",
@@ -498,6 +534,8 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.P
         defaults = @LocalizedText(locale = "en-US", text = "Port"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.previousVersionId", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Previous version id"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.processState", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Process state"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.producedVersionId", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Produced version id"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.producedVersionNo", defaultLocale = "en-US",
@@ -528,10 +566,14 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.P
         defaults = @LocalizedText(locale = "en-US", text = "Published translations"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.publishedVersion", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Published version"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.ready", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Ready"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.rearm", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Rearm"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.reason", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Reason"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.reasonCode", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Reason code"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.redisValue", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Redis value"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.redisVersion", defaultLocale = "en-US",
@@ -540,6 +582,8 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.P
         defaults = @LocalizedText(locale = "en-US", text = "Registered at"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.reporterCredentialId", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Reporter credential id"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.reportSeq", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Report sequence"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.requestId", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Request id"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.resource", defaultLocale = "en-US",
@@ -560,10 +604,14 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.P
         defaults = @LocalizedText(locale = "en-US", text = "Resource type"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.resourceVersion", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Resource version"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.restartCount", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Restart count"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.reviewedSourceHashes", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Reviewed source hashes"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.revision", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Revision"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.rolloutState", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Rollout state"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.runNo", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Run no"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.runtimeMetadata", defaultLocale = "en-US",
@@ -614,12 +662,18 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.P
         defaults = @LocalizedText(locale = "en-US", text = "Status"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.target", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Target"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.targetBindingId", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Target binding ID"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.targetCount", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Target count"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.targetCreated", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Target created"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.targetResourceKey", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Target resource key"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.targetRevision", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Target revision"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.targets", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Targets"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.targetScope", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Target scope"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.targetVersion", defaultLocale = "en-US",
@@ -652,10 +706,16 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.P
         defaults = @LocalizedText(locale = "en-US", text = "Version no"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.visibleNamespaces", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Visible namespaces"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.waitingCount", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Waiting count"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.windowEnd", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Window end"))
 @PermissionMessage(pageCode = "tianshu.permissions", key = "field.windowStart", defaultLocale = "en-US",
         defaults = @LocalizedText(locale = "en-US", text = "Window start"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.workloadGeneration", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Workload generation"))
+@PermissionMessage(pageCode = "tianshu.permissions", key = "field.workloadUid", defaultLocale = "en-US",
+        defaults = @LocalizedText(locale = "en-US", text = "Workload UID"))
 final class DdcResourceMessages {
     private DdcResourceMessages() { }
 }

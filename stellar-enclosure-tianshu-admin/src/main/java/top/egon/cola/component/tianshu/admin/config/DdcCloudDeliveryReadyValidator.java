@@ -14,9 +14,11 @@ import java.util.stream.Collectors;
 /** Read-only catalog checks for the cloud delivery migration on the physical PRIMARY. */
 final class DdcCloudDeliveryReadyValidator {
     private static final String VERSION = "20261117_001";
+    private static final String NATIVE_ROLLOUT_VERSION = "20261118_001";
     private static final String SCHEMA = "public";
     private static final String BOOT = "ddc_config_boot_binding_t0";
     private static final String RECEIPT = "ddc_config_process_receipt_t0";
+    private static final String WORKLOAD_OBSERVATION = "ddc_config_workload_observation_t0";
     private static final String CONFIG_VERSION = "ddc_config_version_t0";
     private static final String SI_VERSION = "ddc_si_version_t0";
     private static final String VERSION_KEY = "tenant_id,config_id,config_revision";
@@ -63,6 +65,10 @@ final class DdcCloudDeliveryReadyValidator {
         return manifest.scripts().getLast().version().compareTo(VERSION) >= 0;
     }
 
+    static boolean includesNativeRollout(EgonColaDdlManifestBO manifest) {
+        return manifest.scripts().getLast().version().compareTo(NATIVE_ROLLOUT_VERSION) >= 0;
+    }
+
     static void validate(Connection connection) throws SQLException {
         DatabaseMetaData metadata = connection.getMetaData();
         validateTable(metadata, BOOT, BOOT_COLUMNS, Set.of("deleted_at"));
@@ -73,6 +79,45 @@ final class DdcCloudDeliveryReadyValidator {
         validateConstraints(connection);
         validateReceiptIndexes(connection);
         validateBootTrigger(connection);
+    }
+
+    static void validateNativeRollout(Connection connection) throws SQLException {
+        var metadata = connection.getMetaData();
+        validateTable(metadata, WORKLOAD_OBSERVATION, Set.of("target_binding_id", "target_revision", "cluster_id",
+                "k8s_namespace", "workload_uid", "observed_at", "valid_until", "recorded_at", "view_json"),
+                Set.of("deleted_at", "observed_at", "valid_until"));
+        requireJsonb(metadata, WORKLOAD_OBSERVATION, "view_json", false);
+        requireJsonb(metadata, "ddc_publish_task_t0", "platform_evidence", true);
+        String constraints = """
+                SELECT c.conname, c.contype, c.convalidated, c.condeferrable,
+                       COALESCE((to_jsonb(c)->>'conenforced')::boolean, true),
+                       COALESCE(i.indnullsnotdistinct, false)
+                FROM pg_catalog.pg_constraint c
+                LEFT JOIN pg_catalog.pg_index i ON i.indexrelid = c.conindid
+                WHERE (c.conrelid = 'public.ddc_config_workload_observation_t0'::regclass
+                        AND c.conname IN ('pk_ddc_config_workload_observation',
+                            'uk_ddc_config_workload_observation_scope',
+                            'ck_ddc_config_workload_observation_view',
+                            'ck_ddc_config_workload_observation_expiry'))
+                   OR (c.conrelid = 'public.ddc_publish_task_t0'::regclass
+                        AND c.conname = 'ck_ddc_publish_task_platform_evidence')
+                """;
+        Map<String, String> requiredTypes = Map.of(
+                "pk_ddc_config_workload_observation", "p",
+                "uk_ddc_config_workload_observation_scope", "u",
+                "ck_ddc_config_workload_observation_view", "c",
+                "ck_ddc_config_workload_observation_expiry", "c",
+                "ck_ddc_publish_task_platform_evidence", "c");
+        Set<String> seen = new java.util.HashSet<>();
+        try (var statement = connection.prepareStatement(constraints); var rows = statement.executeQuery()) {
+            while (rows.next()) {
+                String name = rows.getString(1);
+                String type = rows.getString(2);
+                require(type.equals(requiredTypes.get(name)) && rows.getBoolean(3) && !rows.getBoolean(4)
+                        && rows.getBoolean(5) && (!"u".equals(type) || rows.getBoolean(6)) && seen.add(name), name);
+            }
+        }
+        require(seen.equals(requiredTypes.keySet()), "native rollout constraints");
     }
 
     private static void validateTable(DatabaseMetaData metadata, String table, Set<String> fields, Set<String> nullable)

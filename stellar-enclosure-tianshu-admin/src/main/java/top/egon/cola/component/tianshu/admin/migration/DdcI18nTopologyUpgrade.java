@@ -55,6 +55,11 @@ final class DdcI18nTopologyUpgrade {
         return this;
     }
 
+    DdcI18nTopologyUpgrade nativeConfigRollout() {
+        plan = UpgradePlan.NATIVE_CONFIG_ROLLOUT;
+        return this;
+    }
+
     void upgrade() {
         validateManifests();
         try {
@@ -101,6 +106,7 @@ final class DdcI18nTopologyUpgrade {
             throw new IllegalStateException("TIANSHU_I18N_UPGRADE_PLAN_INVALID");
         }
         if (plan == UpgradePlan.CLOUD_DELIVERY) validateCloudDeliveryPrefix();
+        if (plan == UpgradePlan.NATIVE_CONFIG_ROLLOUT) validateNativeConfigRolloutPrefix();
         for (var manifest : List.of(tianshuManifest, outboxManifest)) {
             for (var script : manifest.scripts()) {
                 try {
@@ -135,6 +141,15 @@ final class DdcI18nTopologyUpgrade {
             if (!checksums.get(index).equals(tianshuManifest.scripts().get(index).sha256())) {
                 throw new IllegalStateException("TIANSHU_CLOUD_UPGRADE_PREDECESSOR_MANIFEST_MISMATCH");
             }
+        }
+    }
+
+    private void validateNativeConfigRolloutPrefix() {
+        validateCloudDeliveryPrefix();
+        // The prior nine-script cloud-delivery ledger is frozen, including its final schema bytes.
+        if (!"ec2deb49cfa03eaf3258818f79af9c9f7bba8e14dbb21c34231ca31763fa61c0"
+                .equals(tianshuManifest.scripts().get(8).sha256())) {
+            throw new IllegalStateException("TIANSHU_NATIVE_CONFIG_UPGRADE_PREDECESSOR_MANIFEST_MISMATCH");
         }
     }
 
@@ -344,7 +359,11 @@ final class DdcI18nTopologyUpgrade {
         CLOUD_DELIVERY(List.of("20260922_001", "20260928_001", "20261017_001", "20261018_001",
                 "20261022_001", "20261023_001", "20261028_001", "20261116_001", "20261117_001"),
                 "db/egon-mp/V20261117_001__tianshu_cloud_delivery_manifests.sql",
-                List.of("ddc_config_process_receipt_t0", "ddc_config_boot_binding_t0"), "upgrade-cloud-delivery");
+                List.of("ddc_config_process_receipt_t0", "ddc_config_boot_binding_t0"), "upgrade-cloud-delivery"),
+        NATIVE_CONFIG_ROLLOUT(List.of("20260922_001", "20260928_001", "20261017_001", "20261018_001",
+                "20261022_001", "20261023_001", "20261028_001", "20261116_001", "20261117_001", "20261118_001"),
+                "db/egon-mp/V20261118_001__tianshu_native_config_rollout.sql",
+                List.of("ddc_config_workload_observation_t0"), "upgrade-native-config-rollout");
         private final List<String> versions;
         private final String script;
         private final List<String> tables;

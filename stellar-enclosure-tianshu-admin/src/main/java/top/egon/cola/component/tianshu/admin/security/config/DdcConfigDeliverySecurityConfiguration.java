@@ -46,6 +46,7 @@ import top.egon.cola.component.tianshu.admin.repository.DdcConfigVersionReposito
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextExecutor;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantRegistry;
 import top.egon.cola.component.tianshu.admin.service.config.DdcConfigSnapshotService;
+import top.egon.cola.component.tianshu.admin.service.publish.DdcConfigManifestFactory;
 import top.egon.cola.component.tianshu.model.config.DdcConfigReceiptCommand;
 import top.egon.cola.component.tianshu.model.config.DdcConfigSnapshotDTO;
 import top.egon.cola.platform.tianquan.shoubing.contract.ServiceIdentityPrincipal;
@@ -116,13 +117,15 @@ public class DdcConfigDeliverySecurityConfiguration {
     }
 
     @Bean("ddcConfigSnapshotService")
-    DdcConfigSnapshotService ddcConfigSnapshotService(DdcConfigItemRepository items,
-            DdcConfigVersionRepository versions, DdcConfigBootBindingRepository boots,
+    DdcConfigSnapshotService ddcConfigSnapshotService(@Qualifier("ddcConfigItemRepository") DdcConfigItemRepository items,
+            @Qualifier("ddcConfigVersionRepository") DdcConfigVersionRepository versions,
+            @Qualifier("ddcConfigBootBindingRepository") DdcConfigBootBindingRepository boots,
             @Qualifier("ddcTenantContextExecutor") DdcTenantContextExecutor tenants,
             @Qualifier("ddcConfigDeliveryTokenService") DdcConfigDeliveryTokenService tokens,
+            @Qualifier("ddcConfigManifestFactory") DdcConfigManifestFactory manifests,
             DeliveryProperties settings) {
         return new DdcConfigSnapshotService(items, versions, boots, tenants, tokens, Clock.systemUTC(),
-                settings.snapshotValidity());
+                settings.snapshotValidity(), manifests);
     }
 
     @Bean("ddcConfigDeliverySecurityFilterChain")

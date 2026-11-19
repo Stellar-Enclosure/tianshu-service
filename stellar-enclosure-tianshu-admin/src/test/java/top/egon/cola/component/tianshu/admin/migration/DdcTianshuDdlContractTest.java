@@ -72,6 +72,7 @@ class DdcTianshuDdlContractTest {
     private static final String LIST_SQL = "db/egon-mp/V20261028_001__tianshu_list_templates.sql";
     private static final String SI_SQL = "db/egon-mp/V20261116_001__tianshu_si_resource_governance.sql";
     private static final String CLOUD_SQL = "db/egon-mp/V20261117_001__tianshu_cloud_delivery_manifests.sql";
+    private static final String ROLLOUT_SQL = "db/egon-mp/V20261118_001__tianshu_native_config_rollout.sql";
     private static final Set<String> LIST_TABLES = Set.of("ddc_list_definition_t0", "ddc_list_template_t0",
             "ddc_list_template_column_t0", "ddc_list_selection_t0");
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
@@ -122,7 +123,7 @@ class DdcTianshuDdlContractTest {
 
         assertThat(manifest.path("family").asText()).isEqualTo("tianshu");
         assertThat(typedManifest.family()).isEqualTo("tianshu");
-        assertThat(manifest.path("scripts").size()).isEqualTo(9);
+        assertThat(manifest.path("scripts").size()).isEqualTo(10);
         JsonNode v001 = manifest.path("scripts").get(0);
         JsonNode v002 = manifest.path("scripts").get(1);
         JsonNode v003 = manifest.path("scripts").get(2);
@@ -158,8 +159,13 @@ class DdcTianshuDdlContractTest {
         assertThat(v009.path("version").asText()).isEqualTo("20261117_001");
         assertThat(v009.path("path").asText()).isEqualTo(CLOUD_SQL);
         assertThat(v009.path("sha256").asText()).isEqualTo(sha256(requiredResource(CLOUD_SQL)));
+        JsonNode v010 = manifest.path("scripts").get(9);
+        assertThat(v010.path("version").asText()).isEqualTo("20261118_001");
+        assertThat(v010.path("path").asText()).isEqualTo(ROLLOUT_SQL);
+        assertThat(v010.path("sha256").asText()).isEqualTo(sha256(requiredResource(ROLLOUT_SQL)));
         assertThat(typedManifest.scripts().subList(typedManifest.startingIndex(null), typedManifest.scripts().size()))
-                .extracting(EgonColaDdlManifestBO.ScriptBO::version).containsExactly("20261018_001", "20261022_001", "20261023_001", "20261028_001", "20261116_001", "20261117_001");
+                .extracting(EgonColaDdlManifestBO.ScriptBO::version).containsExactly("20261018_001", "20261022_001",
+                        "20261023_001", "20261028_001", "20261116_001", "20261117_001", "20261118_001");
         assertThat(typedManifest.freshBaselineVersion()).isEqualTo("20261018_001");
         assertThat(typedManifest.startingIndex(null)).isEqualTo(3);
     }
@@ -319,8 +325,12 @@ class DdcTianshuDdlContractTest {
         assertThat(sharding.getTransactionDefaultType()).isEqualTo("LOCAL");
         assertThat(sharding.getDataSources()).singleElement()
                 .satisfies(source -> assertThat(source.role()).isEqualTo(EgonColaShardingProperties.DataSourceRoleEnum.PRIMARY));
-        assertThat(sharding.getTables()).hasSize(42);
+        assertThat(sharding.getTables()).hasSize(43);
         assertThat(sharding.getTables().get("ddc_config_process_receipt").type()).isEqualTo("STANDARD_TENANT_ID");
+        assertThat(sharding.getTables().get("ddc_config_workload_observation")).satisfies(table -> {
+            assertThat(table.type()).isEqualTo("STANDARD_TENANT_ID");
+            assertThat(table.schema()).isEqualTo("public");
+        });
         assertThat(sharding.getTables().get("ddc_config_boot_binding_t0")).satisfies(table -> {
             assertThat(table.type()).isEqualTo("SINGLE");
             assertThat(table.dataSource()).isEqualTo("tianshu_0");
@@ -603,8 +613,113 @@ class DdcTianshuDdlContractTest {
                 .containsExactlyElementsOf(manifest.scripts().subList(0, 5));
         assertThat(DdcPersistenceMigrationCli.manifestForMode(DdcPersistenceMigrationCli.Mode.UPGRADE_LIST_TEMPLATES, manifest).scripts())
                 .containsExactlyElementsOf(manifest.scripts().subList(0, 7));
-        assertThat(DdcPersistenceMigrationCli.manifestForMode(DdcPersistenceMigrationCli.Mode.UPGRADE_CLOUD_DELIVERY, manifest))
-                .isSameAs(manifest);
+        assertThat(DdcPersistenceMigrationCli.manifestForMode(DdcPersistenceMigrationCli.Mode.UPGRADE_CLOUD_DELIVERY, manifest).scripts())
+                .containsExactlyElementsOf(manifest.scripts().subList(0, 9));
+    }
+
+    @Test
+    void nativeConfigRolloutUpgradeRequiresOnlyExplicitProtectedTargetConfiguration() {
+        assertThat(DdcPersistenceMigrationCli.parseMode(new String[]{"upgrade-native-config-rollout",
+                "--target-config", "/protected/native-config.yml"}).name()).isEqualTo("UPGRADE_NATIVE_CONFIG_ROLLOUT");
+        for (String[] invalid : List.of(new String[]{"upgrade-native-config-rollout"},
+                new String[]{"upgrade-native-config-rollout", "--target-config", "relative.yml"},
+                new String[]{"upgrade-native-config-rollout", "--target-config", "/protected/target.yml", "--mapping", "/protected/map.json"})) {
+            assertThatThrownBy(() -> DdcPersistenceMigrationCli.parseMode(invalid))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageStartingWith("USAGE:");
+        }
+    }
+
+    @Test
+    void nativeConfigTargetMustPassProtectedFileGateBeforeConfigurationLoading(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path scratch) {
+        assertThatThrownBy(() -> DdcPersistenceMigrationCli.main(new String[]{"upgrade-native-config-rollout", "--target-config",
+                scratch.resolve("missing.yml").toAbsolutePath().toString()}))
+                .hasMessage("TIANSHU_MIGRATION_PROTECTED_FILE_REQUIRED: target-config");
+    }
+
+    @Test
+    void nativeConfigRolloutUpgradeStripsOnlyTheObservationRoute() throws Exception {
+        try (var validators = Validation.buildDefaultValidatorFactory()) {
+            var validation = new ValidationUtils(validators.getValidator()); var environment = cloudTestEnvironment();
+            var loader = new EgonColaShardingYamlLoader(new EgonColaShardingStrategyFactory(validation, Map.of(
+                    "STANDARD_TENANT_ID", new EgonColaStandardTenantIdShardingStrategy(),
+                    "SINGLE", new EgonColaSingleTableShardingStrategy())), new DefaultResourceLoader(), environment);
+            var validator = new EgonColaShardingTopologyValidator(validation);
+            var current = nativeRolloutProperties(environment); var previousProperties = nativeRolloutProperties(environment);
+            var topology = validator.validate(current, loader.load(current));
+            Method prior = DdcPersistenceMigrationCli.class.getDeclaredMethod("priorNativeConfigRolloutTopology",
+                    EgonColaShardingProperties.class, EgonColaShardingProperties.class,
+                    EgonColaShardingTopologyValidator.TopologyBO.class, EgonColaShardingYamlLoader.class,
+                    EgonColaShardingTopologyValidator.class);
+            var previous = (EgonColaShardingTopologyValidator.TopologyBO) prior.invoke(null, current, previousProperties, topology, loader, validator);
+            var expected = validator.validate(cloudProperties(environment), loader.load(cloudProperties(environment)));
+            assertThat(previous.profiles()).isEqualTo(expected.profiles());
+            assertThat(previous.fingerprint()).isEqualTo(expected.fingerprint()).isNotEqualTo(topology.fingerprint());
+            assertThat(topology.profiles().get("ddc_config_workload_observation").actualNodes().values())
+                    .singleElement().satisfies(nodes -> assertThat(nodes).singleElement().satisfies(node -> {
+                        assertThat(node.group()).isEqualTo("tianshu_0"); assertThat(node.schema()).isEqualTo("public");
+                        assertThat(node.table()).isEqualTo("ddc_config_workload_observation_t0");
+                    }));
+        }
+    }
+
+    @Test
+    void nativeConfigUpgradeRejectsUnsafeTopologyAndUnrelatedRouteDrift() throws Exception {
+        var environment = cloudTestEnvironment();
+        for (java.util.function.Consumer<EgonColaShardingProperties> mutation : List.<java.util.function.Consumer<EgonColaShardingProperties>>of(
+                p -> p.setMode(EgonColaShardingProperties.ModeEnum.SHARDING_READWRITE),
+                p -> p.setConfigStyle(EgonColaShardingProperties.ConfigStyleEnum.NATIVE),
+                p -> p.setTransactionDefaultType("XA"),
+                p -> p.setNativeRulesResource("classpath:other.yml"),
+                p -> p.setDataSources(List.of(p.getDataSources().getFirst(), p.getDataSources().getFirst())),
+                p -> p.getTables().remove("ddc_config_workload_observation"),
+                p -> p.getTables().put("ddc_config_workload_observation", new EgonColaShardingProperties.TableProperties("SINGLE", "tianshu_0", null, null, null, "public")),
+                p -> p.getTables().put("ddc_config_workload_observation", new EgonColaShardingProperties.TableProperties("STANDARD_TENANT_ID", null, "owner_id", null, null, "public")),
+                p -> p.getTables().put("ddc_config_workload_observation", new EgonColaShardingProperties.TableProperties("STANDARD_TENANT_ID", null, "tenant_id", null, null, "other")))) {
+            var properties = nativeRolloutProperties(environment); mutation.accept(properties);
+            assertThatThrownBy(() -> DdcPersistenceMigrationCli.requireNativeConfigRolloutUpgradeStrategy(properties))
+                    .isInstanceOf(IllegalStateException.class);
+        }
+        try (var validators = Validation.buildDefaultValidatorFactory()) {
+            var validation = new ValidationUtils(validators.getValidator());
+            var loader = new EgonColaShardingYamlLoader(new EgonColaShardingStrategyFactory(validation, Map.of(
+                    "STANDARD_TENANT_ID", new EgonColaStandardTenantIdShardingStrategy(),
+                    "SINGLE", new EgonColaSingleTableShardingStrategy())), new DefaultResourceLoader(), environment);
+            var validator = new EgonColaShardingTopologyValidator(validation);
+            var current = nativeRolloutProperties(environment); var topology = validator.validate(current, loader.load(current));
+            assertThatThrownBy(() -> DdcPersistenceMigrationCli.priorNativeConfigRolloutTopology(current, current, topology, loader, validator))
+                    .hasMessageContaining("INDEPENDENT_BIND_REQUIRED");
+            var drift = nativeRolloutProperties(environment); drift.getTables().remove("ddc_biz");
+            assertThatThrownBy(() -> DdcPersistenceMigrationCli.priorNativeConfigRolloutTopology(current, drift, topology, loader, validator))
+                    .hasMessageContaining("ADDITIVE_TOPOLOGY_REQUIRED");
+        }
+    }
+
+    @Test
+    void nativeConfigUpgradePinsEveryPreviousScriptBeforeOpeningDatabase() throws Exception {
+        var manifest = OBJECT_MAPPER.readValue(requiredResource(TIANSHU_MANIFEST), EgonColaDdlManifestBO.class);
+        var outbox = OBJECT_MAPPER.readValue(requiredResource(OUTBOX_MANIFEST), EgonColaDdlManifestBO.class);
+        for (int index = 0; index < 9; index++) {
+            var scripts = new java.util.ArrayList<>(manifest.scripts()); var original = scripts.get(index);
+            scripts.set(index, new EgonColaDdlManifestBO.ScriptBO(original.version(), original.path(), "0".repeat(64)));
+            var changed = new EgonColaDdlManifestBO(manifest.family(), scripts, manifest.freshBaselineVersion());
+            var primary = mock(DataSource.class);
+            var upgrade = new DdcI18nTopologyUpgrade(primary, "tianshu_0", changed, outbox, "1".repeat(64), "2".repeat(64),
+                    mock(top.egon.cola.component.common.mybatis.ddl.EgonColaPostgreDdlRunner.class),
+                    new org.springframework.core.io.support.PathMatchingResourcePatternResolver(),
+                    java.time.Duration.ofSeconds(10), java.time.Duration.ofSeconds(30), () -> { }, () -> { }, () -> { }).nativeConfigRollout();
+            assertThatThrownBy(upgrade::upgrade).hasMessageContaining("PREDECESSOR_MANIFEST_MISMATCH");
+            org.mockito.Mockito.verifyNoInteractions(primary);
+        }
+        assertThat(DdcPersistenceMigrationCli.manifestForMode(DdcPersistenceMigrationCli.Mode.UPGRADE_NATIVE_CONFIG_ROLLOUT, manifest).scripts())
+                .containsExactlyElementsOf(manifest.scripts().subList(0, 10));
+    }
+
+    private static EgonColaShardingProperties nativeRolloutProperties(StandardEnvironment environment) {
+        var properties = cloudProperties(environment); var tables = new java.util.LinkedHashMap<>(properties.getTables());
+        tables.put("ddc_config_workload_observation", new EgonColaShardingProperties.TableProperties(
+                "STANDARD_TENANT_ID", null, "tenant_id", null, null, "public"));
+        properties.setTables(tables); return properties;
     }
 
     private static StandardEnvironment cloudTestEnvironment() throws IOException {
@@ -618,7 +733,10 @@ class DdcTianshuDdlContractTest {
     }
 
     private static EgonColaShardingProperties cloudProperties(StandardEnvironment environment) {
-        return Binder.get(environment).bind(EgonColaShardingProperties.PREFIX, Bindable.of(EgonColaShardingProperties.class)).orElseThrow(() -> new IllegalStateException("Missing Tianshu sharding properties"));
+        var properties = Binder.get(environment).bind(EgonColaShardingProperties.PREFIX, Bindable.of(EgonColaShardingProperties.class)).orElseThrow(() -> new IllegalStateException("Missing Tianshu sharding properties"));
+        // Historical cloud-delivery tests retain the reviewed nine-script/two-route predecessor.
+        var tables = new java.util.LinkedHashMap<>(properties.getTables()); tables.remove("ddc_config_workload_observation");
+        properties.setTables(tables); return properties;
     }
 
     private static EgonColaDdlManifestBO legacyReadinessManifest() throws IOException {

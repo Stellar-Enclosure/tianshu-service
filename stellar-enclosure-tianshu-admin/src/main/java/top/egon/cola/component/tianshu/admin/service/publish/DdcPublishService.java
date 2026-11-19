@@ -1,727 +1,231 @@
 package top.egon.cola.component.tianshu.admin.service.publish;
 
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.validation.annotation.Validated;
 import top.egon.cola.component.tianshu.admin.common.DdcAdminException;
 import top.egon.cola.component.tianshu.admin.config.DdcAdminProperties;
-import top.egon.cola.component.tianshu.admin.model.dto.DdcPublishRequest;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcConfigItemBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcConfigVersionBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcOperationLogBO;
-import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishAckBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishTaskBO;
+import top.egon.cola.component.tianshu.admin.model.dto.DdcPublishRequest;
 import top.egon.cola.component.tianshu.admin.model.enums.ChangeType;
 import top.egon.cola.component.tianshu.admin.model.enums.PublishMode;
 import top.egon.cola.component.tianshu.admin.model.enums.PublishStatus;
-import top.egon.cola.component.tianshu.admin.model.vo.DdcConfigResourceKey;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcPublishResultVO;
 import top.egon.cola.component.tianshu.admin.repository.DdcConfigItemRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcConfigVersionRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcOperationLogRepository;
-import top.egon.cola.component.tianshu.admin.repository.DdcPublishAckRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcPublishTaskRepository;
+import top.egon.cola.component.tianshu.admin.repository.DdcPublishAckRepository;
+import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextDTO;
+import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantRegistry;
 import top.egon.cola.component.tianshu.admin.service.config.DdcYamlConfigValidator;
 import top.egon.cola.component.tianshu.admin.service.lease.DdcConfigLeaseService;
 import top.egon.cola.component.tianshu.format.DdcChecksum;
-import top.egon.cola.component.tianshu.error.DdcErrorStatus;
 import top.egon.cola.component.tianshu.model.config.DdcAckRequest;
-import top.egon.cola.component.tianshu.model.config.DdcPublishTarget;
-import top.egon.cola.component.tianshu.model.config.DdcAckStatus;
+import top.egon.cola.component.tianshu.model.config.DdcConfigScopeVO;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 
 import java.time.Clock;
-import java.time.Duration;
-import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.util.Comparator;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Objects;
 
+/** Native configuration intake: one local transaction, no network delivery or process-ACK wait. */
 @Service("ddcPublishService")
 @Slf4j
-@RequiredArgsConstructor
+@Validated
+@RequiredArgsConstructor(onConstructor_ = @Autowired)
 public class DdcPublishService {
-
-    private static final List<String> RETRYABLE_STATUSES = List.of(
-            PublishStatus.FAILED.name(),
-            PublishStatus.TIMEOUT.name(),
-            PublishStatus.UNKNOWN.name()
-    );
-
-    private static final List<String> ACTIVE_STATUSES = List.of(
-            PublishStatus.PENDING.name(),
-            PublishStatus.PUBLISHING.name(),
-            PublishStatus.UNKNOWN.name()
-    );
-
-    @Qualifier("ddcConfigItemRepository")
-    private final DdcConfigItemRepository configItemRepository;
-
-    @Qualifier("ddcConfigVersionRepository")
-    private final DdcConfigVersionRepository versionRepository;
-
-    @Qualifier("ddcPublishTaskRepository")
-    private final DdcPublishTaskRepository publishTaskRepository;
-
-    @Qualifier("ddcPublishAckRepository")
-    private final DdcPublishAckRepository publishAckRepository;
-
-    @Qualifier("ddcOperationLogRepository")
-    private final DdcOperationLogRepository operationLogRepository;
-
-    @Qualifier("ddcPendingPublishDispatcher")
-    private final DdcPendingPublishDispatcher dispatcher;
-
-    @Qualifier("ddcConfigLeaseService")
-    private final DdcConfigLeaseService leaseService;
-
-    @Qualifier("publishResourceLockRegistry")
-    private final PublishResourceLockRegistry resourceRegistry;
-
-    @Qualifier("publishCompletionWaiterRegistry")
-    private final PublishCompletionWaiterRegistry waiterRegistry;
-
-    @Qualifier("ddcPublishStateTransitionService")
-    private final DdcPublishStateTransitionService stateTransitions;
-
-    @Qualifier("publishFailureRecorder")
-    private final PublishFailureRecorder failureRecorder;
-
+    @Qualifier("ddcConfigItemRepository") private final DdcConfigItemRepository items;
+    @Qualifier("ddcConfigVersionRepository") private final DdcConfigVersionRepository versions;
+    @Qualifier("ddcPublishTaskRepository") private final DdcPublishTaskRepository tasks;
+    @Qualifier("ddcOperationLogRepository") private final DdcOperationLogRepository audit;
+    @Qualifier("ddcPendingPublishDispatcher") private final DdcPendingPublishDispatcher dispatcher;
+    @Qualifier("publishFailureRecorder") private final PublishFailureRecorder recovery;
     @Qualifier("egon.cola.component.tianshu.admin-top.egon.cola.component.tianshu.admin.config.DdcAdminProperties")
     private final DdcAdminProperties properties;
+    @Qualifier("ddcYamlConfigValidator") private final DdcYamlConfigValidator yaml;
+    @Qualifier("ddcPublishTransactionTemplate") private final TransactionTemplate transaction;
+    @Qualifier("ddcPublishClock") private final Clock clock;
+    @Qualifier("ddcConfigManifestFactory") private final DdcConfigManifestFactory manifests;
+    @Qualifier("ddcConfigPublicationPolicyResolver") private final DdcConfigManifestFactory.PublicationPolicyResolver policies;
+    @Qualifier("ddcTenantRegistry") private final DdcTenantRegistry tenants;
 
-    @Qualifier("ddcYamlConfigValidator")
-    private final DdcYamlConfigValidator yamlValidator;
+    /** Historical callers still compile; an absent trusted native policy always fails closed. */
+    public DdcPublishService(DdcConfigItemRepository items, DdcConfigVersionRepository versions,
+            DdcPublishTaskRepository tasks, DdcPublishAckRepository acks, DdcOperationLogRepository audit,
+            DdcPendingPublishDispatcher dispatcher, DdcConfigLeaseService leases, PublishResourceLockRegistry locks,
+            PublishCompletionWaiterRegistry waiters, DdcPublishStateTransitionService transitions,
+            PublishFailureRecorder recovery, DdcAdminProperties properties, DdcYamlConfigValidator yaml,
+            TransactionTemplate transaction, Clock clock) {
+        this(items, versions, tasks, audit, dispatcher, recovery, properties, yaml, transaction, clock,
+                new DdcConfigManifestFactory(new com.fasterxml.jackson.databind.ObjectMapper()),
+                (tenant, scope) -> { throw new DdcAdminException("TIANSHU_CONFIG_PUBLICATION_POLICY_UNAVAILABLE"); }, null);
+    }
 
-    @Qualifier("ddcPublishTransactionTemplate")
-    private final TransactionTemplate transactionTemplate;
-
-    @Qualifier("ddcPublishClock")
-    private final Clock clock;
-
-    public DdcPublishResultVO publish(DdcPublishRequest request, String operator) {
-        validatePublishRequest(request);
-        long timeoutMs = timeout(request.getTimeoutMs());
-        DdcPublishTaskBO existing =
-                publishTaskRepository.findByChangeId(request.getChangeId()).orElse(null);
-        if (existing != null) {
-            validateIdempotentRequest(existing, request, timeoutMs);
-            return awaitIfActive(existing);
-        }
-
-        DdcConfigResourceKey resourceKey = resourceKey(request);
-        if (!resourceRegistry.tryAcquire(resourceKey, request.getChangeId())) {
-            throw new DdcAdminException(DdcErrorStatus.PUBLISH_IN_PROGRESS);
-        }
-
-        PublishPrepareResult prepared;
+    public DdcPublishResultVO publish(@Valid DdcPublishRequest request, String operator) {
+        validate(request);
+        var tenant = currentTenant();
+        long timeout = timeout(request.getTimeoutMs());
         try {
-            prepared = transactionTemplate.execute(status ->
-                    prepare(request, timeoutMs, operator));
-            if (prepared == null) {
-                throw new DdcAdminException("publish prepare failed");
+            var result = transaction.execute(status -> prepare(tenant, request, timeout, operator));
+            if (result == null) { throw new DdcAdminException("TIANSHU_CONFIG_PUBLICATION_UNAVAILABLE"); }
+            return DdcPublishResultVO.from(result);
+        } catch (RuntimeException uncertain) {
+            // REQUIRES_NEW reads the committed primary outcome; no guessed failure can overwrite a committed task.
+            var committed = recovery.findCommitted(request.getChangeId());
+            if (committed.isPresent()) {
+                validateReplay(tenant, committed.get(), request, timeout);
+                return DdcPublishResultVO.from(committed.get());
             }
-        } catch (RuntimeException exception) {
-            recordPreparationFailure(request, exception);
-            resourceRegistry.release(resourceKey, request.getChangeId());
-            throw exception;
+            throw uncertain;
         }
-
-        PublishCompletionWaiterRegistry.PublishWaiter waiter =
-                waiterRegistry.register(request.getChangeId());
-        if (prepared.dispatchRequired()) {
-            DdcPublishTaskBO dispatched;
-            try {
-                dispatched = dispatcher.dispatch(prepared.task());
-            } catch (RuntimeException exception) {
-                waiterRegistry.remove(request.getChangeId(), waiter);
-                throw exception;
-            }
-            if (stateTransitions.isTerminal(dispatched)) {
-                waiterRegistry.remove(request.getChangeId(), waiter);
-                stateTransitions.releaseIfTerminal(dispatched);
-                return DdcPublishResultVO.from(dispatched);
-            }
-        }
-        // Outbox enqueue leaves the task PUBLISHING; only client ACK/state transitions complete this waiter.
-        log.debug("YAML publish event is queued; waiting for client acknowledgements, changeId={}",
-                request.getChangeId());
-        return await(request.getChangeId(), waiter);
     }
 
-    public DdcPublishResultVO retry(String changeId) {
-        return retry(changeId, null);
+    private DdcPublishTaskBO prepare(DdcTenantContextDTO tenant, DdcPublishRequest request, long timeout, String operator) {
+        var config = items.findForPublishByBizCodeAndEnvAndAppCodeAndResourceName(request.getBizCode(),
+                request.getEnv(), request.getAppCode(), request.getResourceName())
+                .orElseThrow(() -> new DdcAdminException("config item not found"));
+        requireOwned(tenant, config);
+        var existing = tasks.findByChangeId(request.getChangeId());
+        if (existing.isPresent()) {
+            validateReplay(tenant, existing.get(), request, timeout);
+            return existing.get();
+        }
+        if (!Objects.equals(config.getCurrentVersion(), request.getExpectedVersion())
+                || !Objects.equals(config.getFormat(), request.getFormat()) || config.getEnabled() == null) {
+            throw new DdcAdminException("config version or format changed");
+        }
+        // A staged delete is an explicit disable and cannot be reactivated through a publish body.
+        boolean enabled = !Boolean.TRUE.equals(config.getDeleted()) && config.getEnabled();
+        if (Boolean.TRUE.equals(config.getDeleted()) && !Objects.equals(config.getContent(), request.getContent())) {
+            throw new DdcAdminException("disabled config must retain its fixed content");
+        }
+        long revision = Math.addExact(config.getCurrentVersion(), 1L);
+        var scope = scope(tenant, config);
+        var frozen = manifests.freeze(tenant, config, revision, request.getContent(), enabled, policies.require(tenant, scope));
+        Long previousPublished = config.getPublishedVersion();
+        String previousBody = config.getContent();
+        config.setContent(request.getContent()).setCurrentVersion(revision).setUpdatedAt(now());
+        items.update(config);
+        versions.insert(DdcConfigVersionBO.builder().tenantId(tenant.tenantId()).configItemId(config.getId())
+                .configId(config.getPublicId()).bizCode(config.getBizCode()).appCode(config.getAppCode()).env(config.getEnv())
+                .resourceName(config.getResourceName()).configRevision(revision).oldContent(previousBody)
+                .newContent(request.getContent()).manifestJson(frozen.manifest()).format(config.getFormat())
+                .changeType(ChangeType.UPDATE.name()).changeReason("publish config").operator(operator).createdAt(now()).build());
+        var evidence = JsonNodeFactory.instance.objectNode();
+        evidence.put("schemaVersion", 1).putArray("targets");
+        var task = tasks.insert(DdcPublishTaskBO.builder().tenantId(tenant.tenantId()).changeId(request.getChangeId())
+                .configItemId(config.getId()).configId(config.getPublicId()).bizCode(config.getBizCode())
+                .appCode(config.getAppCode()).env(config.getEnv()).resourceName(config.getResourceName()).targetVersion(revision)
+                .publishMode(PublishMode.ASYNC.name()).platformEvidence(evidence)
+                .resourceChecksum(DdcChecksum.resource(request.getResourceName(), request.getFormat(), request.getContent()))
+                .attemptCount(1).status(PublishStatus.PENDING.name()).targetCount(0).ackCount(0).failedCount(0)
+                .ignoredCount(0).timeoutCount(0).timeoutMs(timeout).operator(operator).createdAt(now()).updatedAt(now()).build());
+        if (items.advancePublishedVersion(config.getPublicId(), previousPublished, revision, now()) != 1) {
+            throw new org.springframework.dao.OptimisticLockingFailureException("native published pointer changed");
+        }
+        audit.insert(DdcOperationLogBO.builder().tenantId(tenant.tenantId()).bizCode(config.getBizCode())
+                .appCode(config.getAppCode()).env(config.getEnv()).resourceName(config.getResourceName())
+                .operationType("PUBLISH").operator(operator).operationContent(request.getChangeId()).createdAt(now()).build());
+        return dispatcher.enqueueNative(task);
     }
+
+    public DdcPublishResultVO retry(String changeId) { return retry(changeId, null); }
 
     public DdcPublishResultVO retry(String changeId, String operator) {
-        requireText(changeId, "changeId");
-        DdcPublishTaskBO task = requiredTask(changeId);
-        requireRetryable(task);
-        DdcConfigResourceKey resourceKey = resourceKey(task);
-        if (!resourceRegistry.tryAcquire(resourceKey, changeId)) {
-            throw new DdcAdminException(DdcErrorStatus.PUBLISH_IN_PROGRESS);
-        }
+        if (changeId == null || changeId.isBlank()) { throw new DdcAdminException("changeId is required"); }
+        var tenant = currentTenant();
+        var task = transaction.execute(status -> {
+            var hint = tasks.findByChangeId(changeId).orElseThrow(() -> new DdcAdminException("publish task not found"));
+            var config = items.findForPublishByBizCodeAndEnvAndAppCodeAndResourceName(hint.getBizCode(), hint.getEnv(),
+                    hint.getAppCode(), hint.getResourceName()).orElseThrow(() -> new DdcAdminException("config item not found"));
+            requireOwned(tenant, config);
+            var current = tasks.findForUpdateByChangeId(changeId).orElseThrow(() -> new DdcAdminException("publish task not found"));
+            if (!DdcPendingPublishDispatcher.isNative(current) || !Objects.equals(current.getTenantId(), tenant.tenantId())
+                    || !Objects.equals(current.getConfigItemId(), config.getId())
+                    || !Objects.equals(config.getPublishedVersion(), current.getTargetVersion())
+                    || !List.of("FAILED", "TIMEOUT", "UNKNOWN", "PARTIAL_SUCCESS").contains(current.getStatus())) {
+                throw new DdcAdminException("native publish task is not current and retryable");
+            }
+            materialize(tenant, current);
+            if (tasks.resetNativeForRetry(current, operator, now()) != 1) {
+                throw new org.springframework.dao.OptimisticLockingFailureException("native retry changed");
+            }
+            current.setAttemptCount(Math.addExact(current.getAttemptCount(), 1)).setStatus("PENDING")
+                    .setVersion(Math.addExact(current.getVersion(), 1L)).setUpdatedAt(now());
+            return dispatcher.enqueueNative(current);
+        });
+        if (task == null) { throw new DdcAdminException("TIANSHU_CONFIG_PUBLICATION_UNAVAILABLE"); }
+        return DdcPublishResultVO.from(task);
+    }
 
-        RetryPrepareResult prepared;
+    public DdcPublishResultVO ack(DdcAckRequest ignored) {
+        throw new DdcAdminException("TIANSHU_LEGACY_CONFIG_ACK_RETIRED");
+    }
+
+    private void validateReplay(DdcTenantContextDTO tenant, DdcPublishTaskBO task, DdcPublishRequest request, long timeout) {
+        if (!DdcPendingPublishDispatcher.isNative(task) || !Objects.equals(task.getTenantId(), tenant.tenantId())
+                || !Objects.equals(task.getBizCode(), request.getBizCode()) || !Objects.equals(task.getEnv(), request.getEnv())
+                || !Objects.equals(task.getAppCode(), request.getAppCode()) || !Objects.equals(task.getResourceName(), request.getResourceName())
+                || !Objects.equals(task.getTimeoutMs(), timeout) || task.getTargetVersion() == null
+                || task.getTargetVersion() != Math.addExact(request.getExpectedVersion(), 1L)
+                || !Objects.equals(task.getResourceChecksum(), DdcChecksum.resource(request.getResourceName(), request.getFormat(), request.getContent()))) {
+            throw new DdcAdminException("changeId already belongs to a different publication");
+        }
+        materialize(tenant, task);
+    }
+
+    private void materialize(DdcTenantContextDTO tenant, DdcPublishTaskBO task) {
+        var version = versions.findByConfigItemIdAndRevision(task.getConfigItemId(), task.getTargetVersion())
+                .orElseThrow(() -> new DdcAdminException("fixed config version is unavailable"));
+        manifests.materialize(version, new DdcConfigScopeVO(Long.toString(tenant.tenantId()), task.getBizCode(),
+                task.getEnv(), task.getAppCode(), task.getResourceName()));
+    }
+
+    private DdcTenantContextDTO currentTenant() {
         try {
-            prepared = transactionTemplate.execute(status ->
-                    prepareRetry(changeId, operator));
-            if (prepared == null) {
-                throw new DdcAdminException("publish retry prepare failed");
-            }
-        } catch (RuntimeException exception) {
-            resourceRegistry.release(resourceKey, changeId);
-            throw exception;
-        }
-        if (prepared.targetLeaseExpired()) {
-            resourceRegistry.release(resourceKey, changeId);
-            throw new DdcAdminException(DdcErrorStatus.TARGET_LEASE_EXPIRED);
-        }
-
-        PublishCompletionWaiterRegistry.PublishWaiter waiter =
-                waiterRegistry.register(changeId);
-        DdcPublishTaskBO dispatched;
-        try {
-            dispatched = dispatcher.dispatch(prepared.task());
-        } catch (RuntimeException exception) {
-            waiterRegistry.remove(changeId, waiter);
-            throw exception;
-        }
-        if (stateTransitions.isTerminal(dispatched)) {
-            waiterRegistry.remove(changeId, waiter);
-            stateTransitions.releaseIfTerminal(dispatched);
-            return DdcPublishResultVO.from(dispatched);
-        }
-        // DeliveryResult.success() is transport progress, not completion of the business ACK protocol.
-        log.debug("YAML retry event is queued; waiting for client acknowledgements, changeId={}", changeId);
-        return await(changeId, waiter);
+            if (tenants == null) { throw new IllegalArgumentException(); }
+            String value = MDC.get("tenantId");
+            long id = Long.parseLong(value);
+            if (!Long.toString(id).equals(value)) { throw new IllegalArgumentException(); }
+            var registered = tenants.requireEnabledTenant(id);
+            return new DdcTenantContextDTO(id, registered.getIdentityTenantId(), MDC.get("userId"));
+        } catch (RuntimeException unavailable) { throw new DdcAdminException("TIANSHU_TRUSTED_TENANT_REQUIRED"); }
     }
-
-    @Transactional
-    public DdcPublishResultVO ack(DdcAckRequest request) {
-        validateAckRequest(request);
-        DdcPublishTaskBO task = publishTaskRepository.findByChangeId(request.getChangeId())
-                .orElseThrow(() -> new org.springframework.dao.TransientDataAccessResourceException("publish task is not yet visible"));
-        if (stateTransitions.isTerminal(task)) {
-            if (!publishTaskRepository.fenceObservedVersion(task)) {
-                throw new org.springframework.dao.TransientDataAccessResourceException("publish task version changed");
-            }
-            return DdcPublishResultVO.from(task);
-        }
-        DdcPublishAckBO target =
-                publishAckRepository.findByChangeIdAndInstanceIdAndLeaseId(
-                                request.getChangeId(),
-                                request.getInstanceId(),
-                                request.getLeaseId()
-                        )
-                        .orElseThrow(() -> new org.springframework.dao.TransientDataAccessResourceException(
-                                "publish acknowledgement target is not yet visible"));
-        if (!Objects.equals(task.getTargetVersion(), request.getTargetVersion())
-                || !Objects.equals(task.getResourceChecksum(), request.getResourceChecksum())
-                || !Objects.equals(target.getTargetVersion(), request.getTargetVersion())
-                || !Objects.equals(target.getResourceChecksum(), request.getResourceChecksum())) {
-            throw new DdcAdminException("ACK version or resource checksum does not match target");
-        }
-        if (target.getAckStatus() != null) {
-            if (!publishAckRepository.fenceObservedVersion(target)) {
-                throw new org.springframework.dao.TransientDataAccessResourceException("publish acknowledgement version changed");
-            }
-            return DdcPublishResultVO.from(
-                    stateTransitions.refreshAfterAck(task, target)
-            );
-        }
-        target.setCurrentVersion(request.getCurrentVersion());
-        target.setAckStatus(request.getStatus().name());
-        target.setErrorMessage(request.getErrorMessage());
-        target.setAckAt(toAckAt(request.getAckTime()));
-        DdcPublishAckBO saved = publishAckRepository.update(target);
-        return DdcPublishResultVO.from(
-                stateTransitions.refreshAfterAck(task, saved)
-        );
+    private static void requireOwned(DdcTenantContextDTO tenant, DdcConfigItemBO item) {
+        if (!Objects.equals(tenant.tenantId(), item.getTenantId()) || item.getId() == null || item.getId() <= 0
+                || item.getDeletedAt() != null) { throw new DdcAdminException("config item not found"); }
     }
-
-    private DdcPublishResultVO awaitIfActive(DdcPublishTaskBO task) {
-        if (stateTransitions.isTerminal(task)) {
-            stateTransitions.releaseIfTerminal(task);
-            return DdcPublishResultVO.from(task);
-        }
-        DdcConfigResourceKey key = resourceKey(task);
-        String owner = resourceRegistry.owner(key).orElse(null);
-        if (owner == null) {
-            if (!resourceRegistry.tryAcquire(key, task.getChangeId())) {
-                throw new DdcAdminException(DdcErrorStatus.PUBLISH_IN_PROGRESS);
-            }
-        } else if (!owner.equals(task.getChangeId())) {
-            throw new DdcAdminException(DdcErrorStatus.PUBLISH_IN_PROGRESS);
-        }
-        return await(
-                task.getChangeId(),
-                waiterRegistry.register(task.getChangeId())
-        );
+    private static DdcConfigScopeVO scope(DdcTenantContextDTO tenant, DdcConfigItemBO item) {
+        return new DdcConfigScopeVO(Long.toString(tenant.tenantId()), item.getBizCode(), item.getEnv(), item.getAppCode(), item.getResourceName());
     }
-
-    private DdcPublishResultVO await(
-            String changeId,
-            PublishCompletionWaiterRegistry.PublishWaiter waiter) {
-        try {
-            while (true) {
-                DdcPublishTaskBO task = requiredTask(changeId);
-                if (stateTransitions.isTerminal(task)) {
-                    waiterRegistry.remove(changeId, waiter);
-                    stateTransitions.releaseIfTerminal(task);
-                    return DdcPublishResultVO.from(task);
-                }
-                Instant deadline = deadline(task);
-                Instant now = clock.instant();
-                if (!deadline.isAfter(now)) {
-                    if (PublishStatus.PENDING.name().equals(task.getStatus())) {
-                        stateTransitions.fail(
-                                task,
-                                "DISPATCH_TIMEOUT",
-                                "publish dispatch timed out"
-                        );
-                    } else {
-                        stateTransitions.timeout(
-                                task,
-                                "publish acknowledgement timed out"
-                        );
-                    }
-                    continue;
-                }
-                long signalVersion = waiter.signalVersion();
-                task = requiredTask(changeId);
-                if (stateTransitions.isTerminal(task)) {
-                    continue;
-                }
-                waiter.awaitAfter(
-                        signalVersion,
-                        minimum(
-                                Duration.between(clock.instant(), deadline),
-                                Duration.ofMillis(
-                                        properties.getPublish()
-                                                .getCompletionPollIntervalMs()
-                                )
-                        )
-                );
-            }
-        } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
-            throw new DdcAdminException("publish wait interrupted", exception);
+    private void validate(DdcPublishRequest request) {
+        if (request == null || request.getChangeId() == null || !request.getChangeId().matches("[1-9][0-9]{0,18}")
+                || request.getExpectedVersion() == null || request.getExpectedVersion() <= 0) {
+            throw new DdcAdminException("valid changeId and expectedVersion are required");
         }
-    }
-
-    private PublishPrepareResult prepare(DdcPublishRequest request,
-                                         long timeoutMs,
-                                         String operator) {
-        DdcPublishTaskBO concurrent =
-                publishTaskRepository.findByChangeId(request.getChangeId()).orElse(null);
-        if (concurrent != null) {
-            validateIdempotentRequest(concurrent, request, timeoutMs);
-            return new PublishPrepareResult(
-                    concurrent,
-                    false
-            );
+        try { Long.parseLong(request.getChangeId()); } catch (NumberFormatException invalid) { throw new DdcAdminException("invalid changeId"); }
+        if (request.getBizCode() == null || request.getBizCode().isBlank() || request.getEnv() == null || request.getEnv().isBlank()
+                || request.getAppCode() == null || request.getAppCode().isBlank() || !"application.yml".equals(request.getResourceName())) {
+            throw new DdcAdminException("native configuration scope is required");
         }
-
-        DdcConfigItemBO config =
-                configItemRepository
-                        .findForPublishByBizCodeAndEnvAndAppCodeAndResourceName(
-                                request.getBizCode(),
-                                request.getEnv(),
-                                request.getAppCode(),
-                                request.getResourceName()
-                        )
-                        .filter(item -> !Boolean.TRUE.equals(item.getDeleted()))
-                        .orElseThrow(() -> new DdcAdminException("config item not found"));
-        if (publishTaskRepository
-                .findFirstByBizCodeAndEnvAndAppCodeAndResourceNameAndStatusIn(
-                        request.getBizCode(),
-                        request.getEnv(),
-                        request.getAppCode(),
-                        request.getResourceName(),
-                        ACTIVE_STATUSES
-                )
-                .isPresent()) {
-            throw new DdcAdminException(DdcErrorStatus.PUBLISH_IN_PROGRESS);
-        }
-        if (!Objects.equals(request.getExpectedVersion(), config.getCurrentVersion())) {
-            throw new DdcAdminException("config version changed");
-        }
-
-        String oldContent = config.getContent();
-        config.setContent(request.getContent());
-        config.setCurrentVersion(config.getCurrentVersion() + 1);
-        config.setUpdatedAt(now());
-        configItemRepository.update(config);
-        saveVersion(config, oldContent, request.getContent(), operator);
-
-        List<DdcPublishTarget> targets = leaseService.activeTargets(
-                request.getBizCode(),
-                request.getEnv(),
-                request.getAppCode()
-        ).stream()
-                .sorted(Comparator
-                        .comparing(DdcPublishTarget::instanceId)
-                        .thenComparing(DdcPublishTarget::leaseId))
-                .toList();
-        if (targets.isEmpty()) {
-            throw new DdcAdminException(DdcErrorStatus.NO_LIVE_INSTANCE);
-        }
-
-        String resourceChecksum = DdcChecksum.resource(
-                request.getResourceName(),
-                request.getFormat(),
-                request.getContent()
-        );
-        DdcPublishTaskBO task = newTask(
-                request,
-                config,
-                resourceChecksum,
-                targets.size(),
-                timeoutMs,
-                operator
-        );
-        DdcPublishTaskBO persistedTask = publishTaskRepository.insert(task);
-        List<DdcPublishAckBO> targetRows = targets.stream()
-                .map(target -> newTarget(persistedTask, target))
-                .toList();
-        publishAckRepository.insertAll(targetRows);
-        savePublishOperation(config, request.getChangeId(), operator);
-        return new PublishPrepareResult(persistedTask, true);
+        yaml.validate(request.getResourceName(), request.getFormat(), request.getContent());
     }
-
-    private RetryPrepareResult prepareRetry(
-            String changeId,
-            String operator) {
-        DdcPublishTaskBO task = requiredTask(changeId);
-        requireRetryable(task);
-        List<DdcPublishAckBO> targetRows =
-                publishAckRepository.findByChangeId(changeId).stream()
-                        .sorted(Comparator
-                                .comparing(DdcPublishAckBO::getInstanceId)
-                                .thenComparing(DdcPublishAckBO::getLeaseId))
-                        .toList();
-        if (targetRows.isEmpty()) {
-            throw new DdcAdminException("publish targets not found");
-        }
-        List<DdcPublishTarget> targets = targetRows.stream()
-                .map(target -> new DdcPublishTarget(
-                        target.getInstanceId(),
-                        target.getLeaseId()
-                ))
-                .toList();
-        if (!leaseService.areActiveTargets(
-                task.getBizCode(),
-                task.getEnv(),
-                task.getAppCode(),
-                targets
-        )) {
-            stateTransitions.markTargetLeaseExpired(task, RETRYABLE_STATUSES);
-            return RetryPrepareResult.expired();
-        }
-        if (!publishTaskRepository.fenceDispatchTargets(task, targets)) {
-            throw new org.springframework.dao.OptimisticLockingFailureException("publish retry targets changed after replica read");
-        }
-        task.setVersion(Math.addExact(task.getVersion(), 1L));
-        LocalDateTime changedAt = now();
-        int reset = publishTaskRepository.resetForRetry(
-                task,
-                PublishStatus.PENDING.name(),
-                operator,
-                changedAt,
-                RETRYABLE_STATUSES
-        );
-        if (reset != 1) {
-            throw new DdcAdminException("publish task is not retryable");
-        }
-        task.setStatus(PublishStatus.PENDING.name())
-                .setAttemptCount(Math.addExact(task.getAttemptCount() == null ? 0 : task.getAttemptCount(), 1))
-                .setDispatchedAt(null).setCompletedAt(null).setFailureStage(null).setErrorMessage(null)
-                .setAckCount(0).setFailedCount(0).setIgnoredCount(0).setTimeoutCount(0).setUpdatedAt(changedAt)
-                .setVersion(Math.addExact(task.getVersion(), 1L));
-        if (operator != null) task.setOperator(operator);
-        for (DdcPublishAckBO target : targetRows) {
-            if (!publishAckRepository.resetTarget(target)) {
-                throw new org.springframework.dao.OptimisticLockingFailureException("publish acknowledgement changed before retry");
-            }
-        }
-        return RetryPrepareResult.ready(task);
+    private long timeout(Long requested) {
+        long value = requested == null ? properties.getPublish().getDefaultTimeoutMs() : requested;
+        if (value <= 0 || value > properties.getPublish().getMaxTimeoutMs()) { throw new DdcAdminException("invalid timeoutMs"); }
+        return value;
     }
-
-    private DdcPublishTaskBO newTask(DdcPublishRequest request,
-                                         DdcConfigItemBO config,
-                                         String resourceChecksum,
-                                         int targetCount,
-                                         long timeoutMs,
-                                         String operator) {
-        LocalDateTime now = now();
-        DdcPublishTaskBO task = new DdcPublishTaskBO();
-        task.setChangeId(request.getChangeId());
-        task.setConfigId(config.getPublicId());
-        task.setConfigItemId(config.getId());
-        task.setBizCode(config.getBizCode());
-        task.setAppCode(config.getAppCode());
-        task.setEnv(config.getEnv());
-        task.setNamespace(null);
-        task.setResourceName(config.getResourceName());
-        task.setTargetVersion(config.getCurrentVersion());
-        task.setPublishMode(PublishMode.SYNC_ALL_ACK.name());
-        task.setResourceChecksum(resourceChecksum);
-        task.setAttemptCount(0);
-        task.setStatus(PublishStatus.PENDING.name());
-        task.setTargetCount(targetCount);
-        task.setAckCount(0);
-        task.setFailedCount(0);
-        task.setIgnoredCount(0);
-        task.setTimeoutCount(0);
-        task.setTimeoutMs(timeoutMs);
-        task.setOperator(operator);
-        task.setCreatedAt(now);
-        task.setUpdatedAt(now);
-        return task;
-    }
-
-    private DdcPublishAckBO newTarget(DdcPublishTaskBO task,
-                                          DdcPublishTarget target) {
-        DdcPublishAckBO ack = new DdcPublishAckBO();
-        ack.setChangeId(task.getChangeId());
-        ack.setInstanceId(target.instanceId());
-        ack.setLeaseId(target.leaseId());
-        ack.setResourceChecksum(task.getResourceChecksum());
-        ack.setBizCode(task.getBizCode());
-        ack.setAppCode(task.getAppCode());
-        ack.setEnv(task.getEnv());
-        ack.setNamespace(null);
-        ack.setResourceName(task.getResourceName());
-        ack.setTargetVersion(task.getTargetVersion());
-        return ack;
-    }
-
-    private void saveVersion(DdcConfigItemBO config,
-                             String oldContent,
-                             String newContent,
-                             String operator) {
-        DdcConfigVersionBO version = DdcConfigVersionBO.builder()
-                .configItemId(config.getId()).configId(config.getPublicId()).bizCode(config.getBizCode())
-                .appCode(config.getAppCode()).env(config.getEnv()).namespace(null)
-                .resourceName(config.getResourceName()).configRevision(config.getCurrentVersion())
-                .oldContent(oldContent).newContent(newContent).format(config.getFormat())
-                .changeType(ChangeType.UPDATE.name()).changeReason("publish config")
-                .operator(operator).createdAt(now()).build();
-        versionRepository.insert(version);
-    }
-
-    private void savePublishOperation(DdcConfigItemBO config,
-                                      String changeId,
-                                      String operator) {
-        DdcOperationLogBO log = new DdcOperationLogBO();
-        log.setBizCode(config.getBizCode());
-        log.setAppCode(config.getAppCode());
-        log.setEnv(config.getEnv());
-        log.setNamespace(null);
-        log.setResourceName(config.getResourceName());
-        log.setOperationType("PUBLISH");
-        log.setOperator(operator);
-        log.setOperationContent(changeId);
-        log.setCreatedAt(now());
-        operationLogRepository.insert(log);
-    }
-
-    private void validatePublishRequest(DdcPublishRequest request) {
-        if (request == null) {
-            throw new DdcAdminException("publish request is required");
-        }
-        requireSnowflakeChangeId(request.getChangeId());
-        requireText(request.getBizCode(), "bizCode");
-        requireText(request.getEnv(), "env");
-        requireText(request.getAppCode(), "appCode");
-        requireText(request.getResourceName(), "resourceName");
-        requireText(request.getFormat(), "format");
-        yamlValidator.validate(
-                request.getResourceName(),
-                request.getFormat(),
-                request.getContent()
-        );
-        if (request.getExpectedVersion() == null || request.getExpectedVersion() < 0) {
-            throw new DdcAdminException("expectedVersion is required");
-        }
-    }
-
-    private void validateAckRequest(DdcAckRequest request) {
-        if (request == null
-                || request.getStatus() == null
-                || request.getStatus() == DdcAckStatus.TIMEOUT) {
-            throw new DdcAdminException("valid ACK status is required");
-        }
-        requireText(request.getChangeId(), "changeId");
-        requireText(request.getInstanceId(), "instanceId");
-        requireText(request.getLeaseId(), "leaseId");
-        requireText(request.getResourceChecksum(), "resourceChecksum");
-        if (request.getTargetVersion() == null) {
-            throw new DdcAdminException("targetVersion is required");
-        }
-    }
-
-    private void validateIdempotentRequest(DdcPublishTaskBO task,
-                                           DdcPublishRequest request,
-                                           long timeoutMs) {
-        boolean matches = Objects.equals(task.getBizCode(), request.getBizCode())
-                && Objects.equals(task.getAppCode(), request.getAppCode())
-                && Objects.equals(task.getEnv(), request.getEnv())
-                && Objects.equals(
-                        task.getResourceName(),
-                        request.getResourceName()
-                )
-                && Objects.equals(task.getResourceChecksum(),
-                DdcChecksum.resource(
-                        request.getResourceName(),
-                        request.getFormat(),
-                        request.getContent()
-                ))
-                && Objects.equals(task.getTimeoutMs(), timeoutMs)
-                && task.getTargetVersion() != null
-                && task.getTargetVersion() == request.getExpectedVersion() + 1;
-        if (!matches) {
-            throw new DdcAdminException(DdcErrorStatus.CHANGE_ID_CONFLICT);
-        }
-    }
-
-    private void requireRetryable(DdcPublishTaskBO task) {
-        if (task == null || !RETRYABLE_STATUSES.contains(task.getStatus())) {
-            throw new DdcAdminException("publish task is not retryable");
-        }
-    }
-
-    private long timeout(Long requestedTimeoutMs) {
-        long timeoutMs = requestedTimeoutMs == null
-                ? properties.getPublish().getDefaultTimeoutMs()
-                : requestedTimeoutMs;
-        if (timeoutMs <= 0 || timeoutMs > properties.getPublish().getMaxTimeoutMs()) {
-            throw new DdcAdminException(
-                    "timeoutMs must be between 1 and "
-                            + properties.getPublish().getMaxTimeoutMs()
-            );
-        }
-        return timeoutMs;
-    }
-
-    private Instant deadline(DdcPublishTaskBO task) {
-        if (PublishStatus.PENDING.name().equals(task.getStatus())) {
-            LocalDateTime createdAt =
-                    task.getCreatedAt() == null ? now() : task.getCreatedAt();
-            return instant(createdAt).plusMillis(
-                    properties.getPublish().getDispatchTimeoutMs()
-            );
-        }
-        LocalDateTime dispatchedAt =
-                task.getDispatchedAt() == null ? task.getUpdatedAt() : task.getDispatchedAt();
-        if (dispatchedAt == null) {
-            dispatchedAt = now();
-        }
-        long timeoutMs = task.getTimeoutMs() == null
-                ? properties.getPublish().getDefaultTimeoutMs()
-                : task.getTimeoutMs();
-        return instant(dispatchedAt).plusMillis(timeoutMs);
-    }
-
-    private void recordPreparationFailure(DdcPublishRequest request,
-                                          RuntimeException exception) {
-        try {
-            failureRecorder.recordFailure(
-                    request.getChangeId(),
-                    request.getBizCode(),
-                    request.getEnv(),
-                    request.getAppCode(),
-                    request.getResourceName(),
-                    exception.getMessage()
-            );
-        } catch (RuntimeException ignored) {
-            // Preserve the original preparation failure.
-        }
-    }
-
-    private DdcPublishTaskBO requiredTask(String changeId) {
-        return publishTaskRepository.findByChangeId(changeId)
-                .orElseThrow(() -> new DdcAdminException("publish task not found"));
-    }
-
-    private DdcConfigResourceKey resourceKey(DdcPublishRequest request) {
-        return new DdcConfigResourceKey(
-                request.getBizCode(),
-                request.getEnv(),
-                request.getAppCode(),
-                request.getResourceName()
-        );
-    }
-
-    private DdcConfigResourceKey resourceKey(DdcPublishTaskBO task) {
-        return new DdcConfigResourceKey(
-                task.getBizCode(),
-                task.getEnv(),
-                task.getAppCode(),
-                task.getResourceName()
-        );
-    }
-
-    private void requireSnowflakeChangeId(String value) {
-        requireText(value, "changeId");
-        try {
-            Long.parseLong(value);
-        } catch (NumberFormatException exception) {
-            throw new DdcAdminException("changeId must be a Snowflake ID");
-        }
-    }
-
-    private void requireText(String value, String fieldName) {
-        if (value == null || value.isBlank()) {
-            throw new DdcAdminException(fieldName + " is required");
-        }
-    }
-
-    private Duration minimum(Duration left, Duration pollInterval) {
-        if (pollInterval.isZero() || pollInterval.isNegative()) {
-            throw new DdcAdminException(
-                    "publish completion poll interval must be positive"
-            );
-        }
-        return left.compareTo(pollInterval) < 0 ? left : pollInterval;
-    }
-
-    private LocalDateTime toAckAt(Long ackTime) {
-        Instant instant = ackTime == null
-                ? clock.instant()
-                : Instant.ofEpochMilli(ackTime);
-        return LocalDateTime.ofInstant(instant, ZoneId.systemDefault());
-    }
-
-    private LocalDateTime now() {
-        return LocalDateTime.ofInstant(clock.instant(), ZoneId.systemDefault());
-    }
-
-    private Instant instant(LocalDateTime value) {
-        return value.atZone(ZoneId.systemDefault()).toInstant();
-    }
-
-    private record PublishPrepareResult(
-            DdcPublishTaskBO task,
-            boolean dispatchRequired
-    ) {
-    }
-
-    private record RetryPrepareResult(
-            boolean targetLeaseExpired, DdcPublishTaskBO task
-    ) {
-
-        private static RetryPrepareResult ready(DdcPublishTaskBO task) {
-            return new RetryPrepareResult(false, task);
-        }
-
-        private static RetryPrepareResult expired() {
-            return new RetryPrepareResult(true, null);
-        }
-    }
+    private LocalDateTime now() { return LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC); }
 }

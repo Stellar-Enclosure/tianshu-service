@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class DdcConfigOutboxIntegrationTest {
 
     @Test
-    void configTaskAndOutboxIntentUseOneDataSourceTransactionAndRollbackTogether() {
+    void rawTaskAndOutboxStorageGuardShareTheSelectedDataSourceTransaction() {
         Assumptions.assumeTrue("true".equalsIgnoreCase(System.getenv("TIANSHU_AI_PERSISTENCE_IT_ENABLED")),
                 "requires an explicitly configured isolated PostgreSQL/Outbox target");
         DataSource dataSource = dataSource();
@@ -217,7 +217,7 @@ class DdcConfigOutboxIntegrationTest {
                         + "message_fingerprint, channel, destination, payload, content_type, schema_version, "
                         + "headers_json, status, attempt_count, max_attempts, next_attempt_at, created_at, updated_at, "
                         + "tenant_id, create_user_id, create_time, update_user_id, update_time, deleted_at, version) "
-                        + "VALUES (?, ?, ?, ?, 'tianshu.config-dispatch', ?, '{}', 'application/json', '1', '{}', "
+                        + "VALUES (?, ?, ?, ?, 'tianshu.config-rollout', ?, '{}', 'application/json', '1', '{}', "
                         + "'PENDING', 0, 2, clock_timestamp(), clock_timestamp(), clock_timestamp(), 0, "
                         + "'system:outbox', clock_timestamp(), 'system:outbox', clock_timestamp(), NULL, 0)",
                 fixture.id(), fixture.messageId(), fixture.idempotencyKey(), "a".repeat(64), fixture.destination());
@@ -229,7 +229,7 @@ class DdcConfigOutboxIntegrationTest {
                         + "message_fingerprint, channel, destination, payload, content_type, schema_version, "
                         + "headers_json, status, attempt_count, max_attempts, next_attempt_at, created_at, updated_at, "
                         + "tenant_id, create_user_id, create_time, update_user_id, update_time, deleted_at, version) "
-                        + "VALUES (?, ?, ?, ?, 'tianshu.config-dispatch', ?, '{}', 'application/json', '1', '{}', "
+                        + "VALUES (?, ?, ?, ?, 'tianshu.config-rollout', ?, '{}', 'application/json', '1', '{}', "
                         + "'PENDING', 0, 2, clock_timestamp(), clock_timestamp(), clock_timestamp(), 0, "
                         + "'system:outbox', clock_timestamp(), 'system:outbox', clock_timestamp(), NULL, 0)")) {
             statement.setLong(1, fixture.id());
@@ -272,7 +272,7 @@ class DdcConfigOutboxIntegrationTest {
                     ThreadLocalRandom.current().nextLong(10_000_000_000_000L, Long.MAX_VALUE),
                     UUID.randomUUID().toString().replace("-", ""),
                     UUID.randomUUID().toString(),
-                    "tianshu:v4:tenant:101:{" + "b".repeat(64) + "}:topic",
+                    "tianshu-config/101/441",
                     UUID.randomUUID().toString().replace("-", ""), UUID.randomUUID().toString().replace("-", ""));
         }
     }

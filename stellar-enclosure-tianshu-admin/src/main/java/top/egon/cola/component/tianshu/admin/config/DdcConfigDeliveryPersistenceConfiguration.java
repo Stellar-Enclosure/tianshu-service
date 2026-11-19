@@ -21,6 +21,7 @@ import java.util.Map;
 public class DdcConfigDeliveryPersistenceConfiguration {
     private static final String BOOT_TABLE = "ddc_config_boot_binding_t0";
     private static final String RECEIPT_TABLE = "ddc_config_process_receipt";
+    private static final String OBSERVATION_TABLE = "ddc_config_workload_observation";
     private static final String VERSION_TABLE = "ddc_config_version";
 
     @Bean("ddcConfigBootBindingTransactionTemplate")
@@ -31,6 +32,18 @@ public class DdcConfigDeliveryPersistenceConfiguration {
 
     @Bean("ddcConfigReceiptTransactionTemplate")
     public TransactionTemplate ddcConfigReceiptTransactionTemplate(
+            @Qualifier("transactionManager") PlatformTransactionManager transactionManager) {
+        return authoritativeTransaction(transactionManager);
+    }
+
+    @Bean("ddcConfigWorkloadObservationTransactionTemplate")
+    public TransactionTemplate ddcConfigWorkloadObservationTransactionTemplate(
+            @Qualifier("transactionManager") PlatformTransactionManager transactionManager) {
+        return authoritativeTransaction(transactionManager);
+    }
+
+    @Bean("ddcNativeRolloutTransactionTemplate")
+    public TransactionTemplate ddcNativeRolloutTransactionTemplate(
             @Qualifier("transactionManager") PlatformTransactionManager transactionManager) {
         return authoritativeTransaction(transactionManager);
     }
@@ -64,6 +77,7 @@ public class DdcConfigDeliveryPersistenceConfiguration {
         }
         requireRoute(profiles, BOOT_TABLE, BOOT_TABLE, TableKindEnum.SINGLE, primary.logicalName());
         requireRoute(profiles, RECEIPT_TABLE, RECEIPT_TABLE + "_t0", TableKindEnum.TENANT_LEGACY, primary.logicalName());
+        requireRoute(profiles, OBSERVATION_TABLE, OBSERVATION_TABLE + "_t0", TableKindEnum.TENANT_LEGACY, primary.logicalName());
         requireRoute(profiles, VERSION_TABLE, VERSION_TABLE + "_t0", TableKindEnum.TENANT_LEGACY, primary.logicalName());
     }
 

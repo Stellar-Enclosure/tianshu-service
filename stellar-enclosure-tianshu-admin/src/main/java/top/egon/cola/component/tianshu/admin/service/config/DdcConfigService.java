@@ -2,6 +2,8 @@ package top.egon.cola.component.tianshu.admin.service.config;
 
 import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
+import lombok.RequiredArgsConstructor;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -35,6 +37,10 @@ import top.egon.cola.component.tianshu.format.DdcConfigFormatStrategyRegistry;
 import top.egon.cola.component.tianshu.format.DdcYamlConfigFormatStrategy;
 import top.egon.cola.component.tianshu.model.config.DdcConfigFormat;
 import top.egon.cola.component.tianshu.model.config.DdcConfigValue;
+import top.egon.cola.component.tianshu.model.config.DdcConfigScopeVO;
+import top.egon.cola.component.tianshu.admin.service.publish.DdcConfigManifestFactory;
+import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextDTO;
+import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantRegistry;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -45,26 +51,28 @@ import java.util.Set;
 @Slf4j
 @Service("ddcConfigService")
 @Validated
+@RequiredArgsConstructor(onConstructor_ = @Autowired)
 public class DdcConfigService {
 
     public static final String DEFAULT_RESOURCE_NAME = DdcYamlConfigFormatStrategy.DEFAULT_RESOURCE_NAME;
     public static final String YAML_FORMAT = DdcConfigFormat.YAML.name();
 
-    private static final Set<String> SUPPORTED_RESOURCE_NAMES = Set.of(
-            DEFAULT_RESOURCE_NAME, DdcYamlConfigFormatStrategy.ALTERNATE_RESOURCE_NAME);
+    private static final Set<String> SUPPORTED_RESOURCE_NAMES = Set.of(DEFAULT_RESOURCE_NAME);
     private static final List<String> PREPARED_PUBLISH_STATUSES = List.of(
             PublishStatus.PUBLISHING.name(), PublishStatus.UNKNOWN.name());
 
-    private final DdcConfigItemRepository configItemRepository;
-    private final DdcConfigVersionRepository versionRepository;
-    private final DdcConfigItemConverter itemConverter;
-    private final DdcConfigVersionConverter versionConverter;
-    private final DdcOperationLogRepository operationLogRepository;
-    private final DdcNamespaceEnvAppBindingRepository bindingRepository;
-    private final DdcPublishTaskRepository publishTaskRepository;
-    private final DdcYamlConfigValidator yamlValidator;
+    @Qualifier("ddcConfigItemRepository") private final DdcConfigItemRepository configItemRepository;
+    @Qualifier("ddcConfigVersionRepository") private final DdcConfigVersionRepository versionRepository;
+    @Qualifier("ddcConfigItemConverterImpl") private final DdcConfigItemConverter itemConverter;
+    @Qualifier("ddcConfigVersionConverterImpl") private final DdcConfigVersionConverter versionConverter;
+    @Qualifier("ddcOperationLogRepository") private final DdcOperationLogRepository operationLogRepository;
+    @Qualifier("ddcNamespaceEnvAppBindingRepository") private final DdcNamespaceEnvAppBindingRepository bindingRepository;
+    @Qualifier("ddcPublishTaskRepository") private final DdcPublishTaskRepository publishTaskRepository;
+    @Qualifier("ddcYamlConfigValidator") private final DdcYamlConfigValidator yamlValidator;
+    @Qualifier("ddcConfigManifestFactory") private final DdcConfigManifestFactory manifests;
+    @Qualifier("ddcConfigPublicationPolicyResolver") private final DdcConfigManifestFactory.PublicationPolicyResolver policies;
+    @Qualifier("ddcTenantRegistry") private final DdcTenantRegistry tenants;
 
-    @Autowired
     public DdcConfigService(
             @Qualifier("ddcConfigItemRepository") DdcConfigItemRepository configItemRepository,
             @Qualifier("ddcConfigVersionRepository") DdcConfigVersionRepository versionRepository,
@@ -74,19 +82,16 @@ public class DdcConfigService {
             @Qualifier("ddcNamespaceEnvAppBindingRepository") DdcNamespaceEnvAppBindingRepository bindingRepository,
             @Qualifier("ddcPublishTaskRepository") DdcPublishTaskRepository publishTaskRepository,
             ObjectProvider<DdcAdminProperties> propertiesProvider) {
-        this.configItemRepository = configItemRepository;
-        this.versionRepository = versionRepository;
-        this.itemConverter = itemConverter;
-        this.versionConverter = versionConverter;
-        this.operationLogRepository = operationLogRepository;
-        this.bindingRepository = bindingRepository;
-        this.publishTaskRepository = publishTaskRepository;
-        DdcAdminProperties properties = propertiesProvider.getIfAvailable(DdcAdminProperties::new);
-        this.yamlValidator = new DdcYamlConfigValidator(properties.getMaxConfigBytes());
+        this(configItemRepository, versionRepository, itemConverter, versionConverter, operationLogRepository,
+                bindingRepository, publishTaskRepository,
+                new DdcYamlConfigValidator(propertiesProvider.getIfAvailable(DdcAdminProperties::new).getMaxConfigBytes()),
+                new DdcConfigManifestFactory(new com.fasterxml.jackson.databind.ObjectMapper()),
+                (tenant, scope) -> { throw new DdcAdminException("TIANSHU_CONFIG_PUBLICATION_POLICY_UNAVAILABLE"); }, null);
     }
 
     @Transactional
     public DdcConfigVO create(@Valid DdcConfigCreateRequest request, String operator) {
+        currentTenant();
         validateDraft(request);
         findScopeConfig(request.getBizCode(), request.getEnv(), request.getAppCode())
                 .ifPresent(item -> { throw new DdcAdminException("config item already exists"); });
@@ -95,6 +100,7 @@ public class DdcConfigService {
 
     @Transactional
     public DdcConfigVO upsert(@Valid DdcConfigCreateRequest request, Long expectedVersion, String operator) {
+        currentTenant();
         validateDraft(request);
         DdcConfigItemBO existing = findScopeConfig(request.getBizCode(), request.getEnv(), request.getAppCode())
                 .orElse(null);
@@ -112,7 +118,7 @@ public class DdcConfigService {
 
         String oldContent = existing.getContent();
         existing.setContent(request.getContent()).setDefaultValue(null).setDescription(request.getDescription())
-                .setCurrentVersion(existing.getCurrentVersion() + 1).setUpdatedAt(LocalDateTime.now());
+                .setCurrentVersion(existing.getCurrentVersion() + 1).setUpdatedAt(LocalDateTime.now(java.time.ZoneOffset.UTC));
         DdcConfigItemBO saved = configItemRepository.update(existing);
         saveVersion(saved, oldContent, saved.getContent(), ChangeType.UPDATE, "upsert config draft", operator);
         saveOperation(saved, ChangeType.UPDATE, operator, "upsert config draft");
@@ -120,7 +126,7 @@ public class DdcConfigService {
     }
 
     private DdcConfigItemBO createDraft(DdcConfigCreateRequest request, String operator) {
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(java.time.ZoneOffset.UTC);
         DdcConfigItemBO command = DdcConfigItemBO.builder()
                 .bizCode(request.getBizCode()).appCode(request.getAppCode()).env(request.getEnv())
                 .resourceName(request.getResourceName()).content(request.getContent()).defaultValue(null)
@@ -134,6 +140,7 @@ public class DdcConfigService {
 
     @Transactional
     public DdcConfigVO update(@Valid DdcConfigUpdateRequest request, String operator) {
+        currentTenant();
         if (request == null) throw new DdcAdminException("config update request is required");
         DdcConfigItemBO item = getConfig(request.getId());
         yamlValidator.validate(item.getResourceName(), item.getFormat(), request.getContent());
@@ -141,7 +148,7 @@ public class DdcConfigService {
             throw new DdcAdminException("config version changed");
         String oldContent = item.getContent();
         item.setContent(request.getContent()).setCurrentVersion(item.getCurrentVersion() + 1)
-                .setUpdatedAt(LocalDateTime.now());
+                .setUpdatedAt(LocalDateTime.now(java.time.ZoneOffset.UTC));
         DdcConfigItemBO saved = configItemRepository.update(item);
         saveVersion(saved, oldContent, saved.getContent(), ChangeType.UPDATE, request.getChangeReason(), operator);
         saveOperation(saved, ChangeType.UPDATE, operator, request.getChangeReason());
@@ -150,6 +157,7 @@ public class DdcConfigService {
 
     @Transactional
     public DdcConfigVO delete(String configPublicId, String operator, String reason) {
+        currentTenant();
         DdcConfigItemBO item = getConfig(configPublicId);
         if (Boolean.TRUE.equals(item.getDeleted())) return config(item);
         return delete(item, operator, reason);
@@ -158,6 +166,7 @@ public class DdcConfigService {
     @Transactional
     public DdcConfigVO delete(String bizCode, String env, String appCode, Long expectedVersion,
             String operator, String reason) {
+        currentTenant();
         DdcConfigItemBO item = findScopeConfig(bizCode, env, appCode).orElse(null);
         if (item == null) return null;
         if (Boolean.TRUE.equals(item.getDeleted())) return config(item);
@@ -169,24 +178,34 @@ public class DdcConfigService {
     private DdcConfigVO delete(DdcConfigItemBO item, String operator, String reason) {
         String oldContent = item.getContent();
         item.setDeleted(true).setEnabled(false).setCurrentVersion(item.getCurrentVersion() + 1)
-                .setUpdatedAt(LocalDateTime.now());
+                .setUpdatedAt(LocalDateTime.now(java.time.ZoneOffset.UTC));
         DdcConfigItemBO saved = configItemRepository.update(item);
-        saveVersion(saved, oldContent, null, ChangeType.DELETE, reason, operator);
+        saveVersion(saved, oldContent, oldContent, ChangeType.DELETE, reason, operator);
         saveOperation(saved, ChangeType.DELETE, operator, reason);
         return config(saved);
     }
 
     @Transactional
     public DdcConfigVO rollback(@Valid DdcConfigRollbackRequest request, String operator) {
+        var tenant = currentTenant();
         DdcConfigItemBO item = getConfig(request.getConfigId());
         DdcConfigVersionBO target = versionRepository.findByConfigIdAndVersion(request.getConfigId(), request.getVersion())
                 .orElseThrow(() -> new DdcAdminException("config version not found"));
+        var fixed = manifests.materialize(target, scope(tenant, item)).baseline();
+        var currentlyAuthorized = policies.require(tenant, scope(tenant, item));
+        if (!currentlyAuthorized.targetBindings().containsAll(fixed.getTargetBindings())) {
+            throw new DdcAdminException("historical config target is no longer authorized");
+        }
+        var dependencies = new java.util.LinkedHashMap<>(fixed.getStartupDependencies());
+        dependencies.remove(DdcConfigManifestFactory.HOT_SCHEMA_DEPENDENCY_KEY);
+        var fixedPolicy = new DdcConfigManifestFactory.PublicationPolicyVO(fixed.getScope(), fixed.getRules(),
+                fixed.getTargetBindings(), fixed.getDependencySnapshotId(), dependencies, fixed.getSecretReferences());
         yamlValidator.validate(target.getResourceName(), target.getFormat(), target.getNewContent());
         String oldContent = item.getContent();
-        item.setContent(target.getNewContent()).setDeleted(false).setEnabled(true)
-                .setCurrentVersion(item.getCurrentVersion() + 1).setUpdatedAt(LocalDateTime.now());
+        item.setContent(target.getNewContent()).setDeleted(false).setEnabled(fixed.getEnabled())
+                .setCurrentVersion(item.getCurrentVersion() + 1).setUpdatedAt(LocalDateTime.now(java.time.ZoneOffset.UTC));
         DdcConfigItemBO saved = configItemRepository.update(item);
-        saveVersion(saved, oldContent, saved.getContent(), ChangeType.ROLLBACK, request.getReason(), operator);
+        saveVersion(saved, oldContent, saved.getContent(), ChangeType.ROLLBACK, request.getReason(), operator, fixedPolicy);
         saveOperation(saved, ChangeType.ROLLBACK, operator, request.getReason());
         return config(saved);
     }
@@ -260,13 +279,38 @@ public class DdcConfigService {
 
     private void saveVersion(DdcConfigItemBO item, String oldContent, String newContent, ChangeType changeType,
             String reason, String operator) {
+        var tenant = currentTenant();
+        var scope = scope(tenant, item);
+        saveVersion(item, oldContent, newContent, changeType, reason, operator, policies.require(tenant, scope));
+    }
+
+    private void saveVersion(DdcConfigItemBO item, String oldContent, String newContent, ChangeType changeType,
+            String reason, String operator, DdcConfigManifestFactory.PublicationPolicyVO policy) {
+        var tenant = currentTenant();
+        var frozen = manifests.freeze(tenant, item, item.getCurrentVersion(), newContent,
+                !Boolean.TRUE.equals(item.getDeleted()) && Boolean.TRUE.equals(item.getEnabled()), policy);
         DdcConfigVersionBO version = DdcConfigVersionBO.builder()
-                .configItemId(item.getId()).configId(item.getPublicId()).bizCode(item.getBizCode())
+                .tenantId(tenant.tenantId()).configItemId(item.getId()).configId(item.getPublicId()).bizCode(item.getBizCode())
                 .appCode(item.getAppCode()).env(item.getEnv()).namespace(null).resourceName(item.getResourceName())
                 .configRevision(item.getCurrentVersion()).oldContent(oldContent).newContent(newContent)
-                .format(item.getFormat()).changeType(changeType.name()).changeReason(reason).operator(operator)
-                .createdAt(LocalDateTime.now()).build();
+                .manifestJson(frozen.manifest()).format(item.getFormat()).changeType(changeType.name()).changeReason(reason).operator(operator)
+                .createdAt(LocalDateTime.now(java.time.ZoneOffset.UTC)).build();
         versionRepository.insert(version);
+    }
+
+    private DdcTenantContextDTO currentTenant() {
+        try {
+            if (tenants == null) { throw new IllegalArgumentException(); }
+            String value = MDC.get("tenantId");
+            long id = Long.parseLong(value);
+            if (!Long.toString(id).equals(value)) { throw new IllegalArgumentException(); }
+            var registered = tenants.requireEnabledTenant(id);
+            return new DdcTenantContextDTO(id, registered.getIdentityTenantId(), MDC.get("userId"));
+        } catch (RuntimeException invalid) { throw new DdcAdminException("TIANSHU_TRUSTED_TENANT_REQUIRED"); }
+    }
+
+    private static DdcConfigScopeVO scope(DdcTenantContextDTO tenant, DdcConfigItemBO item) {
+        return new DdcConfigScopeVO(Long.toString(tenant.tenantId()), item.getBizCode(), item.getEnv(), item.getAppCode(), item.getResourceName());
     }
 
     private void saveOperation(DdcConfigItemBO item, ChangeType changeType, String operator, String content) {
@@ -279,7 +323,7 @@ public class DdcConfigService {
         operation.setOperationType(changeType.name());
         operation.setOperator(operator);
         operation.setOperationContent(content);
-        operation.setCreatedAt(LocalDateTime.now());
+        operation.setCreatedAt(LocalDateTime.now(java.time.ZoneOffset.UTC));
         operationLogRepository.insert(operation);
     }
 

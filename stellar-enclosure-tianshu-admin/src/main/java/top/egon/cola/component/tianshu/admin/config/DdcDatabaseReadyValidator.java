@@ -230,6 +230,7 @@ public class DdcDatabaseReadyValidator implements SmartInitializingSingleton {
         }
         validateManifestResourceChecksum(manifest);
         boolean cloudDelivery = DdcCloudDeliveryReadyValidator.isIncludedIn(manifest);
+        boolean nativeRollout = DdcCloudDeliveryReadyValidator.includesNativeRollout(manifest);
 
         try (Connection connection = primary.getConnection()) {
             connection.setSchema("public");
@@ -240,7 +241,7 @@ public class DdcDatabaseReadyValidator implements SmartInitializingSingleton {
             }
             validatePrimaryAndSchema(connection);
             validateTables(metadata);
-            validateColumns(metadata, cloudDelivery);
+            validateColumns(metadata, cloudDelivery, nativeRollout);
             validateLifecycleIndexes(metadata);
             validateLifecycleIndexPredicates(connection);
             validateNamedConstraints(connection);
@@ -248,6 +249,9 @@ public class DdcDatabaseReadyValidator implements SmartInitializingSingleton {
             DdcListTemplateReadyValidator.validate(connection);
             if (cloudDelivery) {
                 DdcCloudDeliveryReadyValidator.validate(connection);
+            }
+            if (nativeRollout) {
+                DdcCloudDeliveryReadyValidator.validateNativeRollout(connection);
             }
             validateHistory(connection, manifest, routeFingerprint);
         } catch (SQLException failure) {
@@ -296,7 +300,8 @@ public class DdcDatabaseReadyValidator implements SmartInitializingSingleton {
         }
     }
 
-    private static void validateColumns(DatabaseMetaData metadata, boolean cloudDelivery) throws SQLException {
+    private static void validateColumns(DatabaseMetaData metadata, boolean cloudDelivery, boolean nativeRollout)
+            throws SQLException {
         for (String table : TIANSHU_TABLES) {
             Set<String> actual = new LinkedHashSet<>();
             try (ResultSet columns = metadata.getColumns(null, "public", table, null)) {
@@ -308,6 +313,10 @@ public class DdcDatabaseReadyValidator implements SmartInitializingSingleton {
             if (cloudDelivery && "ddc_config_version_t0".equals(table)) {
                 expected = new LinkedHashSet<>(expected);
                 expected.add("manifest_json");
+            }
+            if (nativeRollout && "ddc_publish_task_t0".equals(table)) {
+                expected = new LinkedHashSet<>(expected);
+                expected.add("platform_evidence");
             }
             if (!expected.equals(actual)) {
                 throw new IllegalStateException("TIANSHU_SCHEMA_COLUMN_SET_MISMATCH: " + table);

@@ -24,23 +24,57 @@ import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.TransactionSystemException;
 import org.springframework.transaction.support.TransactionTemplate;
 import top.egon.cola.component.common.id.snowflake.SnowflakeIdGenerator;
+import top.egon.cola.component.common.core.validation.ValidationUtils;
 import top.egon.cola.component.common.mybatis.autoconfigure.EgonColaMybatisPlusAutoConfiguration;
 import top.egon.cola.component.common.mybatis.autoconfigure.EgonColaShardingAutoConfiguration;
+import top.egon.cola.component.outbox.autoconfigure.OutboxMybatisPlusAutoConfiguration;
+import top.egon.cola.component.outbox.autoconfigure.OutboxStateMachineAutoConfiguration;
+import top.egon.cola.component.outbox.autoconfigure.TransactionalOutboxAutoConfiguration;
+import top.egon.cola.component.tianshu.admin.config.DdcAdminOutboxDispatchConfiguration;
+import top.egon.cola.component.tianshu.admin.config.DdcAdminProperties;
 import top.egon.cola.component.tianshu.admin.config.DdcConfigDeliveryPersistenceConfiguration;
+import top.egon.cola.component.tianshu.admin.config.DdcOutboxConfiguration;
+import top.egon.cola.component.tianshu.admin.config.DdcOutboxConfiguration.DdcConfigRolloutOutboxRouteDTO;
 import top.egon.cola.component.tianshu.admin.dao.DdcConfigBootBindingMapper;
 import top.egon.cola.component.tianshu.admin.migration.DdcPersistenceMigrationCli;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcConfigBootBindingBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcConfigProcessReceiptBO;
 import top.egon.cola.component.tianshu.admin.model.convertor.DdcConfigBootBindingConverterImpl;
+import top.egon.cola.component.tianshu.admin.model.convertor.DdcConfigDispatchEventConverter;
+import top.egon.cola.component.tianshu.admin.model.convertor.DdcConfigDispatchEventConverterImpl;
+import top.egon.cola.component.tianshu.admin.model.convertor.DdcConfigItemConverterImpl;
 import top.egon.cola.component.tianshu.admin.model.convertor.DdcConfigProcessReceiptConverterImpl;
+import top.egon.cola.component.tianshu.admin.model.convertor.DdcConfigVersionConverterImpl;
+import top.egon.cola.component.tianshu.admin.model.convertor.DdcOperationLogConverterImpl;
+import top.egon.cola.component.tianshu.admin.model.convertor.DdcPublishTaskConverterImpl;
+import top.egon.cola.component.tianshu.admin.model.dto.DdcPublishRequest;
 import top.egon.cola.component.tianshu.admin.repository.DdcConfigBootBindingRepository;
+import top.egon.cola.component.tianshu.admin.repository.DdcConfigItemRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcConfigProcessReceiptRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcConfigProcessReceiptRepository.AcceptanceEnum;
+import top.egon.cola.component.tianshu.admin.repository.DdcConfigVersionRepository;
+import top.egon.cola.component.tianshu.admin.repository.DdcOperationLogRepository;
+import top.egon.cola.component.tianshu.admin.repository.DdcPublishTaskRepository;
 import top.egon.cola.component.tianshu.admin.repository.impl.DdcConfigBootBindingRepositoryImpl;
+import top.egon.cola.component.tianshu.admin.repository.impl.DdcConfigItemRepositoryImpl;
 import top.egon.cola.component.tianshu.admin.repository.impl.DdcConfigProcessReceiptRepositoryImpl;
+import top.egon.cola.component.tianshu.admin.repository.impl.DdcConfigVersionRepositoryImpl;
+import top.egon.cola.component.tianshu.admin.repository.impl.DdcOperationLogRepositoryImpl;
+import top.egon.cola.component.tianshu.admin.repository.impl.DdcPublishTaskRepositoryImpl;
+import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantBindingDTO;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextDTO;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextExecutor;
+import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantRegistry;
+import top.egon.cola.component.tianshu.admin.service.config.DdcYamlConfigValidator;
+import top.egon.cola.component.tianshu.admin.service.notification.DdcConfigDispatchDeliveryHandler;
+import top.egon.cola.component.tianshu.admin.service.publish.DdcConfigManifestFactory;
+import top.egon.cola.component.tianshu.admin.service.publish.DdcConfigManifestFactory.PublicationPolicyResolver;
+import top.egon.cola.component.tianshu.admin.service.publish.DdcConfigManifestFactory.PublicationPolicyVO;
+import top.egon.cola.component.tianshu.admin.service.publish.DdcPendingPublishDispatcher;
+import top.egon.cola.component.tianshu.admin.service.publish.DdcPublishService;
+import top.egon.cola.component.tianshu.admin.service.publish.PublishFailureRecorder;
 import top.egon.cola.component.tianshu.format.DdcConfigCanonicalJson;
+import top.egon.cola.component.tianshu.model.config.DdcConfigBaselineVO.TargetBindingVO;
 import top.egon.cola.component.tianshu.model.config.DdcConfigReceiptCommand;
 import top.egon.cola.component.tianshu.model.config.DdcConfigReceiptStatusEnum;
 
@@ -53,8 +87,10 @@ import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.Callable;
@@ -66,6 +102,8 @@ import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 import static top.egon.cola.component.tianshu.admin.repository.DdcConfigProcessReceiptRepository.AcceptanceEnum.ADVANCED;
 import static top.egon.cola.component.tianshu.admin.repository.DdcConfigProcessReceiptRepository.AcceptanceEnum.CONFLICT;
 import static top.egon.cola.component.tianshu.admin.repository.DdcConfigProcessReceiptRepository.AcceptanceEnum.SAME;
@@ -74,6 +112,7 @@ import static top.egon.cola.component.tianshu.admin.repository.DdcConfigProcessR
 /** Real Spring, ShardingSphere, Egon MP, and PostgreSQL proof for replica-independent delivery state. */
 class DdcConfigDeliveryPersistenceIT {
     private static final String DATABASE = "tianshu_step19_delivery";
+    private static final String ATOMIC_DATABASE = "tianshu_step27_atomic";
     private static final String PERSISTENCE_YAML = "egon-tianshu-persistence.yml";
     private static final String ENABLED = "TIANSHU_CONFIG_DELIVERY_PERSISTENCE_IT_ENABLED";
     private static final Instant REPORTED = Instant.parse("2026-11-18T18:00:00Z");
@@ -84,6 +123,146 @@ class DdcConfigDeliveryPersistenceIT {
 
     @TempDir
     Path scratch;
+
+    @Test
+    void nativeIntakeCommitsVersionIntentTaskAuditAndOutboxOnOnePostgresqlTransaction() throws Exception {
+        Assumptions.assumeTrue("true".equals(System.getenv("TIANSHU_CONFIG_NATIVE_PUBLISH_IT_ENABLED")),
+                "requires the dedicated disposable native publication database");
+        String url = required("TIANSHU_CONFIG_NATIVE_PUBLISH_IT_JDBC_URL");
+        String user = required("TIANSHU_CONFIG_NATIVE_PUBLISH_IT_DB_USERNAME");
+        String password = required("TIANSHU_CONFIG_NATIVE_PUBLISH_IT_DB_PASSWORD");
+        var physical = ownedPrimary(url, user, password, ATOMIC_DATABASE);
+        initializeSchema(url, user, password);
+        try (var connection = physical.getConnection(); var command = connection.createStatement()) {
+            command.execute("""
+                    INSERT INTO public.ddc_config_item_t0
+                        (id,tenant_id,create_user_id,create_time,update_user_id,update_time,public_id,
+                         biz_code,app_code,env,config_key,config_value,value_type,enabled,current_version,created_at,updated_at)
+                    VALUES (27001,1901,'fixture',current_timestamp,'fixture',current_timestamp,'native-27001',
+                            'reading','atomic','staging','application.yml','app.limit: 1','yaml',true,1,
+                            current_timestamp AT TIME ZONE 'UTC',current_timestamp AT TIME ZONE 'UTC')
+                    """);
+        }
+        SnowflakeIdGenerator.initialize(0L, Duration.ofMillis(5));
+        var registry = mock(DdcTenantRegistry.class);
+        when(registry.requireEnabledTenant(TENANT.tenantId())).thenReturn(DdcTenantBindingDTO.builder()
+                .tenantId(TENANT.tenantId()).identityTenantId(TENANT.identityTenantId()).enabled(true).build());
+        String adminPropertiesName = "egon.cola.component.tianshu.admin-top.egon.cola.component.tianshu.admin.config.DdcAdminProperties";
+        runner(url, user, password, false)
+                .withConfiguration(AutoConfigurations.of(TransactionalOutboxAutoConfiguration.class,
+                        OutboxStateMachineAutoConfiguration.class, OutboxMybatisPlusAutoConfiguration.class))
+                .withUserConfiguration(DdcOutboxConfiguration.class, DdcAdminOutboxDispatchConfiguration.class,
+                        DdcConfigItemRepositoryImpl.class, DdcConfigItemConverterImpl.class,
+                        DdcConfigVersionRepositoryImpl.class, DdcConfigVersionConverterImpl.class,
+                        DdcPublishTaskRepositoryImpl.class, DdcPublishTaskConverterImpl.class,
+                        DdcOperationLogRepositoryImpl.class, DdcOperationLogConverterImpl.class,
+                        DdcConfigDispatchEventConverterImpl.class, DdcConfigDispatchDeliveryHandler.class,
+                        DdcConfigManifestFactory.class, DdcPublishService.class, DdcPendingPublishDispatcher.class,
+                        PublishFailureRecorder.class)
+                .withBean("jacksonObjectMapper", ObjectMapper.class, () -> new ObjectMapper().findAndRegisterModules())
+                .withBean("ddcTenantRegistry", DdcTenantRegistry.class, () -> registry)
+                .withBean(adminPropertiesName, DdcAdminProperties.class, DdcAdminProperties::new)
+                .withBean("ddcConfigPublicationPolicyResolver", PublicationPolicyResolver.class,
+                        () -> (tenant, scope) -> new PublicationPolicyVO(scope, List.of(),
+                                List.of(new TargetBindingVO("atomic-binding", "1", "isolated", "platform-prod",
+                                        "Deployment", "tianshu-app-stable", "workload-atomic", "app")),
+                                null, Map.of(), Map.of()))
+                .withPropertyValues("mybatis-plus.mapper-locations=classpath*:mybatis/mapper/tianshu/**/*.xml,classpath*:mapper/outbox/**/*.xml",
+                        "egon.cola.component.transactional-outbox.enabled=true",
+                        "egon.cola.component.transactional-outbox.polling.enabled=false",
+                        "egon.cola.component.transactional-outbox.cleanup.enabled=false",
+                        "egon.cola.component.transactional-outbox.state-machine.execution-timeout=1s",
+                        "egon.cola.component.transactional-outbox.node-id=atomic-test")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    var executor = context.getBean(DdcTenantContextExecutor.class);
+                    try (var binding = executor.bind(TENANT)) {
+                        var producer = context.getBean(DdcPublishService.class);
+                        String committed = "270010301";
+                        assertThat(producer.publish(request(committed, 1, 2), TENANT.actor()).getStatus()).isEqualTo("PENDING");
+                        assertThat(producer.publish(request(committed, 1, 2), TENANT.actor()).getStatus()).isEqualTo("PENDING");
+
+                        var tasks = context.getBean(DdcPublishTaskRepository.class);
+                        var failingDispatcher = new DdcPendingPublishDispatcher(
+                                context.getBean(DdcConfigDispatchEventConverter.class),
+                                message -> { throw new IllegalStateException("ATOMIC_FIXTURE_ENQUEUE_REJECTED"); },
+                                context.getBean(DdcConfigRolloutOutboxRouteDTO.class), context.getBean(ValidationUtils.class));
+                        var failureCase = new DdcPublishService(context.getBean(DdcConfigItemRepository.class),
+                                context.getBean(DdcConfigVersionRepository.class), tasks,
+                                context.getBean(DdcOperationLogRepository.class), failingDispatcher,
+                                context.getBean(PublishFailureRecorder.class), context.getBean(DdcAdminProperties.class),
+                                context.getBean(DdcYamlConfigValidator.class),
+                                context.getBean("ddcPublishTransactionTemplate", TransactionTemplate.class),
+                                context.getBean("ddcPublishClock", Clock.class), context.getBean(DdcConfigManifestFactory.class),
+                                context.getBean(PublicationPolicyResolver.class), registry);
+                        assertThatThrownBy(() -> failureCase.publish(request("270010302", 2, 3), TENANT.actor()))
+                                .hasMessage("ATOMIC_FIXTURE_ENQUEUE_REJECTED");
+                        verifyNativeAtomicRows(physical);
+                        verifyNativeTaskFence(tasks, committed);
+                    }
+                });
+    }
+
+    private static void verifyNativeTaskFence(DdcPublishTaskRepository tasks, String changeId) {
+        var initial = tasks.findByChangeId(changeId).orElseThrow();
+        var now = LocalDateTime.parse("2026-11-18T15:00:00");
+        var evidence = JSON.createObjectNode().put("schemaVersion", 1);
+        evidence.putArray("targets").addObject().put("bindingId", "atomic-binding");
+        assertThat(tasks.updateNativeEvidence(initial, evidence, "FAILED", "KUBERNETES", now)).isEqualTo(1);
+        assertThat(tasks.updateNativeEvidence(initial, evidence, "FAILED", "KUBERNETES", now)).isZero();
+        var failed = tasks.findByChangeId(changeId).orElseThrow();
+        assertThat(failed.getStatus()).isEqualTo("FAILED");
+        assertThat(failed.getPlatformEvidence()).isEqualTo(evidence);
+        assertThat(tasks.resetNativeForRetry(failed, TENANT.actor(), now.plusSeconds(1))).isEqualTo(1);
+        assertThat(tasks.resetNativeForRetry(failed, TENANT.actor(), now.plusSeconds(1))).isZero();
+        var retried = tasks.findByChangeId(changeId).orElseThrow();
+        assertThat(retried.getStatus()).isEqualTo("PENDING");
+        assertThat(retried.getAttemptCount()).isEqualTo(failed.getAttemptCount() + 1);
+        assertThat(retried.getPlatformEvidence().path("targets").isEmpty()).isTrue();
+    }
+
+    private static DdcPublishRequest request(String changeId, long expectedVersion, int limit) {
+        var request = new DdcPublishRequest();
+        request.setChangeId(changeId);
+        request.setBizCode("reading");
+        request.setEnv("staging");
+        request.setAppCode("atomic");
+        request.setResourceName("application.yml");
+        request.setContent("app.limit: " + limit);
+        request.setFormat("yaml");
+        request.setExpectedVersion(expectedVersion);
+        request.setTimeoutMs(5_000L);
+        return request;
+    }
+
+    private static void verifyNativeAtomicRows(PGSimpleDataSource source) throws SQLException {
+        try (var connection = source.getConnection(); var query = connection.createStatement();
+             var rows = query.executeQuery("""
+                     SELECT i.published_version, i.current_version, i.xmin::text,
+                            v.xmin::text, t.xmin::text, a.xmin::text, o.xmin::text,
+                            v.manifest_json ->> 'schemaVersion', t.platform_evidence ->> 'schemaVersion',
+                            o.channel, o.status
+                     FROM public.ddc_config_item_t0 i
+                     JOIN public.ddc_config_version_t0 v ON v.tenant_id=i.tenant_id AND v.config_id=i.id
+                     JOIN public.ddc_publish_task_t0 t ON t.tenant_id=i.tenant_id AND t.config_id=i.id
+                     JOIN public.ddc_operation_log_t0 a ON a.tenant_id=i.tenant_id
+                     CROSS JOIN egon_outbox.egon_cola_outbox_message o
+                     WHERE i.id=27001
+                     """)) {
+            assertThat(rows.next()).isTrue();
+            assertThat(rows.getLong(1)).isEqualTo(2);
+            assertThat(rows.getLong(2)).isEqualTo(2);
+            String transaction = rows.getString(3);
+            for (int column = 4; column <= 7; column++) {
+                assertThat(rows.getString(column)).isEqualTo(transaction);
+            }
+            assertThat(rows.getString(8)).isEqualTo("1");
+            assertThat(rows.getString(9)).isEqualTo("1");
+            assertThat(rows.getString(10)).isEqualTo("tianshu.config-rollout");
+            assertThat(rows.getString(11)).isEqualTo("PENDING");
+            assertThat(rows.next()).isFalse();
+        }
+    }
 
     @Test
     void independentApplicationContextsShareCommittedBootAuthorityAndCoordinateReceiptReplay() throws Exception {
@@ -119,6 +298,20 @@ class DdcConfigDeliveryPersistenceIT {
                 try (var trusted = firstTenants.bind(TENANT)) {
                     assertThat(secondBoots.findConfirmed(TENANT, boot(pod, "boot-1"))).hasValueSatisfying(row ->
                             assertThat(row.getId()).isEqualTo(current.getId()));
+                    var observed = new DdcConfigBootBindingRepository.ObservedIncarnationVO(pod, "application", "containerd://one");
+                    assertThat(secondBoots.findCurrentBindings(TENANT, "isolated-19", "runtime", "workload-19", List.of(observed)))
+                            .singleElement().satisfies(row -> {
+                                assertThat(row.getId()).isEqualTo(current.getId());
+                                assertThat(row.getBootId()).isEqualTo("boot-1");
+                            });
+                    assertThat(secondBoots.findCurrentBindings(TENANT, "isolated-19", "runtime", "wrong-workload", List.of(observed))).isEmpty();
+                    assertThat(secondBoots.findCurrentBindings(TENANT, "isolated-19", "another", "workload-19", List.of(observed))).isEmpty();
+                    assertThat(secondBoots.findCurrentBindings(TENANT, "isolated-19", "runtime", "workload-19", List.of(
+                            new DdcConfigBootBindingRepository.ObservedIncarnationVO(pod, "application", "containerd://previous")))).isEmpty();
+                    assertThatThrownBy(() -> secondBoots.findCurrentBindings(TENANT, "isolated-19", "runtime", "workload-19",
+                            java.util.Collections.nCopies(501, observed))).isInstanceOf(jakarta.validation.ConstraintViolationException.class);
+                    assertThat(MDC.get("tenantId")).isEqualTo(Long.toString(TENANT.tenantId()));
+                    assertThat(MDC.get("userId")).isEqualTo(TENANT.actor());
                     assertThatThrownBy(() -> secondBoots.createOrConfirm(TENANT, boot(pod, "another-boot")))
                             .isInstanceOf(DdcConfigBootBindingRepository.BindingConflictException.class);
 
@@ -470,7 +663,11 @@ class DdcConfigDeliveryPersistenceIT {
     }
 
     private ApplicationContextRunner runner(String url, String user, String password) {
-        return new ApplicationContextRunner().withInitializer(context -> {
+        return runner(url, user, password, true);
+    }
+
+    private ApplicationContextRunner runner(String url, String user, String password, boolean receiptClock) {
+        var runner = new ApplicationContextRunner().withInitializer(context -> {
             try {
                 var properties = new YamlPropertySourceLoader().load("tianshu-persistence", new ClassPathResource(PERSISTENCE_YAML));
                 properties.forEach(context.getEnvironment().getPropertySources()::addLast);
@@ -485,13 +682,13 @@ class DdcConfigDeliveryPersistenceIT {
                         DdcTenantContextExecutor.class, DdcConfigBootBindingRepositoryImpl.class,
                         DdcConfigProcessReceiptRepositoryImpl.class, DdcConfigBootBindingConverterImpl.class,
                         DdcConfigProcessReceiptConverterImpl.class)
-                .withBean("ddcPublishClock", Clock.class, Clock::systemUTC)
                 .withPropertyValues("TIANSHU_JDBC_URL=" + url, "TIANSHU_DB_USERNAME=" + user, "TIANSHU_DB_PASSWORD=" + password,
                         "mybatis-plus.mapper-locations=" + String.join(",",
                                 "classpath*:mybatis/mapper/tianshu/DdcConfigBootBindingMapper.xml",
                                 "classpath*:mybatis/mapper/tianshu/DdcConfigProcessReceiptMapper.xml",
                                 "classpath*:mybatis/mapper/tianshu/DdcAiResourceMapper.xml",
                                 "classpath*:mybatis/mapper/tianshu/DdcAiOptimizationRunMapper.xml"));
+        return receiptClock ? runner.withBean("ddcPublishClock", Clock.class, Clock::systemUTC) : runner;
     }
 
     private void initializeSchema(String url, String user, String password) throws Exception {
@@ -510,8 +707,12 @@ class DdcConfigDeliveryPersistenceIT {
     }
 
     private static PGSimpleDataSource ownedPrimary(String url, String user, String password) throws Exception {
+        return ownedPrimary(url, user, password, DATABASE);
+    }
+
+    private static PGSimpleDataSource ownedPrimary(String url, String user, String password, String database) throws Exception {
         // Fixed loopback and named database must both agree before schema or test data writes.
-        if (!url.matches("jdbc:postgresql://127\\.0\\.0\\.1:[0-9]{1,5}/" + DATABASE)) {
+        if (!url.matches("jdbc:postgresql://127\\.0\\.0\\.1:[0-9]{1,5}/" + java.util.regex.Pattern.quote(database))) {
             throw new IllegalStateException("TIANSHU_DISPOSABLE_DELIVERY_DATABASE_REQUIRED");
         }
         var physical = new PGSimpleDataSource();
@@ -522,7 +723,7 @@ class DdcConfigDeliveryPersistenceIT {
         try (Connection connection = physical.getConnection(); var query = connection.createStatement();
              var rows = query.executeQuery("SELECT current_database(), inet_server_addr()::text, NOT pg_is_in_recovery()")) {
             assertThat(rows.next()).isTrue();
-            assertThat(rows.getString(1)).isEqualTo(DATABASE);
+            assertThat(rows.getString(1)).isEqualTo(database);
             assertThat(rows.getString(2)).startsWith("127.0.0.1");
             assertThat(rows.getBoolean(3)).isTrue();
         }

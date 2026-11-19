@@ -1,5 +1,6 @@
 package top.egon.cola.component.tianshu.admin.repository;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -26,6 +27,11 @@ public interface DdcPublishTaskRepository {
     @Validated(EgonColaModelValidationGroups.Query.class)
     Optional<DdcPublishTaskBO> findForUpdateByChangeId(@NotNull(groups = EgonColaModelValidationGroups.Query.class)
             @Size(max = 64, groups = EgonColaModelValidationGroups.Query.class) String changeId);
+
+    int updateNativeEvidence(@NotNull DdcPublishTaskBO task, @NotNull JsonNode evidence,
+            @NotNull String nativeStatus, String failureStage, @NotNull LocalDateTime changedAt);
+
+    int resetNativeForRetry(@NotNull DdcPublishTaskBO task, String operator, @NotNull LocalDateTime changedAt);
 
     @Validated(EgonColaModelValidationGroups.Update.class)
     boolean fenceObservedVersion(@NotNull DdcPublishTaskBO task);

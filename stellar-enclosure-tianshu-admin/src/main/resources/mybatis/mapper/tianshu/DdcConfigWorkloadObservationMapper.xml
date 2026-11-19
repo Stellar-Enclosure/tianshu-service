@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="top.egon.cola.component.tianshu.admin.dao.DdcConfigWorkloadObservationMapper">
+    <resultMap id="Observation" type="top.egon.cola.component.tianshu.admin.model.po.DdcConfigWorkloadObservationPO">
+        <id property="id" column="id"/>
+        <result property="tenantId" column="tenant_id"/>
+        <result property="createUserId" column="create_user_id"/>
+        <result property="createTime" column="create_time"/>
+        <result property="updateUserId" column="update_user_id"/>
+        <result property="updateTime" column="update_time"/>
+        <result property="deletedAt" column="deleted_at"/>
+        <result property="version" column="version"/>
+        <result property="targetBindingId" column="target_binding_id"/>
+        <result property="targetRevision" column="target_revision"/>
+        <result property="clusterId" column="cluster_id"/>
+        <result property="k8sNamespace" column="k8s_namespace"/>
+        <result property="workloadUid" column="workload_uid"/>
+        <result property="observedAt" column="observed_at"/>
+        <result property="validUntil" column="valid_until"/>
+        <result property="recordedAt" column="recorded_at"/>
+        <result property="viewJson" column="view_json" jdbcType="OTHER" typeHandler="top.egon.cola.component.tianshu.admin.dao.typehandler.DdcJsonbTypeHandler"/>
+    </resultMap>
+    <sql id="Columns">id, tenant_id, create_user_id, create_time, update_user_id, update_time, deleted_at, version, target_binding_id, target_revision, cluster_id, k8s_namespace, workload_uid, observed_at, valid_until, recorded_at, view_json</sql>
+    <sql id="Key">tenant_id = #{key.tenantId} AND target_binding_id = #{key.targetBindingId}
+        AND target_revision = #{key.targetRevision} AND cluster_id = #{key.clusterId}
+        AND k8s_namespace = #{key.k8sNamespace} AND workload_uid = #{key.workloadUid} AND deleted_at IS NULL</sql>
+    <select id="selectActive" resultMap="Observation">SELECT <include refid="Columns"/> FROM ddc_config_workload_observation WHERE <include refid="Key"/></select>
+    <select id="selectActiveForUpdate" resultMap="Observation">SELECT <include refid="Columns"/> FROM ddc_config_workload_observation WHERE <include refid="Key"/> FOR UPDATE</select>
+    <insert id="insertIfAbsent">
+        INSERT INTO ddc_config_workload_observation (<include refid="Columns"/>) VALUES (
+            #{row.id}, #{row.tenantId}, #{row.createUserId}, #{row.createTime}, #{row.updateUserId}, #{row.updateTime}, NULL, 0,
+            #{row.targetBindingId}, #{row.targetRevision}, #{row.clusterId}, #{row.k8sNamespace}, #{row.workloadUid},
+            #{row.observedAt}, #{row.validUntil}, #{row.recordedAt},
+            #{row.viewJson,jdbcType=OTHER,typeHandler=top.egon.cola.component.tianshu.admin.dao.typehandler.DdcJsonbTypeHandler})
+        ON CONFLICT (tenant_id, target_binding_id, target_revision, cluster_id, k8s_namespace, workload_uid, deleted_at) DO NOTHING
+    </insert>
+    <update id="advance">
+        UPDATE ddc_config_workload_observation SET observed_at = #{row.observedAt}, valid_until = #{row.validUntil},
+            recorded_at = #{row.recordedAt}, view_json = #{row.viewJson,jdbcType=OTHER,typeHandler=top.egon.cola.component.tianshu.admin.dao.typehandler.DdcJsonbTypeHandler},
+            update_user_id = #{row.updateUserId}, update_time = #{row.updateTime}, version = version + 1
+        WHERE tenant_id = #{row.tenantId} AND id = #{row.id} AND version = #{expectedVersion} AND deleted_at IS NULL
+            AND target_binding_id = #{row.targetBindingId} AND target_revision = #{row.targetRevision}
+            AND cluster_id = #{row.clusterId} AND k8s_namespace = #{row.k8sNamespace} AND workload_uid = #{row.workloadUid}
+            AND (view_json -&gt;&gt; 'writerEpoch')::bigint = #{expectedEpoch}
+            AND (view_json -&gt;&gt; 'reportSeq')::bigint = #{expectedSeq}
+            AND ((#{row.viewJson,jdbcType=OTHER,typeHandler=top.egon.cola.component.tianshu.admin.dao.typehandler.DdcJsonbTypeHandler} -&gt;&gt; 'writerEpoch')::bigint &gt; #{expectedEpoch}
+                OR ((#{row.viewJson,jdbcType=OTHER,typeHandler=top.egon.cola.component.tianshu.admin.dao.typehandler.DdcJsonbTypeHandler} -&gt;&gt; 'writerEpoch')::bigint = #{expectedEpoch}
+                    AND (#{row.viewJson,jdbcType=OTHER,typeHandler=top.egon.cola.component.tianshu.admin.dao.typehandler.DdcJsonbTypeHandler} -&gt;&gt; 'reportSeq')::bigint &gt; #{expectedSeq}))
+    </update>
+</mapper>

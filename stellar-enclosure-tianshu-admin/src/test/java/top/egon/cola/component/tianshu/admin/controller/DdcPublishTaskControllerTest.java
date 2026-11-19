@@ -53,12 +53,11 @@ class DdcPublishTaskControllerTest {
                 .changeId("change-1").status("FAILED").build();
         DdcPublishTaskResult result = DdcPublishTaskResult.builder()
                 .publicId("task-1").changeId("change-1").status("FAILED").build();
-        when(resultConverter.toTargetList(List.of(task))).thenReturn(List.of(result));
-        when(publishTaskQueryService.page(
+        when(publishTaskQueryService.pageResults(
                 any(DdcPublishTaskQueryRequest.class),
                 any(PageQuery.class)
-        )).thenReturn(DdcPageResult.<DdcPublishTaskBO>builder()
-                .records(List.of(task)).total(11).pageNo(1).pageSize(10).build());
+        )).thenReturn(DdcPageResult.<DdcPublishTaskResult>builder()
+                .records(List.of(result)).total(11).pageNo(1).pageSize(10).build());
 
         mockMvc.perform(get("/api/v1/tianshu/publish-tasks/page")
                         .param("bizCode", "infra")
@@ -90,4 +89,19 @@ class DdcPublishTaskControllerTest {
                 .andExpect(jsonPath("$.data.changeId").value("change-1"))
                 .andExpect(jsonPath("$.data.status").value("SUCCESS"));
     }
+    @Test
+    void listAndDetailUseTheSameReadOnlyEvidenceProjection() throws Exception {
+        var projected = DdcPublishTaskResult.builder().publicId("task-current").changeId("change-current")
+                .historyOnly(false).platformState("APPLIED").rolloutState("PENDING")
+                .processState("PUBLISHED_WAITING_FOR_CONSUMERS").desiredRevision("43").build();
+        when(publishTaskQueryService.listResults()).thenReturn(List.of(projected));
+        when(publishTaskQueryService.detailResult("change-current")).thenReturn(java.util.Optional.of(projected));
+        mockMvc.perform(get("/api/v1/tianshu/publish-tasks"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data[0].processState").value("PUBLISHED_WAITING_FOR_CONSUMERS"));
+        mockMvc.perform(get("/api/v1/tianshu/publish-tasks/change-current"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.desiredRevision").value("43"))
+                .andExpect(jsonPath("$.data.platformState").value("APPLIED"));
+        org.mockito.Mockito.verifyNoInteractions(taskRepository, resultConverter, publishService);
+    }
+
 }

@@ -1,5 +1,7 @@
 package top.egon.cola.component.tianshu.admin.service.publish;
 
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
@@ -19,13 +21,15 @@ import top.egon.cola.component.tianshu.model.config.DdcAckStatus;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Objects;
 import java.util.Set;
 
 @Service("ddcPublishStateTransitionService")
+@Slf4j
+@RequiredArgsConstructor(onConstructor_ = @Autowired)
 public class DdcPublishStateTransitionService {
 
     private static final List<String> ACTIVE_STATUSES = List.of(
@@ -47,19 +51,18 @@ public class DdcPublishStateTransitionService {
             PublishStatus.UNKNOWN.name()
     );
 
-    private final DdcPublishTaskRepository taskRepository;
+    @Qualifier("ddcPublishTaskRepository") private final DdcPublishTaskRepository taskRepository;
 
-    private final DdcConfigItemRepository configItemRepository;
+    @Qualifier("ddcConfigItemRepository") private final DdcConfigItemRepository configItemRepository;
 
-    private final DdcPublishAckRepository ackRepository;
+    @Qualifier("ddcPublishAckRepository") private final DdcPublishAckRepository ackRepository;
 
-    private final PublishResourceLockRegistry resourceRegistry;
+    @Qualifier("publishResourceLockRegistry") private final PublishResourceLockRegistry resourceRegistry;
 
-    private final PublishCompletionWaiterRegistry waiterRegistry;
+    @Qualifier("publishCompletionWaiterRegistry") private final PublishCompletionWaiterRegistry waiterRegistry;
 
-    private final Clock clock;
+    @Qualifier("ddcPublishClock") private final Clock clock;
 
-    @Autowired
     public DdcPublishStateTransitionService(
             DdcPublishTaskRepository taskRepository,
             @Qualifier("ddcConfigItemRepository") DdcConfigItemRepository configItemRepository,
@@ -76,21 +79,6 @@ public class DdcPublishStateTransitionService {
         );
     }
 
-    DdcPublishStateTransitionService(
-            DdcPublishTaskRepository taskRepository,
-            DdcConfigItemRepository configItemRepository,
-            DdcPublishAckRepository ackRepository,
-            PublishResourceLockRegistry resourceRegistry,
-            PublishCompletionWaiterRegistry waiterRegistry,
-            Clock clock) {
-        this.taskRepository = taskRepository;
-        this.configItemRepository = configItemRepository;
-        this.ackRepository = ackRepository;
-        this.resourceRegistry = resourceRegistry;
-        this.waiterRegistry = waiterRegistry;
-        this.clock = clock;
-    }
-
     @Transactional
     public DdcPublishTaskBO markPublishing(String changeId) {
         return markPublishing(requiredTask(changeId));
@@ -98,6 +86,7 @@ public class DdcPublishStateTransitionService {
 
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
     public DdcPublishTaskBO markPublishing(DdcPublishTaskBO task) {
+        requireArchivedMode(task);
         LocalDateTime now = now();
         int changed = taskRepository.transitionToPublishing(
                 task,
@@ -131,6 +120,7 @@ public class DdcPublishStateTransitionService {
 
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
     public DdcPublishTaskBO refreshAfterAck(DdcPublishTaskBO task, DdcPublishAckBO acknowledged) {
+        requireArchivedMode(task);
         List<DdcPublishAckBO> targets = new ArrayList<>(ackRepository.findByChangeId(task.getChangeId()));
         if (acknowledged != null) {
             // The replica cannot yet see this transaction's ACK write.
@@ -187,6 +177,7 @@ public class DdcPublishStateTransitionService {
 
     @Transactional
     public DdcPublishTaskBO fail(DdcPublishTaskBO task, String failureStage, String errorMessage) {
+        requireArchivedMode(task);
         transitionToTerminal(task, PublishStatus.FAILED, failureStage, errorMessage);
         return task;
     }
@@ -199,6 +190,7 @@ public class DdcPublishStateTransitionService {
 
     @Transactional
     public DdcPublishTaskBO timeout(DdcPublishTaskBO task, String errorMessage) {
+        requireArchivedMode(task);
         if (!taskRepository.fenceObservedVersion(task)) {
             throw new org.springframework.dao.OptimisticLockingFailureException("publish task changed before timeout");
         }
@@ -249,6 +241,7 @@ public class DdcPublishStateTransitionService {
 
     @Transactional
     public DdcPublishTaskBO markTargetLeaseExpired(DdcPublishTaskBO task, List<String> retryableStatuses) {
+        requireArchivedMode(task);
         LocalDateTime changedAt = now();
         int changed = taskRepository.markRetryLeaseExpired(
                 task,
@@ -326,14 +319,23 @@ public class DdcPublishStateTransitionService {
     }
 
     private DdcPublishTaskBO requiredTask(String changeId) {
-        return taskRepository.findByChangeId(changeId)
+        DdcPublishTaskBO task = taskRepository.findByChangeId(changeId)
                 .orElseThrow(() -> new IllegalStateException(
                         "publish task not found: " + changeId
                 ));
+        requireArchivedMode(task);
+        return task;
+    }
+
+    private void requireArchivedMode(DdcPublishTaskBO task) {
+        if (task.getPlatformEvidence() != null) {
+            log.debug("Ignored legacy state transition for native configuration. changeId={}", task.getChangeId());
+            throw new IllegalArgumentException("TIANSHU_LEGACY_CONFIG_TRANSITION_FORBIDDEN");
+        }
     }
 
     private LocalDateTime now() {
-        return LocalDateTime.ofInstant(clock.instant(), ZoneId.systemDefault());
+        return LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC);
     }
 
     private void signalAfterCommit(String changeId) {

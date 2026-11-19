@@ -1,54 +1,32 @@
 package top.egon.cola.component.tianshu.admin.service.publish;
 
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import top.egon.cola.component.tianshu.admin.common.DdcAdminException;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishTaskBO;
-import top.egon.cola.component.tianshu.admin.model.enums.PublishStatus;
 import top.egon.cola.component.tianshu.admin.repository.DdcPublishTaskRepository;
 
-import java.time.LocalDateTime;
+import java.util.Optional;
 
-@Service
+/** Recovers a committed outcome after an ambiguous local commit; it never invents a task. */
+@Slf4j
+@Service("publishFailureRecorder")
+@RequiredArgsConstructor(onConstructor_ = @Autowired)
 public class PublishFailureRecorder {
+    @Qualifier("ddcPublishTaskRepository") private final DdcPublishTaskRepository tasks;
 
-    private final DdcPublishTaskRepository publishTaskRepository;
+    @Transactional(propagation = Propagation.REQUIRES_NEW, isolation = Isolation.READ_COMMITTED)
+    public Optional<DdcPublishTaskBO> findCommitted(String changeId) { return tasks.findByChangeId(changeId); }
 
-    public PublishFailureRecorder(DdcPublishTaskRepository publishTaskRepository) {
-        this.publishTaskRepository = publishTaskRepository;
-    }
-
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void recordFailure(String changeId, String bizCode, String env, String appCode, String resourceName, String errorMessage) {
-        DdcPublishTaskBO task = publishTaskRepository.findByChangeId(changeId)
-                .orElseGet(() -> newFailedTask(changeId, bizCode, env, appCode, resourceName));
-        task.setStatus(PublishStatus.FAILED.name());
-        task.setErrorMessage(errorMessage);
-        task.setUpdatedAt(LocalDateTime.now());
-        if (task.getId() == null) {
-            publishTaskRepository.insert(task);
-        } else {
-            publishTaskRepository.update(task);
-        }
-    }
-
-    private DdcPublishTaskBO newFailedTask(String changeId, String bizCode, String env, String appCode, String resourceName) {
-        LocalDateTime now = LocalDateTime.now();
-        DdcPublishTaskBO task = new DdcPublishTaskBO();
-        task.setChangeId(changeId);
-        task.setBizCode(bizCode);
-        task.setAppCode(appCode);
-        task.setEnv(env);
-        task.setNamespace(null);
-        task.setResourceName(resourceName);
-        task.setStatus(PublishStatus.FAILED.name());
-        task.setTargetCount(0);
-        task.setAckCount(0);
-        task.setFailedCount(0);
-        task.setIgnoredCount(0);
-        task.setTimeoutCount(0);
-        task.setCreatedAt(now);
-        task.setUpdatedAt(now);
-        return task;
+    /** Legacy preparation errors cannot overwrite committed native or historical business outcomes. */
+    public void recordFailure(String changeId, String bizCode, String env, String appCode,
+            String resourceName, String errorMessage) {
+        throw new DdcAdminException("TIANSHU_LEGACY_PREPARATION_FAILURE_WRITE_RETIRED");
     }
 }

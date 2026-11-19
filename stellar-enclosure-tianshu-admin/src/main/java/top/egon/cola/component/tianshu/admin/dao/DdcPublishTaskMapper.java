@@ -1,5 +1,6 @@
 package top.egon.cola.component.tianshu.admin.dao;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import org.apache.ibatis.annotations.Mapper;
@@ -47,6 +48,14 @@ public interface DdcPublishTaskMapper extends EgonColaMapper<DdcPublishTaskPO> {
     List<DdcPublishTaskPO> selectActiveByIds(@Param("tenantId") Long tenantId, @Param("ids") List<Long> ids);
     DdcPublishTaskPO selectByChangeId(@Param("tenantId") Long tenantId, @Param("changeId") String changeId);
     DdcPublishTaskPO selectForUpdateByChangeId(@Param("tenantId") Long tenantId, @Param("changeId") String changeId);
+    int updateNativeEvidence(@Param("tenantId") @NotNull @Positive Long tenantId,
+            @Param("task") @NotNull DdcPublishTaskBO task, @Param("evidence") @NotNull JsonNode evidence,
+            @Param("nativeStatus") @NotNull String nativeStatus, @Param("failureStage") String failureStage,
+            @Param("changedAt") @NotNull LocalDateTime changedAt, @Param("actor") String actor, @Param("now") Instant now);
+
+    int resetNativeForRetry(@Param("tenantId") @NotNull @Positive Long tenantId,
+            @Param("task") @NotNull DdcPublishTaskBO task, @Param("operator") String operator,
+            @Param("changedAt") @NotNull LocalDateTime changedAt, @Param("actor") String actor, @Param("now") Instant now);
     int fenceObservedVersion(@Param("tenantId") Long tenantId, @Param("id") Long id,
             @Param("expectedVersion") Long expectedVersion, @Param("actor") String actor, @Param("now") Instant now);
     int fenceDispatchTargets(@Param("tenantId") Long tenantId, @Param("task") DdcPublishTaskBO task,

@@ -66,7 +66,7 @@ public class DdcPublishTaskController {
     @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping
     public ResultRecord<List<DdcPublishTaskResult>> list() {
-        return ResultRecord.success(resultConverter.toTargetList(publishTaskRepository.findAll()));
+        return ResultRecord.success(publishTaskQueryService.listResults());
     }
 
     @Operation(operationId = "tianshu.ddcPublishTaskController.page")
@@ -79,8 +79,8 @@ public class DdcPublishTaskController {
             DdcPublishTaskQueryRequest request,
             PageQuery pageQuery
     ) {
-        DdcPageResult<DdcPublishTaskBO> page = publishTaskQueryService.page(request, pageQuery);
-        return PageResultRecord.success(resultConverter.toTargetList(page.getRecords()), page.getTotal(),
+        DdcPageResult<DdcPublishTaskResult> page = publishTaskQueryService.pageResults(request, pageQuery);
+        return PageResultRecord.success(page.getRecords(), page.getTotal(),
                 page.getPageNo(), page.getPageSize());
     }
 
@@ -91,8 +91,7 @@ public class DdcPublishTaskController {
     @RequiresPermissions(codes = DdcPermissionCodes.READ)
     @GetMapping("/{changeId}")
     public ResultRecord<DdcPublishTaskResult> detail(@PathVariable("changeId") String changeId) {
-        return ResultRecord.success(publishTaskRepository.findByChangeId(changeId)
-                .map(resultConverter::toTarget).orElse(null));
+        return ResultRecord.success(publishTaskQueryService.detailResult(changeId).orElse(null));
     }
 
     @Operation(operationId = "tianshu.ddcPublishTaskController.retry")

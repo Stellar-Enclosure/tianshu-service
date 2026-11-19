@@ -1,6 +1,7 @@
 package top.egon.cola.component.tianshu.admin.service.config;
 
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
@@ -33,6 +34,12 @@ import java.time.LocalDateTime;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
+import java.util.Map;
+import top.egon.cola.component.tianshu.admin.service.publish.DdcConfigManifestFactory;
+import top.egon.cola.component.tianshu.admin.security.tenancy.*;
+import top.egon.cola.component.tianshu.model.config.DdcConfigBaselineVO;
+import top.egon.cola.component.tianshu.model.config.DdcConfigScopeVO;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -58,9 +65,17 @@ class DdcConfigServiceTest {
     private DdcNamespaceEnvAppBindingRepository bindingRepository;
     private DdcPublishTaskRepository publishTaskRepository;
     private DdcConfigService service;
+    private final DdcConfigManifestFactory manifests = new DdcConfigManifestFactory(new ObjectMapper());
+    private static final DdcTenantContextDTO TENANT = new DdcTenantContextDTO(401L,"registered","user:test");
+    private static final DdcConfigBaselineVO.TargetBindingVO TARGET = new DdcConfigBaselineVO.TargetBindingVO(
+            "binding-a","7","cluster-test","reader-apps","Deployment","reader","deployment-uid","application");
+    private final DdcConfigManifestFactory.PublicationPolicyResolver policies = (tenant,scope) ->
+            new DdcConfigManifestFactory.PublicationPolicyVO(scope,List.of(),List.of(TARGET),null,Map.of(),Map.of());
+    private DdcTenantContextExecutor.Scope tenantScope;
 
     @BeforeEach
     void setUp() {
+        tenantScope = new DdcTenantContextExecutor().bind(TENANT);
         itemRepository = mock(DdcConfigItemRepository.class);
         versionRepository = mock(DdcConfigVersionRepository.class);
         operationLogRepository = mock(DdcOperationLogRepository.class);
@@ -68,9 +83,11 @@ class DdcConfigServiceTest {
         publishTaskRepository = mock(DdcPublishTaskRepository.class);
         ObjectProvider<DdcAdminProperties> properties =
                 new DefaultListableBeanFactory().getBeanProvider(DdcAdminProperties.class);
+        var tenants = mock(DdcTenantRegistry.class);
+        when(tenants.requireEnabledTenant(401L)).thenReturn(new DdcTenantBindingDTO(401L,"registered",true));
         service = new DdcConfigService(itemRepository, versionRepository, new DdcConfigItemConverterImpl(),
                 new DdcConfigVersionConverterImpl(), operationLogRepository, bindingRepository,
-                publishTaskRepository, properties);
+                publishTaskRepository, new DdcYamlConfigValidator(1_048_576), manifests, policies, tenants);
         when(itemRepository.insert(any(DdcConfigItemBO.class))).thenAnswer(invocation -> {
             DdcConfigItemBO item = invocation.getArgument(0);
             item.setId(101L).setTenantId(401L).setPublicId("config-public-1").setVersion(0L);
@@ -78,6 +95,18 @@ class DdcConfigServiceTest {
         });
         when(itemRepository.update(any(DdcConfigItemBO.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(versionRepository.insert(any(DdcConfigVersionBO.class))).thenAnswer(invocation -> invocation.getArgument(0));
+    }
+
+    @AfterEach void restoreTenant() { tenantScope.close(); }
+
+    @Test
+    void legacyConstructorCannotPersistAnEditBeforeDiscoveringMissingTrustedNativeAuthority() {
+        var legacy = new DdcConfigService(itemRepository,versionRepository,new DdcConfigItemConverterImpl(),
+                new DdcConfigVersionConverterImpl(),operationLogRepository,bindingRepository,publishTaskRepository,
+                new DefaultListableBeanFactory().getBeanProvider(DdcAdminProperties.class));
+        assertThatThrownBy(() -> legacy.create(configRequest("infra","prod","gateway"),"test"))
+                .hasMessage("TIANSHU_TRUSTED_TENANT_REQUIRED");
+        verifyNoInteractions(itemRepository,versionRepository,operationLogRepository);
     }
 
     @Test
@@ -93,6 +122,8 @@ class DdcConfigServiceTest {
         assertThat(version.getValue().getConfigId()).isEqualTo("config-public-1");
         assertThat(version.getValue().getConfigRevision()).isEqualTo(1L);
         assertThat(version.getValue().getChangeType()).isEqualTo(ChangeType.CREATE.name());
+        assertThat(manifests.materialize(version.getValue(), new DdcConfigScopeVO("401","infra","prod","gateway","application.yml"))
+                .baseline().getSource().getConfigId()).isEqualTo("101");
         var operation = org.mockito.ArgumentCaptor.forClass(DdcOperationLogBO.class);
         verify(operationLogRepository).insert(operation.capture());
         assertThat(operation.getValue().getBizCode()).isEqualTo("infra");
@@ -131,7 +162,7 @@ class DdcConfigServiceTest {
 
     @Test
     void businessDeleteAndRollbackLeaveTechnicalDeletedAtUntouched() {
-        DdcConfigItemBO deletedItem = item(101L, "config-public-1", 2L, 1L, false, "current");
+        DdcConfigItemBO deletedItem = item(101L, "config-public-1", 2L, 1L, false, "feature: {enabled: true}\n");
         when(itemRepository.findByPublicId("config-public-1")).thenReturn(Optional.of(deletedItem));
         DdcConfigVO deleted = service.delete("config-public-1", "tester", "remove");
         assertThat(deleted.getDeleted()).isTrue();
@@ -141,6 +172,11 @@ class DdcConfigServiceTest {
 
         DdcConfigVersionBO target = version(101L, "config-public-1", 1L, "feature:\n  enabled: false\n",
                 ChangeType.CREATE.name());
+        target.setTenantId(401L).setBizCode("infra").setEnv("prod").setAppCode("gateway");
+        var scope = new DdcConfigScopeVO("401","infra","prod","gateway","application.yml");
+        var historical = new DdcConfigManifestFactory.PublicationPolicyVO(scope,List.of(),List.of(TARGET),null,
+                Map.of("driver","old-fixed-version"),Map.of("database",new DdcConfigBaselineVO.SecretReferenceVO("db-access","7")));
+        target.setManifestJson(manifests.freeze(TENANT,deletedItem,1L,target.getNewContent(),true,historical).manifest());
         when(versionRepository.findByConfigIdAndVersion("config-public-1", 1L)).thenReturn(Optional.of(target));
         DdcConfigVO restored = service.rollback(new DdcConfigRollbackRequest("config-public-1", 1L, "restore"),
                 "tester");
@@ -149,6 +185,25 @@ class DdcConfigServiceTest {
         assertThat(restored.getContent()).isEqualTo("feature:\n  enabled: false\n");
         assertThat(deletedItem.getDeletedAt()).isNull();
         assertThat(deletedItem.getCurrentVersion()).isEqualTo(4L);
+        var written=org.mockito.ArgumentCaptor.forClass(DdcConfigVersionBO.class);
+        verify(versionRepository,org.mockito.Mockito.times(2)).insert(written.capture());
+        var disabled=written.getAllValues().getFirst();
+        assertThat(disabled.getNewContent()).isEqualTo("feature: {enabled: true}\n");
+        assertThat(disabled.getManifestJson().path("enabled").booleanValue()).isFalse();
+        var restoredFixed=manifests.materialize(written.getAllValues().getLast(),scope).baseline();
+        assertThat(restoredFixed.getStartupDependencies()).containsEntry("driver","old-fixed-version");
+        assertThat(restoredFixed.getSecretReferences().get("database").getVersion()).isEqualTo("7");
+    }
+
+    @Test void legacyUnmanifestedRollbackIsReadOnlyAndCannotCreateANativeVersion() {
+        var current=item(101L,"config-public-1",2L,1L,false,"feature: {enabled: true}\n");
+        when(itemRepository.findByPublicId("config-public-1")).thenReturn(Optional.of(current));
+        when(versionRepository.findByConfigIdAndVersion("config-public-1",1L))
+                .thenReturn(Optional.of(version(101L,"config-public-1",1L,"feature: {enabled: false}\n","CREATE")));
+        assertThatThrownBy(() -> service.rollback(new DdcConfigRollbackRequest("config-public-1",1L,"restore"),"test"))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(itemRepository,never()).update(any());
+        verify(versionRepository,never()).insert(any());
     }
 
     @Test
