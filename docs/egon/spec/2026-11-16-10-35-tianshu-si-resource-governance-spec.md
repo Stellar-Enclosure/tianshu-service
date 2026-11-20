@@ -10,7 +10,7 @@
 | Complexity | `Complex` |
 | Complexity Drivers | 跨四仓八模块（tianshu-service、tianshu-web、rpc-tianshu-adapter、component-agent-flow-starter、tianji-service）全链路端到端设计与契约对齐；多租户与多Env目录隔离；事务性Outbox与Redis目录游标一致性；原子Agent依赖拓扑无环及不可变版本固定；PostgreSQL原生FTS/JSONB GIN与rag-starter/pgvector RRF混合语义检索；前端RBAC3权限与双语目录全覆盖 |
 | Created | `2026-11-16 10:35 -04:00` |
-| Updated | `2026-11-16 10:55 -04:00` |
+| Updated | `2026-11-18 07:53 America/Puerto_Rico` |
 | Owner | `mario` |
 | Repository | `tianshu-service（协同 tianshu-web、Stellar-Enclosure-Components、tianji-service）` |
 | Scope | `stellar-enclosure-tianshu-starter`、`stellar-enclosure-tianshu-ai-starter`、`stellar-enclosure-tianshu-admin`、`tianshu-web`、`stellar-enclosure-component-rpc-tianshu-adapter`、`stellar-enclosure-component-agent-flow-starter`、`stellar-enclosure-tianji-process-server`、`stellar-enclosure-tianji-agent-runtime` |
@@ -21,7 +21,7 @@
 | Amends | `None` |
 | Supersedes | `None` |
 | Depends On | `None` |
-| Related Specs | `None` |
+| Related Specs | [云原生平台评审稿](../../../../docs/egon/spec/2026-11-18-07-18-cilium-mesh-gateway-oauth-platform.md) §7.3 提议修订本稿 §2.2 EVD-007、§3.2(1)、§7 的 MCP 管理与运行归属 |
 | Related Plans | [2026-11-16-11-24-tianshu-si-resource-governance-implementation.md](../plan/2026-11-16-11-24-tianshu-si-resource-governance-implementation.md) |
 
 ## 1. Summary
