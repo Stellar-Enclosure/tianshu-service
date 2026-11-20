@@ -14,6 +14,7 @@ import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextEx
 
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -33,12 +34,20 @@ public class DdcServiceObservationExporter implements SmartLifecycle, AutoClosea
     @NonNull private final List<DdcServiceObservationBindingVO> bindings;
     @NonNull private final Clock clock;
     @NonNull private final Duration interval;
+    @NonNull private final Runnable writeAuthority;
     private final List<Assignment> assignments = new ArrayList<>();
     private volatile boolean running;
+    private volatile Instant readyUntil = Instant.MIN;
     private boolean started;
     private boolean closed;
     private boolean fenced;
     private ScheduledExecutorService worker;
+
+    public DdcServiceObservationExporter(DdcKubernetesObservationService observer,
+            DdcServiceObservationRepository repository, DdcTenantContextExecutor tenants,
+            List<DdcServiceObservationBindingVO> bindings, Clock clock, Duration interval) {
+        this(observer, repository, tenants, bindings, clock, interval, () -> { });
+    }
 
     @Override public synchronized void start() {
         if (running || bindings.isEmpty()) return;
@@ -51,8 +60,10 @@ public class DdcServiceObservationExporter implements SmartLifecycle, AutoClosea
         Map<Long, Long> epochs = new HashMap<>();
         for (Assignment assignment : assignments) {
             var tenant = assignment.tenant;
-            assignment.epoch = epochs.computeIfAbsent(tenant.tenantId(),
-                    ignored -> tenants.call(tenant, () -> repository.nextWriterEpoch(tenant)));
+            assignment.epoch = epochs.computeIfAbsent(tenant.tenantId(), ignored -> tenants.call(tenant, () -> {
+                writeAuthority.run();
+                return repository.nextWriterEpoch(tenant);
+            }));
             if (assignment.epoch <= 0) throw new IllegalStateException("TIANSHU_SERVICE_OBSERVATION_EPOCH_UNAVAILABLE");
             publish(assignment, unknown(StatusEnum.INITIALIZING, "INITIALIZING"));
         }
@@ -65,6 +76,7 @@ public class DdcServiceObservationExporter implements SmartLifecycle, AutoClosea
     /** Explicit worker entry using the same path as the scheduled export. */
     public synchronized void exportOnce() {
         if (!running) return;
+        Instant freshUntil = Instant.MAX;
         for (Assignment assignment : assignments) {
             DdcServiceObservationViewVO observation;
             try {
@@ -73,12 +85,22 @@ public class DdcServiceObservationExporter implements SmartLifecycle, AutoClosea
                 observation = unknown(StatusEnum.UNAVAILABLE, "SOURCE_UNAVAILABLE");
             }
             try {
-                publish(assignment, observation);
+                AcceptanceEnum acceptance = publish(assignment, observation);
+                Instant validUntil = observation.validUntil();
+                if (!observation.fresh() || validUntil == null
+                        || (acceptance != AcceptanceEnum.ADVANCED && acceptance != AcceptanceEnum.SAME)) {
+                    freshUntil = Instant.MIN;
+                } else if (validUntil.isBefore(freshUntil)) {
+                    freshUntil = validUntil;
+                }
             } catch (RuntimeException failure) {
+                readyUntil = Instant.MIN;
+                freshUntil = Instant.MIN;
                 if (fenced) throw failure;
                 log.warn("Service observation export failed; failureType={}", failure.getClass().getSimpleName());
             }
         }
+        readyUntil = freshUntil;
     }
 
     private void tick() {
@@ -89,19 +111,22 @@ public class DdcServiceObservationExporter implements SmartLifecycle, AutoClosea
         }
     }
 
-    private void publish(Assignment assignment, DdcServiceObservationViewVO view) {
+    private AcceptanceEnum publish(Assignment assignment, DdcServiceObservationViewVO view) {
         long sequence = Math.incrementExact(assignment.sequence);
         assignment.sequence = sequence;
         var tenant = assignment.tenant;
         var capturedAt = clock.instant();
-        AcceptanceEnum acceptance = tenants.call(tenant, () -> repository.upsert(tenant, assignment.binding,
-                assignment.epoch, sequence, capturedAt, view));
+        AcceptanceEnum acceptance = tenants.call(tenant, () -> {
+            writeAuthority.run();
+            return repository.upsert(tenant, assignment.binding, assignment.epoch, sequence, capturedAt, view);
+        });
         if (acceptance == AcceptanceEnum.CONFLICT) {
             fenced = true;
             running = false;
             if (worker != null) worker.shutdown();
             throw new IllegalStateException(WRITER_FENCED);
         }
+        return acceptance;
     }
 
     private static DdcServiceObservationViewVO unknown(StatusEnum status, String reason) {
@@ -125,6 +150,10 @@ public class DdcServiceObservationExporter implements SmartLifecycle, AutoClosea
     }
 
     @Override public boolean isRunning() { return running; }
+
+    public boolean isReady() {
+        return bindings.isEmpty() || (running && clock.instant().isBefore(readyUntil));
+    }
     @Override public void close() { stop(); }
 
     private static final class Assignment {

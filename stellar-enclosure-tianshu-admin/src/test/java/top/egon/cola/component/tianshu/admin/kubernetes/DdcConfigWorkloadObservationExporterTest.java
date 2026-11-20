@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -112,6 +113,51 @@ class DdcConfigWorkloadObservationExporterTest {
         exporter.close();
         verify(repository, times(1)).nextWriterEpoch(TENANT);
         verify(repository, times(1)).upsert(any(), any(), anyLong(), anyLong(), any(), any());
+    }
+
+    @Test
+    void unavailableAuthorityBlocksTheWriterEpochAndStartupInvalidation() {
+        var repository = mock(DdcConfigWorkloadObservationRepository.class);
+        var observer = mock(DdcKubernetesObservationService.class);
+        try (var exporter = managedExporter(observer, repository, new AtomicBoolean(false))) {
+            assertThatThrownBy(exporter::start).hasMessage("lease unavailable");
+            assertThat(exporter.isHealthy()).isFalse();
+        }
+        verifyNoInteractions(repository);
+    }
+
+    @Test
+    void lostAuthorityStopsPeriodicAndShutdownWrites() throws Exception {
+        var observer = mock(DdcKubernetesObservationService.class);
+        var repository = mock(DdcConfigWorkloadObservationRepository.class);
+        var lease = new AtomicBoolean(true);
+        var initialExport = new CountDownLatch(1);
+        when(observer.currentView(TARGET)).thenReturn(view(StatusEnum.FRESH));
+        when(repository.nextWriterEpoch(TENANT)).thenReturn(30L);
+        when(repository.upsert(any(), any(), anyLong(), anyLong(), any(), any())).thenAnswer(invocation -> {
+            WorkloadViewVO observation = invocation.getArgument(5);
+            if (observation.fresh()) initialExport.countDown();
+            return AcceptanceEnum.ADVANCED;
+        });
+        try (var exporter = managedExporter(observer, repository, lease)) {
+            exporter.start();
+            assertThat(initialExport.await(3, TimeUnit.SECONDS)).isTrue();
+            lease.set(false);
+            clearInvocations(repository);
+            assertThatThrownBy(exporter::exportOnce).hasMessage("lease unavailable");
+            assertThat(exporter.isHealthy()).isFalse();
+        }
+        verifyNoInteractions(repository);
+    }
+
+    private static DdcConfigWorkloadObservationExporter managedExporter(
+            DdcKubernetesObservationService observer, DdcConfigWorkloadObservationRepository repository,
+            AtomicBoolean lease) {
+        return new DdcConfigWorkloadObservationExporter(observer, repository, new DdcTenantContextExecutor(),
+                () -> List.of(new DdcConfigWorkloadObservationExporter.BindingVO(TENANT, TARGET)),
+                Clock.fixed(NOW, ZoneOffset.UTC), Duration.ofSeconds(30), () -> {
+                    if (!lease.get()) throw new IllegalStateException("lease unavailable");
+                });
     }
 
     private static WorkloadViewVO view(StatusEnum status) {

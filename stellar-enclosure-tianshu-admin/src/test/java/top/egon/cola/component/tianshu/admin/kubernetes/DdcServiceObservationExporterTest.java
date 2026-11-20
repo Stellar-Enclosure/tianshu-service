@@ -17,11 +17,13 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -66,9 +68,12 @@ class DdcServiceObservationExporterTest {
         try (var exporter = exporter(bindings)) {
             exporter.start();
             exporter.start();
+            assertThat(exporter.isReady()).isFalse();
             exporter.exportOnce();
+            assertThat(exporter.isReady()).isTrue();
             when(observer.currentServiceView(SERVICE)).thenThrow(new IllegalStateException());
             exporter.exportOnce();
+            assertThat(exporter.isReady()).isFalse();
         }
         assertThat(MDC.get("tenantId")).isEqualTo("9999");
         verify(repository, times(2)).nextWriterEpoch(any());
@@ -101,8 +106,61 @@ class DdcServiceObservationExporterTest {
             exporter.start();
             exporter.exportOnce();
             assertThat(exporter.isRunning()).isFalse();
+            assertThat(exporter.isReady()).isTrue();
         }
         verifyNoInteractions(repository, observer);
+    }
+
+    @Test
+    void unavailableAuthorityBlocksTheWriterEpochAndStartupInvalidation() {
+        try (var exporter = managedExporter(new AtomicBoolean(false))) {
+            assertThatThrownBy(exporter::start).hasMessage("lease unavailable");
+        }
+        verifyNoInteractions(repository);
+    }
+
+    @Test
+    void lostAuthorityStopsPeriodicAndShutdownWrites() {
+        var lease = new AtomicBoolean(true);
+        when(repository.nextWriterEpoch(any())).thenReturn(10L);
+        when(repository.upsert(any(), any(), anyLong(), anyLong(), any(), any())).thenReturn(AcceptanceEnum.ADVANCED);
+        when(observer.currentServiceView(SERVICE)).thenReturn(new DdcServiceObservationViewVO(
+                StatusEnum.FRESH, null, NOW.minusSeconds(1), NOW.plusSeconds(5), "rv-1", List.of()));
+        try (var exporter = managedExporter(lease)) {
+            exporter.start();
+            exporter.exportOnce();
+            verify(repository, times(2)).upsert(any(), any(), anyLong(), anyLong(), any(), any());
+            lease.set(false);
+            clearInvocations(repository);
+            exporter.exportOnce();
+            assertThat(exporter.isReady()).isFalse();
+        }
+        verifyNoInteractions(repository);
+    }
+
+    @Test
+    void readinessExpiresWithTheLastPersistedFreshObservation() {
+        var clock = mock(Clock.class);
+        when(clock.instant()).thenReturn(NOW);
+        when(repository.nextWriterEpoch(any())).thenReturn(10L);
+        when(repository.upsert(any(), any(), anyLong(), anyLong(), any(), any())).thenReturn(AcceptanceEnum.ADVANCED);
+        when(observer.currentServiceView(SERVICE)).thenReturn(new DdcServiceObservationViewVO(
+                StatusEnum.FRESH, null, NOW.minusSeconds(1), NOW.plusSeconds(5), "rv-1", List.of()));
+        try (var exporter = new DdcServiceObservationExporter(observer, repository, new DdcTenantContextExecutor(),
+                List.of(SERVICE), clock, Duration.ofSeconds(30))) {
+            exporter.start();
+            exporter.exportOnce();
+            assertThat(exporter.isReady()).isTrue();
+            when(clock.instant()).thenReturn(NOW.plusSeconds(5));
+            assertThat(exporter.isReady()).isFalse();
+        }
+    }
+
+    private DdcServiceObservationExporter managedExporter(AtomicBoolean lease) {
+        return new DdcServiceObservationExporter(observer, repository, new DdcTenantContextExecutor(),
+                List.of(SERVICE), Clock.fixed(NOW, ZoneOffset.UTC), Duration.ofSeconds(30), () -> {
+                    if (!lease.get()) throw new IllegalStateException("lease unavailable");
+                });
     }
 
     private DdcServiceObservationExporter exporter(List<DdcServiceObservationBindingVO> bindings) {

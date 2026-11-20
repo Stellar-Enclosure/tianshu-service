@@ -14,6 +14,8 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
 import org.springframework.boot.autoconfigure.aop.AopAutoConfiguration;
+import org.springframework.boot.autoconfigure.availability.ApplicationAvailabilityAutoConfiguration;
+import org.springframework.boot.availability.ApplicationAvailability;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.context.properties.bind.Bindable;
@@ -34,13 +36,16 @@ import org.springframework.core.env.MapPropertySource;
 import org.springframework.core.env.Profiles;
 import org.springframework.transaction.support.TransactionTemplate;
 import top.egon.cola.component.common.id.autoconfigure.IdGeneratorAutoConfiguration;
+import top.egon.cola.component.common.id.probe.WorkerProcessProbe;
 import top.egon.cola.component.common.mybatis.autoconfigure.EgonColaMybatisPlusAutoConfiguration;
 import top.egon.cola.component.common.mybatis.autoconfigure.EgonColaShardingAutoConfiguration;
 import top.egon.cola.component.common.mybatis.sharding.EgonColaShardingProperties;
 import top.egon.cola.component.outbox.autoconfigure.OutboxMybatisPlusAutoConfiguration;
 import top.egon.cola.component.outbox.autoconfigure.OutboxStateMachineAutoConfiguration;
 import top.egon.cola.component.outbox.autoconfigure.TransactionalOutboxAutoConfiguration;
+import top.egon.cola.component.outbox.autoconfigure.TransactionalOutboxProperties;
 import top.egon.cola.component.outbox.dispatch.OutboxDispatcher;
+import top.egon.cola.component.outbox.dispatch.OutboxPoller;
 import top.egon.cola.component.outbox.event.OutboxCommittedEvent;
 import top.egon.cola.component.outbox.event.OutboxCommittedEventListener;
 import top.egon.cola.component.tianshu.admin.config.DdcConfigPublicationPolicyConfiguration.RegisteredPolicies;
@@ -105,6 +110,8 @@ public final class DdcConfigWorkerApplicationConfiguration {
     private static final String WORKER = ADMIN + "config-worker";
     private static final String OUTBOX = "egon.cola.component.transactional-outbox.";
     private static final String ID = "egon.cola.component.id.";
+    private static final String ID_REDIS = ID + "redis";
+    private static final String MANAGED_ID_LEASE_REQUIRED = ID_REDIS + ".require-lease";
     private DdcConfigWorkerApplicationConfiguration() { }
 
     public static SpringApplication application(String role) {
@@ -153,6 +160,18 @@ public final class DdcConfigWorkerApplicationConfiguration {
     @Import({PersistenceApplication.class, DdcConfigItemRepositoryImpl.class, DdcConfigVersionRepositoryImpl.class,
             DdcPublishTaskRepositoryImpl.class, DdcConfigDispatchDeliveryHandler.class})
     public static class PublisherApplication {
+        @Bean("stellarWorkerProbe")
+        @ConditionalOnProperty(name = WorkerProcessProbe.ENABLED_PROPERTY, havingValue = "true")
+        WorkerProcessProbe workerProbe(@Qualifier("applicationAvailability") ApplicationAvailability availability,
+                @Qualifier("top.egon.cola.component.common.id.autoconfigure.IdGeneratorAutoConfiguration")
+                IdGeneratorAutoConfiguration idAuthority, @Qualifier("outboxPoller") OutboxPoller poller,
+                @Qualifier("outboxStateMachineOutboxProperties") TransactionalOutboxProperties outbox) {
+            if (!outbox.getPolling().isEnabled()) {
+                throw invalid("PUBLISHER_POLLING_REQUIRED");
+            }
+            return new WorkerProcessProbe(availability, idAuthority::assertRedisLeaseAvailable, poller::isRunning);
+        }
+
         @Bean("ddcConfigWorkerSettings") WorkerSettings settings(Environment environment,
                 @Qualifier("ddcConfigPublicationPolicies") RegisteredPolicies policies) {
             return settingsFor("config-publisher", environment, policies);
@@ -197,6 +216,20 @@ public final class DdcConfigWorkerApplicationConfiguration {
     @Import({PersistenceApplication.class, DdcConfigWorkloadObservationRepositoryImpl.class,
             DdcServiceObservationRepositoryImpl.class, DdcServiceObservationBindings.class})
     public static class ObserverApplication {
+        @Bean("stellarWorkerProbe")
+        @ConditionalOnProperty(name = WorkerProcessProbe.ENABLED_PROPERTY, havingValue = "true")
+        WorkerProcessProbe workerProbe(@Qualifier("applicationAvailability") ApplicationAvailability availability,
+                @Qualifier("top.egon.cola.component.common.id.autoconfigure.IdGeneratorAutoConfiguration")
+                IdGeneratorAutoConfiguration idAuthority,
+                @Qualifier("ddcKubernetesObservationService") DdcKubernetesObservationService observer,
+                @Qualifier("ddcConfigWorkloadObservationBindings") BindingResolver bindings,
+                @Qualifier("ddcConfigWorkloadObservationExporter") DdcConfigWorkloadObservationExporter workloads,
+                @Qualifier("ddcServiceObservationExporter") DdcServiceObservationExporter services) {
+            boolean observesWorkloads = !bindings.bindings().isEmpty();
+            return new WorkerProcessProbe(availability, idAuthority::assertRedisLeaseAvailable,
+                    () -> observer.isRunning() && (!observesWorkloads || workloads.isHealthy()) && services.isReady());
+        }
+
         @Bean("ddcConfigWorkerSettings") WorkerSettings settings(Environment environment,
                 @Qualifier("ddcConfigPublicationPolicies") RegisteredPolicies policies,
                 @Qualifier("ddcServiceObservationBindings") DdcServiceObservationBindings serviceBindings) {
@@ -226,13 +259,23 @@ public final class DdcConfigWorkerApplicationConfiguration {
             return new DdcServiceObservationConverterImpl();
         }
         @Bean("ddcConfigWorkloadObservationExportInterval") Duration exportInterval(Environment environment) { return duration(environment, ADMIN + "config-observer.export-interval", Duration.ofSeconds(2)); }
+        @Bean("ddcObserverIdLeaseCheck")
+        Runnable idLeaseCheck(Environment environment,
+                @Qualifier("top.egon.cola.component.common.id.autoconfigure.IdGeneratorAutoConfiguration")
+                ObjectProvider<IdGeneratorAutoConfiguration> idAuthority) {
+            if (managedIdLeaseRequired(environment)) {
+                return () -> idAuthority.getObject().assertRedisLeaseAvailable();
+            }
+            return () -> { };
+        }
         @Bean(name = "ddcConfigWorkloadObservationExporter", destroyMethod = "close")
         DdcConfigWorkloadObservationExporter exporter(@Qualifier("ddcKubernetesObservationService") DdcKubernetesObservationService observer,
                 @Qualifier("ddcConfigWorkloadObservationRepository") top.egon.cola.component.tianshu.admin.repository.DdcConfigWorkloadObservationRepository repository,
                 @Qualifier("ddcTenantContextExecutor") DdcTenantContextExecutor tenants,
                 @Qualifier("ddcConfigWorkloadObservationBindings") BindingResolver bindings,
-                @Qualifier("ddcPublishClock") Clock clock, @Qualifier("ddcConfigWorkloadObservationExportInterval") Duration interval) {
-            return new DdcConfigWorkloadObservationExporter(observer, repository, tenants, bindings, clock, interval);
+                @Qualifier("ddcPublishClock") Clock clock, @Qualifier("ddcConfigWorkloadObservationExportInterval") Duration interval,
+                @Qualifier("ddcObserverIdLeaseCheck") Runnable writeAuthority) {
+            return new DdcConfigWorkloadObservationExporter(observer, repository, tenants, bindings, clock, interval, writeAuthority);
         }
         @Bean("ddcConfigWorkloadObservationBindings") BindingResolver observationBindings(
                 @Qualifier("ddcConfigPublicationPolicies") RegisteredPolicies policies,
@@ -252,10 +295,11 @@ public final class DdcConfigWorkerApplicationConfiguration {
                 @Qualifier("ddcConfigWorkerSettings") WorkerSettings settings,
                 @Qualifier("ddcServiceObservationBindings") DdcServiceObservationBindings serviceBindings,
                 @Qualifier("ddcPublishClock") Clock clock,
-                @Qualifier("ddcConfigWorkloadObservationExportInterval") Duration interval) {
+                @Qualifier("ddcConfigWorkloadObservationExportInterval") Duration interval,
+                @Qualifier("ddcObserverIdLeaseCheck") Runnable writeAuthority) {
             var localBindings = serviceBindings.bindings().stream()
                     .filter(binding -> settings.clusterId().equals(binding.clusterId())).toList();
-            return new DdcServiceObservationExporter(observer, repository, tenants, localBindings, clock, interval);
+            return new DdcServiceObservationExporter(observer, repository, tenants, localBindings, clock, interval, writeAuthority);
         }
         /** Observer validates the real Outbox metadata but cannot claim a committed message. */
         @Bean("outboxCommittedEventListener") OutboxCommittedEventListener noDelivery(OutboxDispatcher dispatcher) {
@@ -266,6 +310,7 @@ public final class DdcConfigWorkerApplicationConfiguration {
     }
 
     @ImportAutoConfiguration({Jackson2AutoConfiguration.class, ValidationAutoConfiguration.class, AopAutoConfiguration.class,
+            ApplicationAvailabilityAutoConfiguration.class,
             IdGeneratorAutoConfiguration.class, EgonColaMybatisPlusAutoConfiguration.class, EgonColaShardingAutoConfiguration.class,
             MybatisPlusInnerInterceptorAutoConfiguration.class, MybatisPlusAutoConfiguration.class,
             DataSourceTransactionManagerAutoConfiguration.class, TransactionAutoConfiguration.class,
@@ -290,10 +335,19 @@ public final class DdcConfigWorkerApplicationConfiguration {
         @Bean("ddcConfigWorkerIdReadiness") SmartInitializingSingleton idReady(Environment environment,
                 @Qualifier("ddcConfigWorkerSettings") WorkerSettings settings,
                 ObjectProvider<IdGeneratorAutoConfiguration> generators) {
-            return () -> { validateIdentityMode(environment, settings); generators.getObject().assertIssuanceAvailable(); };
+            return () -> {
+                validateIdentityMode(environment, settings);
+                IdGeneratorAutoConfiguration generator = generators.getObject();
+                if (managedIdLeaseRequired(environment)) {
+                    generator.assertRedisLeaseAvailable();
+                } else {
+                    generator.assertIssuanceAvailable();
+                }
+            };
         }
         @Bean(name = "redissonClient", destroyMethod = "shutdown")
         @ConditionalOnProperty(prefix = WORKER, name = "test-static-machine-id-enabled", havingValue = "false", matchIfMissing = true)
+        @ConditionalOnProperty(prefix = ID_REDIS, name = "require-lease", havingValue = "false", matchIfMissing = true)
         RedissonClient identityRedis(Environment environment, @Qualifier("ddcConfigWorkerSettings") WorkerSettings settings) {
             validateIdentityMode(environment, settings);
             String prefix = WORKER + ".id-redis.";
@@ -345,6 +399,10 @@ public final class DdcConfigWorkerApplicationConfiguration {
                 absolute(environment, prefix + "api-token-file"), duration(environment, prefix + "api-timeout", Duration.ofSeconds(5)),
                 environment.getProperty(prefix + "api-max-response-bytes", Integer.class, 4 * 1024 * 1024),
                 Set.copyOf(namespaces), Set.copyOf(deployments));
+    }
+
+    private static boolean managedIdLeaseRequired(Environment environment) {
+        return Binder.get(environment).bind(MANAGED_ID_LEASE_REQUIRED, Boolean.class).orElse(false);
     }
 
     private static void validateIdentityMode(Environment environment, WorkerSettings settings) {

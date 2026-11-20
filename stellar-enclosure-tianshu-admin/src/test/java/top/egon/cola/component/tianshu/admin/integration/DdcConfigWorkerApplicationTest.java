@@ -3,21 +3,33 @@ package top.egon.cola.component.tianshu.admin.integration;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.beans.factory.config.BeanFactoryPostProcessor;
+import org.springframework.beans.factory.support.StaticListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.jackson2.autoconfigure.Jackson2AutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
+import org.springframework.boot.availability.ApplicationAvailability;
 import org.springframework.boot.bootstrap.DefaultBootstrapContext;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.event.ApplicationEnvironmentPreparedEvent;
 import org.springframework.context.ApplicationListener;
 import org.springframework.context.annotation.ComponentScan;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.context.annotation.ConfigurationClassPostProcessor;
 import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider;
 import org.springframework.core.Ordered;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.SystemEnvironmentPropertySource;
 import org.springframework.mock.env.MockEnvironment;
+import top.egon.cola.component.common.id.autoconfigure.IdGeneratorAutoConfiguration;
+import top.egon.cola.component.outbox.autoconfigure.TransactionalOutboxProperties;
+import top.egon.cola.component.outbox.dispatch.OutboxPoller;
 import top.egon.cola.component.tianshu.admin.DynamicConfigCenterAdminApplication;
 import top.egon.cola.component.tianshu.admin.config.DdcConfigPublicationPolicyConfiguration.RegisteredPolicies;
 import top.egon.cola.component.tianshu.admin.config.DdcConfigPublicationPolicyConfiguration.RegisteredTargetVO;
@@ -34,6 +46,10 @@ import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 /** The two explicit worker commands must never inherit the broad Admin component scan. */
 class DdcConfigWorkerApplicationTest {
@@ -114,10 +130,85 @@ class DdcConfigWorkerApplicationTest {
         assertThat(imported).isNotNull();
         assertThat(imported.classes()).extracting(Class::getSimpleName)
                 .containsExactlyInAnyOrder("Jackson2AutoConfiguration", "ValidationAutoConfiguration", "AopAutoConfiguration",
-                        "IdGeneratorAutoConfiguration", "EgonColaMybatisPlusAutoConfiguration", "EgonColaShardingAutoConfiguration",
+                        "ApplicationAvailabilityAutoConfiguration", "IdGeneratorAutoConfiguration",
+                        "EgonColaMybatisPlusAutoConfiguration", "EgonColaShardingAutoConfiguration",
                         "MybatisPlusInnerInterceptorAutoConfiguration", "MybatisPlusAutoConfiguration",
                         "DataSourceTransactionManagerAutoConfiguration", "TransactionAutoConfiguration",
                         "TransactionalOutboxAutoConfiguration", "OutboxStateMachineAutoConfiguration", "OutboxMybatisPlusAutoConfiguration");
+    }
+
+    @Test
+    void managedWorkerDoesNotCreateTheLegacyIdentityRedisBean() throws Exception {
+        Class<?> persistence = Class.forName(CONFIGURATION + "$PersistenceApplication");
+        Class<?> settings = Class.forName(CONFIGURATION + "$WorkerSettings");
+        var legacy = persistence.getDeclaredMethod("identityRedis", Environment.class, settings);
+        assertThat(legacy.getAnnotationsByType(ConditionalOnProperty.class))
+                .anySatisfy(condition -> {
+                    assertThat(condition.prefix()).isEqualTo("egon.cola.component.id.redis");
+                    assertThat(condition.name()).containsExactly("require-lease");
+                    assertThat(condition.havingValue()).isEqualTo("false");
+                    assertThat(condition.matchIfMissing()).isTrue();
+                });
+    }
+
+    @Test
+    void renderedManagedEnvironmentSelectsTheActualRedisLeaseForStartupAndObserverWrites() throws Exception {
+        Class<?> persistence = Class.forName(CONFIGURATION + "$PersistenceApplication");
+        Class<?> settings = Class.forName(CONFIGURATION + "$WorkerSettings");
+        var factory = persistence.getDeclaredMethod("idReady", Environment.class, settings, ObjectProvider.class);
+        assertThat(factory.trySetAccessible()).isTrue();
+        var id = mock(IdGeneratorAutoConfiguration.class);
+        var context = new StaticListableBeanFactory(Map.of(IdGeneratorAutoConfiguration.class.getName(), id));
+        var env = new MockEnvironment();
+        env.getPropertySources().addFirst(new SystemEnvironmentPropertySource("stellar-systemEnvironment", Map.of(
+                "EGON_COLA_COMPONENT_ID_REDIS_REQUIRELEASE", "true",
+                "EGON_COLA_COMPONENT_ID_REDIS_ENV", "staging",
+                "EGON_COLA_COMPONENT_ID_REDIS_APP", "config")));
+        var provider = context.getBeanProvider(IdGeneratorAutoConfiguration.class);
+        var ready = (SmartInitializingSingleton) factory.invoke(persistence.getConstructor().newInstance(), env, null, provider);
+        ready.afterSingletonsInstantiated();
+
+        Class<?> observer = Class.forName(CONFIGURATION + "$ObserverApplication");
+        var leaseCheck = observer.getDeclaredMethod("idLeaseCheck", Environment.class, ObjectProvider.class);
+        assertThat(leaseCheck.trySetAccessible()).isTrue();
+        ((Runnable) leaseCheck.invoke(observer.getConstructor().newInstance(), env, provider)).run();
+        verify(id, times(2)).assertRedisLeaseAvailable();
+        verifyNoMoreInteractions(id);
+    }
+
+    @Test
+    void managedProbeIsRegisteredByBothWorkerRootsOnlyWhenSelectedByThePod() throws Exception {
+        for (String root : List.of("PublisherApplication", "ObserverApplication")) {
+            assertThat(probeRegistered(Class.forName(CONFIGURATION + "$" + root), true)).isTrue();
+            assertThat(probeRegistered(Class.forName(CONFIGURATION + "$" + root), false)).isFalse();
+        }
+    }
+
+    @Test
+    void managedPublisherRejectsAnOutboxPollerThatCannotClaim() throws Exception {
+        var publisher = Class.forName(CONFIGURATION + "$PublisherApplication");
+        var factory = publisher.getDeclaredMethod("workerProbe", ApplicationAvailability.class,
+                IdGeneratorAutoConfiguration.class, OutboxPoller.class, TransactionalOutboxProperties.class);
+        assertThat(factory.trySetAccessible()).isTrue();
+        var flags = new TransactionalOutboxProperties();
+        flags.getPolling().setEnabled(false);
+        assertThatThrownBy(() -> factory.invoke(publisher.getConstructor().newInstance(),
+                mock(ApplicationAvailability.class), mock(IdGeneratorAutoConfiguration.class),
+                mock(OutboxPoller.class), flags))
+                .hasCauseInstanceOf(IllegalStateException.class)
+                .hasStackTraceContaining("TIANSHU_CONFIG_WORKER_PUBLISHER_POLLING_REQUIRED");
+    }
+
+    private static boolean probeRegistered(Class<?> root, boolean managed) {
+        try (var context = new AnnotationConfigApplicationContext()) {
+            context.getEnvironment().getPropertySources().addFirst(new SystemEnvironmentPropertySource(
+                    "stellar-systemEnvironment", Map.of("STELLAR_WORKER_PROBE_ENABLED", Boolean.toString(managed))));
+            context.register(root);
+            var processor = new ConfigurationClassPostProcessor();
+            processor.setEnvironment(context.getEnvironment());
+            processor.postProcessBeanDefinitionRegistry(context.getDefaultListableBeanFactory());
+            return context.containsBeanDefinition("stellarWorkerProbe");
+        }
     }
 
     @Test

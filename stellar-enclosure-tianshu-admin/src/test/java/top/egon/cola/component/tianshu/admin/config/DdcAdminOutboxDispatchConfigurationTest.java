@@ -7,6 +7,7 @@ import top.egon.cola.component.outbox.deadletter.OutboxDeadLetterNotifier;
 import top.egon.cola.component.outbox.delivery.DeliveryFailureClassifier;
 import top.egon.cola.component.outbox.delivery.DeliveryHandler;
 import top.egon.cola.component.outbox.delivery.DeliveryHandlerRegistry;
+import top.egon.cola.component.outbox.dispatch.OutboxDispatcher;
 import top.egon.cola.component.outbox.dispatch.OutboxWorkerIdentity;
 import top.egon.cola.component.outbox.observability.OutboxMetrics;
 import top.egon.cola.component.outbox.retry.OutboxRetryPolicy;
@@ -52,9 +53,22 @@ class DdcAdminOutboxDispatchConfigurationTest {
         verifyNoInteractions(store);
     }
 
-    private top.egon.cola.component.outbox.dispatch.OutboxDispatcher dispatcher() {
-        var identity = mock(OutboxWorkerIdentity.class);
-        when(identity.nextLeaseOwner()).thenReturn("admin-test");
+    @Test
+    void aManagedAdminCannotClaimAnyChannelAfterLosingTheIdLease() {
+        var identity = new OutboxWorkerIdentity("admin-test", () -> {
+            throw new IllegalStateException("lease unavailable");
+        });
+        var dispatcher = dispatcher(identity);
+        dispatcher.submitDue();
+        dispatcher.submitMessageIds(List.of("pending-outbox-message"));
+        verifyNoInteractions(store);
+    }
+
+    private OutboxDispatcher dispatcher() {
+        return dispatcher(new OutboxWorkerIdentity("admin-test"));
+    }
+
+    private OutboxDispatcher dispatcher(OutboxWorkerIdentity identity) {
         return new DdcAdminOutboxDispatchConfiguration().outboxDispatcher(
                 store, registered, route, mock(DeliveryFailureClassifier.class), mock(OutboxRetryPolicy.class),
                 mock(OutboxDeadLetterNotifier.class), mock(OutboxMetrics.class), identity, Runnable::run,

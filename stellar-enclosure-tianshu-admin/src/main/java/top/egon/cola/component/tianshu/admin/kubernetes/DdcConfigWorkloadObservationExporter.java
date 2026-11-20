@@ -36,6 +36,7 @@ public class DdcConfigWorkloadObservationExporter implements SmartLifecycle, Aut
     @NonNull @Qualifier("ddcConfigWorkloadObservationBindings") private final BindingResolver bindings;
     @NonNull @Qualifier("ddcPublishClock") private final Clock clock;
     @NonNull @Qualifier("ddcConfigWorkloadObservationExportInterval") private final Duration interval;
+    @NonNull @Qualifier("ddcObserverIdLeaseCheck") private final Runnable writeAuthority;
     private final Object lock = new Object();
     private final List<Assignment> assignments = new ArrayList<>();
     private volatile boolean running;
@@ -52,6 +53,12 @@ public class DdcConfigWorkloadObservationExporter implements SmartLifecycle, Aut
             java.util.Objects.requireNonNull(target, "target");
             if (tenant.actor().length() > 128) throw new IllegalArgumentException("TIANSHU_CONFIG_OBSERVATION_ACTOR_INVALID");
         }
+    }
+
+    public DdcConfigWorkloadObservationExporter(DdcKubernetesObservationService observer,
+            DdcConfigWorkloadObservationRepository repository, DdcTenantContextExecutor tenants,
+            BindingResolver bindings, Clock clock, Duration interval) {
+        this(observer, repository, tenants, bindings, clock, interval, () -> { });
     }
 
     @Override public void start() {
@@ -71,12 +78,15 @@ public class DdcConfigWorkloadObservationExporter implements SmartLifecycle, Aut
                         target.getClusterId(), target.getKubernetesNamespace(), target.getWorkloadUid()))) {
                     throw new IllegalArgumentException("TIANSHU_CONFIG_OBSERVATION_BINDINGS_DUPLICATE");
                 }
-                assignments.add(new Assignment(binding));
             }
             try {
                 var first = approved.getFirst().tenant();
-                epoch = tenants.call(first, () -> repository.nextWriterEpoch(first));
+                epoch = tenants.call(first, () -> {
+                    assertWriteAuthority();
+                    return repository.nextWriterEpoch(first);
+                });
                 if (epoch <= 0) throw new IllegalStateException("TIANSHU_CONFIG_OBSERVATION_EPOCH_UNAVAILABLE");
+                approved.forEach(binding -> assignments.add(new Assignment(binding)));
                 // A higher process epoch invalidates all configured old views before this source can be healthy.
                 for (var assignment : assignments) publish(assignment, unknown(assignment.binding.target(), StatusEnum.INITIALIZING, "INITIALIZING"));
             } catch (RuntimeException unavailable) {
@@ -126,7 +136,10 @@ public class DdcConfigWorkloadObservationExporter implements SmartLifecycle, Aut
         assignment.sequence = sequence;
         var context = assignment.binding.tenant();
         var captured = clock.instant();
-        AcceptanceEnum result = tenants.call(context, () -> repository.upsert(context, assignment.binding.target(), epoch, sequence, captured, view));
+        AcceptanceEnum result = tenants.call(context, () -> {
+            assertWriteAuthority();
+            return repository.upsert(context, assignment.binding.target(), epoch, sequence, captured, view);
+        });
         if (result == AcceptanceEnum.CONFLICT) {
             healthy = false;
             lastErrorCode = "TIANSHU_CONFIG_OBSERVATION_WRITER_FENCED";
@@ -135,6 +148,16 @@ public class DdcConfigWorkloadObservationExporter implements SmartLifecycle, Aut
             throw new IllegalStateException(lastErrorCode);
         }
         if (result == AcceptanceEnum.STALE) healthy = false;
+    }
+
+    private void assertWriteAuthority() {
+        try {
+            writeAuthority.run();
+        } catch (RuntimeException unavailable) {
+            healthy = false;
+            lastErrorCode = "TIANSHU_CONFIG_OBSERVATION_ID_LEASE_UNAVAILABLE";
+            throw unavailable;
+        }
     }
 
     private WorkloadViewVO unknown(TargetBindingVO target, StatusEnum status, String reason) {
