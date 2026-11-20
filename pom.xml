@@ -33,7 +33,6 @@
     <modules>
         <module>stellar-enclosure-tianshu-starter</module>
         <module>stellar-enclosure-tianshu-list-client</module>
-        <module>stellar-enclosure-tianshu-http-registration-starter</module>
         <module>stellar-enclosure-tianshu-ai-starter</module>
         <module>stellar-enclosure-tianshu-admin</module>
         <module>stellar-enclosure-tianshu-test</module>

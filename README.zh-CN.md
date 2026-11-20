@@ -57,7 +57,6 @@ Admin HTTP 提供人工管理 API、经认证的页面语言包读取和 Actuato
 | 模块 | 职责 |
 |---|---|
 | `stellar-enclosure-tianshu-starter` | 传输无关 SDK 运行时与端口：ConfigData、`@DdcValue`、选择性刷新、ACK、租约、管理和注册契约 |
-| `stellar-enclosure-tianshu-http-registration-starter` | Spring HTTP 服务注册、Tianshu 租约心跳/恢复和注册元数据贡献 SPI |
 | `stellar-enclosure-tianshu-list-client` | 业务服务使用已验证用户和服务身份访问天枢列表模板 |
 | `stellar-enclosure-tianshu-ai-starter` | 下游 AI Starter：非阻塞使用反馈上报、已发布 Skill 工作区（原子落盘、Redis 发布订阅、周期对账）与创作目录上传（可选自动发布） |
 | [RPC Tianshu Adapter](https://github.com/Stellar-Enclosure/Stellar-Enclosure-Components/tree/main/stellar-enclosure-component-rpc/stellar-enclosure-component-rpc-tianshu-adapter) | 位于独立 Components 仓库：Protobuf 契约、直连 gRPC Client/Provider、HMAC Metadata 和 Spring Boot 装配，不属于本 reactor |
