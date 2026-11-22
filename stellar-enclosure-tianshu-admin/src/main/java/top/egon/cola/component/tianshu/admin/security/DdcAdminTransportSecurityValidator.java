@@ -1,35 +1,35 @@
 package top.egon.cola.component.tianshu.admin.security;
 
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
 import java.util.Locale;
-import java.util.Objects;
 
-@Component
+@Slf4j
+@Component("ddcAdminTransportSecurityValidator")
+@RequiredArgsConstructor(onConstructor_ = @Autowired)
 public final class DdcAdminTransportSecurityValidator
         implements ApplicationRunner {
 
     private static final String PREFIX =
             "egon.cola.component.tianshu.admin.transport-security";
 
+    @Qualifier("environment")
+    @lombok.NonNull
     private final Environment environment;
-
-    public DdcAdminTransportSecurityValidator(Environment environment) {
-        this.environment = Objects.requireNonNull(
-                environment,
-                "environment"
-        );
-    }
 
     @Override
     public void run(ApplicationArguments args) {
         validate(environment, PREFIX);
     }
 
-    static void validate(Environment environment, String prefix) {
+    public static void validate(Environment environment, String prefix) {
         String mode = required(environment, prefix + ".mode")
                 .toUpperCase(Locale.ROOT);
         if (!"KUBERNETES_PLAINTEXT".equals(mode) && !"DEVELOPMENT_PLAINTEXT".equals(mode)) {

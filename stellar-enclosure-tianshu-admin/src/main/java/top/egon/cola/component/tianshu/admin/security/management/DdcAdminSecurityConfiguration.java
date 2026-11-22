@@ -214,9 +214,11 @@ public class DdcAdminSecurityConfiguration {
             @Qualifier("idpStarterProperties") top.egon.cola.platform.tianquan.shoubing.starter.autoconfigure.IdpStarterProperties properties,
             @Qualifier("idpSecurityAuditReady") java.util.function.BooleanSupplier ready) {
         properties.validate();
-        if (!ready.getAsBoolean() || !properties.isMultiIssuerConfigured() || !environment.getProperty("server.ssl.enabled", Boolean.class, false)) {
+        if (!ready.getAsBoolean() || !properties.isMultiIssuerConfigured()) {
             throw new IllegalStateException("OAUTH_HOST_SECURITY_NOT_READY");
         }
+        top.egon.cola.component.tianshu.admin.security.DdcAdminTransportSecurityValidator.validate(environment,
+                "egon.cola.component.tianshu.admin.transport-security");
         if (properties.getTrustedIssuers().values().stream().anyMatch(issuer -> !issuer.getIssuer().startsWith("https://") || !issuer.getJwksUri().startsWith("https://"))
                 || !"https".equalsIgnoreCase(properties.getResourceUri().getScheme())
                 || !environment.getProperty("egon.cola.platform.tianquan.jianshen.authorization.endpoint", "").startsWith("https://")) {
