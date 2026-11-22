@@ -10,6 +10,7 @@ import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
@@ -37,6 +38,7 @@ import top.egon.cola.platform.tianquan.shoubing.starter.security.IdpEndpointAuth
 import top.egon.cola.platform.tianquan.shoubing.starter.security.IdpSecurityObservationFilter;
 import top.egon.cola.platform.tianquan.shoubing.starter.security.ServiceAccessTokenVerifier;
 import top.egon.cola.platform.tianquan.shoubing.starter.security.UserAccessTokenVerifier;
+import top.egon.cola.platform.tianquan.shoubing.starter.security.VerifiedTenantContextFilter;
 import top.egon.cola.platform.tianquan.shoubing.starter.security.domain.TokenAuditProofBO;
 
 import java.io.IOException;
@@ -58,6 +60,15 @@ public class DdcLogicalCatalogSecurityConfiguration {
     private static final String REQUEST_ID_ATTRIBUTE = "top.egon.cola.component.tianshu.admin.security.management.DdcLogicalCatalogSecurityConfiguration.requestId";
     private static final List<String> PATHS = List.of(DdcLogicalCatalogContract.BUSINESS_PATH, DdcLogicalCatalogContract.BUSINESSES_PATH,
             DdcLogicalCatalogContract.APPLICATION_PATH, DdcLogicalCatalogContract.APPLICATIONS_PATH);
+
+    /** The bearer filter binds identity MDC before the catalog binds its mapped tenant and SERVICE actor. */
+    @Bean("ddcVerifiedTenantContextFilterRegistration")
+    public FilterRegistrationBean<VerifiedTenantContextFilter> verifiedTenantContextRegistration(
+            @Qualifier("verifiedTenantContextFilter") VerifiedTenantContextFilter filter) {
+        var registration = new FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
+    }
 
     @Bean("ddcLogicalCatalogSecurityFilterChain")
     @Order(0)

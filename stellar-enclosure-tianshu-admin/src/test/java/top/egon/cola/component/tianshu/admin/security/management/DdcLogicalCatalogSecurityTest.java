@@ -1,10 +1,13 @@
 package top.egon.cola.component.tianshu.admin.security.management;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.Filter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.MDC;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.boot.web.servlet.ServletContextInitializerBeans;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
@@ -31,6 +34,7 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.P
 import top.egon.cola.platform.tianquan.jianshen.starter.client.Rbac3AuthorizationClient;
 import top.egon.cola.platform.tianquan.shoubing.contract.ServiceIdentityPrincipal;
 import top.egon.cola.platform.tianquan.shoubing.contract.ServiceTokenContext;
+import top.egon.cola.platform.tianquan.shoubing.starter.autoconfigure.IdpStarterAutoConfiguration;
 import top.egon.cola.platform.tianquan.shoubing.starter.security.AccessTokenVerification;
 import top.egon.cola.platform.tianquan.shoubing.starter.security.IdpAuthenticationToken;
 import top.egon.cola.platform.tianquan.shoubing.starter.security.IdpEndpointAuthenticationPolicy;
@@ -38,6 +42,7 @@ import top.egon.cola.platform.tianquan.shoubing.starter.security.IdpObservedVeri
 import top.egon.cola.platform.tianquan.shoubing.starter.security.IdpSecurityObservationFilter;
 import top.egon.cola.platform.tianquan.shoubing.starter.security.ServiceAccessTokenVerifier;
 import top.egon.cola.platform.tianquan.shoubing.starter.security.UserAccessTokenVerifier;
+import top.egon.cola.platform.tianquan.shoubing.starter.security.VerifiedTenantContextFilter;
 import top.egon.cola.platform.tianquan.shoubing.starter.security.domain.TokenAuditProofBO;
 
 import java.net.URI;
@@ -82,7 +87,14 @@ class DdcLogicalCatalogSecurityTest {
                 prefix + "source-environment", "prod")));
         context.register(TestConfiguration.class);
         context.refresh();
-        mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+        Filter[] servletTenantFilters = new ServletContextInitializerBeans(context).stream()
+                .filter(FilterRegistrationBean.class::isInstance)
+                .map(value -> (FilterRegistrationBean<?>) value)
+                .filter(value -> value.getFilter() instanceof VerifiedTenantContextFilter)
+                .filter(FilterRegistrationBean::isEnabled)
+                .map(FilterRegistrationBean::getFilter)
+                .toArray(Filter[]::new);
+        mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).addFilters(servletTenantFilters).build();
         services = context.getBean(ServiceAccessTokenVerifier.class);
         users = context.getBean(UserAccessTokenVerifier.class);
         registry = context.getBean(DdcTenantRegistry.class);
@@ -259,6 +271,20 @@ class DdcLogicalCatalogSecurityTest {
         assertThat(context.getBean(DdcLogicalCatalogSecurityConfiguration.CatalogProperties.class).callers()).containsOnlyKeys("tenant-a");
     }
 
+    @Test
+    void verifiedTenantContextRunsInsideBearerWithoutAnAdditionalServletRegistration() {
+        var registrations = new ServletContextInitializerBeans(context).stream()
+                .filter(FilterRegistrationBean.class::isInstance)
+                .map(value -> (FilterRegistrationBean<?>) value)
+                .filter(value -> value.getFilter() instanceof VerifiedTenantContextFilter)
+                .toList();
+
+        assertThat(registrations).singleElement().satisfies(registration -> {
+            assertThat(registration.getFilter()).isSameAs(context.getBean("verifiedTenantContextFilter"));
+            assertThat(registration.isEnabled()).isFalse();
+        });
+    }
+
     private static AccessTokenVerification.Valid<ServiceIdentityPrincipal> valid(ServiceIdentityPrincipal principal, URI issuer) {
         return new AccessTokenVerification.Valid<>(principal, principal.scopes(),
                 new TokenAuditProofBO(issuer, principal.resourceUri(), "a".repeat(64), "b".repeat(64), "c".repeat(64)), issuer);
@@ -277,6 +303,9 @@ class DdcLogicalCatalogSecurityTest {
         @Bean("jacksonObjectMapper") ObjectMapper mapper() { return new ObjectMapper().findAndRegisterModules(); }
         @Bean UserAccessTokenVerifier userAccessTokenVerifier() { return mock(UserAccessTokenVerifier.class); }
         @Bean ServiceAccessTokenVerifier serviceAccessTokenVerifier() { return mock(ServiceAccessTokenVerifier.class); }
+        @Bean("verifiedTenantContextFilter") VerifiedTenantContextFilter verifiedTenantContextFilter() {
+            return new IdpStarterAutoConfiguration().verifiedTenantContextFilter();
+        }
         @Bean("ddcLogicalCatalogQueryService") DdcLogicalCatalogQueryService queries() { return mock(DdcLogicalCatalogQueryService.class); }
         @Bean("ddcTenantRegistry") DdcTenantRegistry registry() { return mock(DdcTenantRegistry.class); }
         @Bean("ddcTenantContextExecutor") DdcTenantContextExecutor tenants() { return new DdcTenantContextExecutor(); }
