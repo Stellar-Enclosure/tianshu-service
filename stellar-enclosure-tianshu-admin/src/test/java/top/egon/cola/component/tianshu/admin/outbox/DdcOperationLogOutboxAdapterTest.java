@@ -19,6 +19,7 @@ import top.egon.cola.component.outbox.store.OutboxStore;
 import top.egon.cola.component.outbox.delivery.DeliveryContext;
 import top.egon.cola.component.outbox.delivery.DeliveryHandler;
 import top.egon.cola.component.outbox.delivery.DeliveryResult;
+import top.egon.cola.component.tianshu.admin.service.audit.DdcOperationLogMetrics;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantBindingDTO;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextExecutor;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantRegistry;
@@ -47,9 +48,84 @@ class DdcOperationLogOutboxAdapterTest {
     private final OperationLogRepository target = mock(OperationLogRepository.class);
     private final DdcTenantRegistry tenants = mock(DdcTenantRegistry.class);
     private final OutboxStore store = mock(OutboxStore.class);
+    private final io.micrometer.core.instrument.simple.SimpleMeterRegistry registry =
+            new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+    private final DdcOperationLogMetrics metrics = metrics(registry);
     private final TargetProperties properties = new TargetProperties().setTransactionTimeout(Duration.ofSeconds(5));
 
     @AfterEach void clearContext() { MDC.clear(); }
+
+    @Test void observesOnlyCommittedNewSourceEventsWithoutPayloadDimensions() throws Exception {
+        var registry = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        var outbox = mock(TransactionalOutbox.class);
+        when(outbox.enqueue(any())).thenReturn(new top.egon.cola.component.outbox.api.OutboxReceipt("101", "audit:23:101", true));
+        when(store.prepareGeneratedMessageId(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        var metricsType = Class.forName("top.egon.cola.component.tianshu.admin.service.audit.DdcOperationLogMetrics");
+        var beans = new org.springframework.beans.factory.support.StaticListableBeanFactory(Map.of("registry", registry));
+        var metrics = metricsType.getConstructor(org.springframework.beans.factory.ObjectProvider.class)
+                .newInstance(beans.getBeanProvider(io.micrometer.core.instrument.MeterRegistry.class));
+        var source = (OperationLogDestination) Class.forName(ADAPTER + "$ProducerStrategy")
+                .getConstructor(TransactionalOutbox.class, ValidationUtils.class, OutboxStore.class, metricsType)
+                .newInstance(outbox, validation, store, metrics);
+        var sourceDataSource = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                "jdbc:sqlite::memory:", "", "");
+        var transactions = new org.springframework.transaction.support.TransactionTemplate(
+                new org.springframework.jdbc.datasource.DataSourceTransactionManager(sourceDataSource));
+        transactions.executeWithoutResult(status -> {
+            source.append(event());
+            assertThat(registry.find("tianshu.operation.log.audit.accepted").counter()).isNull();
+        });
+        assertThat(registry.get("tianshu.operation.log.audit.accepted").counter().count()).isEqualTo(1);
+        transactions.executeWithoutResult(status -> {
+            source.append(event());
+            status.setRollbackOnly();
+        });
+        assertThat(registry.get("tianshu.operation.log.audit.accepted").counter().count()).isEqualTo(1);
+        when(outbox.enqueue(any())).thenReturn(new top.egon.cola.component.outbox.api.OutboxReceipt("101", "audit:23:101", false));
+        transactions.executeWithoutResult(status -> source.append(event()));
+        assertThat(registry.get("tianshu.operation.log.audit.accepted").counter().count()).isEqualTo(1);
+        assertThat(registry.getMeters()).allSatisfy(meter -> assertThat(meter.getId().getTags()).isEmpty());
+    }
+
+    @Test void consumerCountsCommittedDuplicateConflictAndMissingPartitionAtTheirConfirmedBoundaries() throws Exception {
+        var handler = handler();
+        org.mockito.Mockito.doReturn(true, false).when(target).acceptAndConfirm(any());
+        assertThat(handler.deliver(context(event())).kind()).isEqualTo(DeliveryResult.Kind.SUCCESS);
+        assertThat(registry.get("tianshu.operation.log.audit.committed").counter().count()).isEqualTo(1);
+        assertThat(handler.deliver(context(event())).kind()).isEqualTo(DeliveryResult.Kind.SUCCESS);
+        assertThat(registry.get("tianshu.operation.log.audit.committed").counter().count()).isEqualTo(1);
+        assertThat(registry.get("tianshu.operation.log.duplicate.same").counter().count()).isEqualTo(1);
+
+        doThrow(new OperationLogRepository.PermanentRejectionException("OPERATION_LOG_RECEIPT_CONFLICT"))
+                .when(target).acceptAndConfirm(any());
+        assertThat(handler.deliver(context(event())).kind()).isEqualTo(DeliveryResult.Kind.PERMANENT_FAILURE);
+        assertThat(registry.get("tianshu.operation.log.duplicate.conflict").counter().count()).isEqualTo(1);
+
+        doThrow(new org.springframework.dao.DataIntegrityViolationException("safe diagnostic",
+                new org.postgresql.util.PSQLException(new org.postgresql.util.ServerErrorMessage(
+                        "C23514\0Mninguna partición aloja la fila\0RExecFindPartition\0\0"))))
+                .when(target).acceptAndConfirm(any());
+        assertThat(handler.deliver(context(event())).kind()).isEqualTo(DeliveryResult.Kind.RETRYABLE_FAILURE);
+        assertThat(registry.get("tianshu.operation.log.partition.missing").counter().count()).isEqualTo(1);
+        doThrow(new org.springframework.dao.DataIntegrityViolationException("safe diagnostic",
+                new java.sql.SQLException("new row violates check constraint", "23514")))
+                .when(target).acceptAndConfirm(any());
+        assertThat(handler.deliver(context(event())).kind()).isEqualTo(DeliveryResult.Kind.RETRYABLE_FAILURE);
+        assertThat(registry.get("tianshu.operation.log.partition.missing").counter().count()).isEqualTo(1);
+        assertThat(registry.get("tianshu.operation.log.audit.committed").counter().count()).isEqualTo(1);
+        assertThat(registry.getMeters()).allSatisfy(meter -> assertThat(meter.getId().getTags()).isEmpty());
+    }
+
+    @Test void optionalOrFailedMetricRegistriesDoNotChangeBusinessResults() {
+        var empty = new org.springframework.beans.factory.support.StaticListableBeanFactory();
+        var missing = new DdcOperationLogMetrics(empty.getBeanProvider(io.micrometer.core.instrument.MeterRegistry.class));
+        org.assertj.core.api.Assertions.assertThatCode(missing::accepted).doesNotThrowAnyException();
+        var broken = mock(org.springframework.beans.factory.ObjectProvider.class);
+        when(broken.getIfAvailable()).thenThrow(new IllegalStateException("registry unavailable"));
+        @SuppressWarnings("unchecked")
+        var isolated = new DdcOperationLogMetrics((org.springframework.beans.factory.ObjectProvider<io.micrometer.core.instrument.MeterRegistry>) broken);
+        org.assertj.core.api.Assertions.assertThatCode(isolated::committed).doesNotThrowAnyException();
+    }
 
     @Test void acceptOnlyAfterCommitAndAlwaysRestoreTheCallingTenant() throws Exception {
         var event = event();
@@ -57,25 +133,27 @@ class DdcOperationLogOutboxAdapterTest {
         doAnswer(invocation -> {
             assertThat(MDC.get("tenantId")).isEqualTo("23");
             assertThat(MDC.get("userId")).isEqualTo("system:operation-log:101");
-            return null; // repository returns only after its target transaction commits
-        }).when(target).accept(any());
+            return true; // repository returns only after its target transaction commits
+        }).when(target).acceptAndConfirm(any());
         assertThat(handler().deliver(context(event)).kind()).isEqualTo(DeliveryResult.Kind.SUCCESS);
-        verify(target).accept(event);
+        verify(target).acceptAndConfirm(event);
         assertThat(MDC.get("tenantId")).isEqualTo("77");
         assertThat(MDC.get("userId")).isEqualTo("prior-user");
     }
 
     @Test void retryCommitUnknownPreservesTheOriginalEventAndRestoresTenant() throws Exception {
         doThrow(new org.springframework.transaction.TransactionSystemException("commit outcome unknown"))
-                .when(target).accept(any());
+                .when(target).acceptAndConfirm(any());
         var handler = handler(); var envelope = context(event());
         assertThat(handler.deliver(envelope).kind()).isEqualTo(DeliveryResult.Kind.RETRYABLE_FAILURE);
         assertThat(handler.deliver(envelope).kind()).isEqualTo(DeliveryResult.Kind.RETRYABLE_FAILURE);
         var captured = org.mockito.ArgumentCaptor.forClass(OperationLogEvent.class);
-        verify(target, org.mockito.Mockito.times(2)).accept(captured.capture());
+        verify(target, org.mockito.Mockito.times(2)).acceptAndConfirm(captured.capture());
         assertThat(captured.getAllValues()).allSatisfy(value -> assertThat(value.getEventId()).isEqualTo(101L));
         assertThat(MDC.get("tenantId")).isNull();
         assertThat(MDC.get("userId")).isNull();
+        assertThat(registry.find("tianshu.operation.log.audit.committed").counter()).isNull();
+        assertThat(registry.find("tianshu.operation.log.duplicate.same").counter()).isNull();
     }
 
     @Test void permanentEnvelopeConflictDoesNotTouchTheTarget() throws Exception {
@@ -118,7 +196,7 @@ class DdcOperationLogOutboxAdapterTest {
         verifyNoInteractions(target);
         enableTenant();
         doThrow(new OperationLogRepository.PermanentRejectionException("OPERATION_LOG_RECEIPT_CONFLICT"))
-                .when(target).accept(any());
+                .when(target).acceptAndConfirm(any());
         assertThat(handler.deliver(context(event())).kind()).isEqualTo(DeliveryResult.Kind.PERMANENT_FAILURE);
         assertThat(MDC.get("tenantId")).isNull();
     }
@@ -137,7 +215,8 @@ class DdcOperationLogOutboxAdapterTest {
         var store = mock(OutboxStore.class);
         when(store.prepareGeneratedMessageId(any())).thenAnswer(invocation -> invocation.getArgument(0));
         var source = (OperationLogDestination) Class.forName(ADAPTER + "$ProducerStrategy")
-                .getConstructor(TransactionalOutbox.class, ValidationUtils.class, OutboxStore.class).newInstance(outbox, validation, store);
+                .getConstructor(TransactionalOutbox.class, ValidationUtils.class, OutboxStore.class, DdcOperationLogMetrics.class)
+                .newInstance(outbox, validation, store, metrics);
         source.append(event());
         var captured = org.mockito.ArgumentCaptor.forClass(OutboxMessage.class);
         verify(outbox).enqueue(captured.capture());
@@ -160,7 +239,8 @@ class DdcOperationLogOutboxAdapterTest {
         when(store.prepareGeneratedMessageId(any())).thenAnswer(invocation ->
                 top.egon.cola.component.outbox.api.OutboxShardIdentity.forSlot(7, invocation.getArgument(0)));
         var source = (OperationLogDestination) Class.forName(ADAPTER + "$ProducerStrategy")
-                .getConstructor(TransactionalOutbox.class, ValidationUtils.class, OutboxStore.class).newInstance(outbox, validation, store);
+                .getConstructor(TransactionalOutbox.class, ValidationUtils.class, OutboxStore.class, DdcOperationLogMetrics.class)
+                .newInstance(outbox, validation, store, metrics);
         source.append(event());
         var captured = org.mockito.ArgumentCaptor.forClass(OutboxMessage.class);
         verify(outbox).enqueue(captured.capture());
@@ -234,7 +314,7 @@ class DdcOperationLogOutboxAdapterTest {
         var outbox = new top.egon.cola.component.outbox.autoconfigure.TransactionalOutboxProperties();
         outbox.getDelivery().setTimeout(Duration.ofSeconds(5));
         assertThatThrownBy(() -> factory.invoke(configuration.getConstructor().newInstance(), json, validation, target, tenants,
-                new DdcTenantContextExecutor(), Clock.fixed(NOW, ZoneOffset.UTC), properties, java.util.List.of(0), outbox))
+                new DdcTenantContextExecutor(), Clock.fixed(NOW, ZoneOffset.UTC), properties, java.util.List.of(0), outbox, metrics))
                 .hasCauseInstanceOf(IllegalStateException.class).hasStackTraceContaining("TIANSHU_OPERATION_LOG_DELIVERY_BUDGET_INVALID");
         verifyNoInteractions(target);
     }
@@ -244,9 +324,13 @@ class DdcOperationLogOutboxAdapterTest {
         enableTenant();
         return (DeliveryHandler) Class.forName(ADAPTER + "$OperationLogDeliveryHandler")
                 .getConstructor(ObjectMapper.class, ValidationUtils.class, OperationLogRepository.class,
-                        DdcTenantRegistry.class, DdcTenantContextExecutor.class, Clock.class, TargetProperties.class, java.util.List.class)
+                        DdcTenantRegistry.class, DdcTenantContextExecutor.class, Clock.class, TargetProperties.class, java.util.List.class, DdcOperationLogMetrics.class)
                 .newInstance(json, validation, target, tenants, new DdcTenantContextExecutor(),
-                        Clock.fixed(NOW, ZoneOffset.UTC), properties, slots);
+                        Clock.fixed(NOW, ZoneOffset.UTC), properties, slots, metrics);
+    }
+    private static DdcOperationLogMetrics metrics(io.micrometer.core.instrument.MeterRegistry registry) {
+        var beans = new org.springframework.beans.factory.support.StaticListableBeanFactory(Map.of("registry", registry));
+        return new DdcOperationLogMetrics(beans.getBeanProvider(io.micrometer.core.instrument.MeterRegistry.class));
     }
     private void enableTenant() {
         org.mockito.Mockito.doReturn(new DdcTenantBindingDTO(23L, "tenant-23", true)).when(tenants).requireEnabledTenant(23L);

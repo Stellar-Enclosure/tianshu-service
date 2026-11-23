@@ -8,11 +8,13 @@ import jakarta.validation.ConstraintViolationException;
 import jakarta.validation.groups.Default;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.postgresql.util.PSQLException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.validation.annotation.Validated;
 import top.egon.cola.component.common.core.validation.ValidationUtils;
@@ -42,6 +44,7 @@ import top.egon.cola.component.outbox.transaction.DefaultTransactionalOutbox;
 import top.egon.cola.component.outbox.transaction.OutboxAfterCommitBuffer;
 import top.egon.cola.component.outbox.transaction.OutboxTransactionGuard;
 import top.egon.cola.component.outbox.validation.OutboxMessageValidator;
+import top.egon.cola.component.tianshu.admin.service.audit.DdcOperationLogMetrics;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextDTO;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextExecutor;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantRegistry;
@@ -141,6 +144,7 @@ public final class DdcOperationLogOutboxAdapter {
 
     @Configuration(value = "ddcOperationLogProducerConfiguration", proxyBeanMethods = false)
     @ConditionalOnProperty(prefix = EgonOperationLogProperties.PREFIX, name = "enabled", havingValue = "true")
+    @Import(DdcOperationLogMetrics.class)
     public static class ProducerConfiguration {
         /** This registry is deliberately not a candidate for the Dispatcher/Coordinator registry. */
         @Bean(value = "ddcOperationLogProducerRegistry", defaultCandidate = false)
@@ -158,16 +162,18 @@ public final class DdcOperationLogOutboxAdapter {
                 @Qualifier("outboxAfterCommitBuffer") OutboxAfterCommitBuffer buffer,
                 @Qualifier("outboxMetrics") OutboxMetrics metrics,
                 @Qualifier("outboxStateMachineOutboxProperties") TransactionalOutboxProperties properties,
-                @Qualifier("egonColaValidationUtils") ValidationUtils validation) {
+                @Qualifier("egonColaValidationUtils") ValidationUtils validation,
+                @Qualifier("ddcOperationLogMetrics") DdcOperationLogMetrics auditMetrics) {
             // Keep the dedicated port local: registering another TransactionalOutbox would alter the core producer bean.
             var producer = new DefaultTransactionalOutbox(validator, serializer, ids, json, guard, store,
                     producerRegistry, buffer, metrics, properties);
-            return new ProducerStrategy(producer, validation, store);
+            return new ProducerStrategy(producer, validation, store, auditMetrics);
         }
     }
 
     @Configuration(value = "ddcOperationLogAdminConsumptionConfiguration", proxyBeanMethods = false)
     @ConditionalOnProperty(prefix = EgonOperationLogProperties.PREFIX + ".target", name = "enabled", havingValue = "true")
+    @Import(DdcOperationLogMetrics.class)
     public static class AdminConsumptionConfiguration {
         @Bean("ddcOperationLogSourceSlots")
         List<Integer> sourceSlots(@Qualifier("dataSource") DataSource source,
@@ -186,13 +192,14 @@ public final class DdcOperationLogOutboxAdapter {
                 @Qualifier("egonColaMybatisPlusClock") Clock clock,
                 @Qualifier("operationLogTargetProperties") TargetProperties properties,
                 @Qualifier("ddcOperationLogSourceSlots") List<Integer> sourceSlots,
-                @Qualifier("outboxStateMachineOutboxProperties") TransactionalOutboxProperties outbox) {
+                @Qualifier("outboxStateMachineOutboxProperties") TransactionalOutboxProperties outbox,
+                @Qualifier("ddcOperationLogMetrics") DdcOperationLogMetrics auditMetrics) {
             if (properties.getTransactionTimeout() == null || properties.getTransactionTimeout().isNegative()
                     || properties.getTransactionTimeout().isZero() || outbox.getDelivery().getTimeout() == null
                     || properties.getTransactionTimeout().plus(COMMIT_RESERVE).compareTo(outbox.getDelivery().getTimeout()) >= 0) {
                 throw new IllegalStateException("TIANSHU_OPERATION_LOG_DELIVERY_BUDGET_INVALID");
             }
-            return new OperationLogDeliveryHandler(json, validation, target, tenants, contexts, clock, properties, sourceSlots);
+            return new OperationLogDeliveryHandler(json, validation, target, tenants, contexts, clock, properties, sourceSlots, auditMetrics);
         }
     }
 
@@ -203,6 +210,7 @@ public final class DdcOperationLogOutboxAdapter {
         @Qualifier("ddcOperationLogProducerOutbox") private final TransactionalOutbox outbox;
         @Qualifier("egonColaValidationUtils") private final ValidationUtils validation;
         @Qualifier("outboxStore") private final OutboxStore store;
+        @Qualifier("ddcOperationLogMetrics") private final DdcOperationLogMetrics auditMetrics;
         @Override public OperationLogWriteModeEnum mode() { return OperationLogWriteModeEnum.OUTBOX; }
         @Override public void append(OperationLogEvent event) {
             validation.validate(event, Default.class, OperationLogEvent.Recorded.class);
@@ -211,11 +219,18 @@ public final class DdcOperationLogOutboxAdapter {
             String eventId = Long.toString(event.getEventId());
             String messageId = store.prepareGeneratedMessageId(eventId);
             String key = store.prepareGeneratedMessageId("audit:" + event.getTenantId() + ':' + eventId);
-            outbox.enqueue(OutboxMessage.builder().messageId(messageId).idempotencyKey(key)
+            var receipt = outbox.enqueue(OutboxMessage.builder().messageId(messageId).idempotencyKey(key)
                     .channel(CHANNEL).destination(DESTINATION).schemaVersion(SCHEMA_VERSION).payload(event)
                     .headers(Map.of("eventId", eventId, "tenantId", Long.toString(event.getTenantId()),
                             "sourceService", event.getSourceService())).traceId(event.getTraceId()).build());
-            log.debug("Operation log enqueued; eventId={}", event.getEventId());
+            if (receipt != null && receipt.created() && TransactionSynchronizationManager.isSynchronizationActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new org.springframework.transaction.support.TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        auditMetrics.accepted();
+                    }
+                });
+            }
         }
     }
 
@@ -231,6 +246,7 @@ public final class DdcOperationLogOutboxAdapter {
         @Qualifier("egonColaMybatisPlusClock") private final Clock clock;
         @Qualifier("operationLogTargetProperties") private final TargetProperties properties;
         @Qualifier("ddcOperationLogSourceSlots") private final List<Integer> sourceSlots;
+        @Qualifier("ddcOperationLogMetrics") private final DdcOperationLogMetrics auditMetrics;
 
         @Override public String channel() { return CHANNEL; }
         @Override public void validateDestination(String destination) {
@@ -253,16 +269,44 @@ public final class DdcOperationLogOutboxAdapter {
                 return DeliveryResult.retryableFailure("TIANSHU_OPERATION_LOG_BUDGET_UNAVAILABLE", "target transaction budget unavailable");
             }
             try {
-                contexts.run(trusted, () -> target.accept(event));
+                boolean created = contexts.call(trusted, () -> target.acceptAndConfirm(event));
+                if (created) {
+                    auditMetrics.committed();
+                } else {
+                    auditMetrics.duplicateSame();
+                }
                 return DeliveryResult.success();
             } catch (OperationLogRepository.PermanentRejectionException rejected) {
+                if ("OPERATION_LOG_RECEIPT_CONFLICT".equals(rejected.getStatus())) {
+                    auditMetrics.duplicateConflict();
+                }
                 return DeliveryResult.permanentFailure("TIANSHU_OPERATION_LOG_REJECTED", "operation log fact rejected");
             } catch (RuntimeException unavailable) {
+                if (missingPartition(unavailable)) {
+                    auditMetrics.partitionMissing();
+                }
                 log.warn("Operation log acceptance requires retry; eventId={}, failureType={}",
                         event.getEventId(), unavailable.getClass().getSimpleName());
                 return DeliveryResult.retryableFailure("TIANSHU_OPERATION_LOG_ACCEPT_RETRY", "target acceptance unavailable");
             }
         }
+        private static boolean missingPartition(Throwable failure) {
+            var seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Throwable, Boolean>());
+            for (Throwable cause = failure; cause != null && seen.add(cause); cause = cause.getCause()) {
+                if (!(cause instanceof java.sql.SQLException sql) || !"23514".equals(sql.getSQLState())) {
+                    continue;
+                }
+                if (sql instanceof PSQLException postgres && postgres.getServerErrorMessage() != null) {
+                    if ("ExecFindPartition".equals(postgres.getServerErrorMessage().getRoutine())) {
+                        return true;
+                    }
+                } else if (sql.getMessage() != null && sql.getMessage().contains("no partition of relation")) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         private OperationLogEvent parse(DeliveryContext context) throws IOException {
             if (context == null || !CHANNEL.equals(context.channel()) || !DESTINATION.equals(context.destination())
                     || !"application/json".equals(context.contentType()) || !SCHEMA_VERSION.equals(context.schemaVersion())

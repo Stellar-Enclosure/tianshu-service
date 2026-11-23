@@ -45,6 +45,9 @@ class DdcOperationLogQueryServiceTest {
     private final DdcOperationLogViewConverter.Detail detail = mock(DdcOperationLogViewConverter.Detail.class);
     private final ValidationUtils validation = new ValidationUtils(Validation.buildDefaultValidatorFactory().getValidator());
     private final DdcTenantRegistry tenants = mock(DdcTenantRegistry.class);
+    private final io.micrometer.core.instrument.simple.SimpleMeterRegistry registry =
+            new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+    private final DdcOperationLogMetrics metrics = metrics();
 
     @AfterEach void clearContext() { MDC.clear(); }
 
@@ -159,6 +162,7 @@ class DdcOperationLogQueryServiceTest {
         assertThatThrownBy(() -> service.page(window())).isInstanceOfSatisfying(CommonException.class,
                 failure -> assertThat(failure.getStatus()).isEqualTo(DdcErrorStatus.OPERATION_LOG_UNAVAILABLE.getStatus()));
         verifyNoInteractions(summary);
+        assertThat(registry.get("tianshu.operation.log.query.unavailable").counter().count()).isEqualTo(1);
     }
 
     @Test void missingTargetIsUnavailableForBothQueriesWhileUnexpectedCodeBugsAreNot503() {
@@ -167,9 +171,11 @@ class DdcOperationLogQueryServiceTest {
                 failure -> assertThat(failure.getCode()).isEqualTo(56998));
         assertThatThrownBy(() -> disabled.detail("1", NOW.toString())).isInstanceOfSatisfying(CommonException.class,
                 failure -> assertThat(failure.getCode()).isEqualTo(56998));
+        assertThat(registry.get("tianshu.operation.log.query.unavailable").counter().count()).isEqualTo(2);
         var active = service(true);
         when(repository.page(any())).thenThrow(new IllegalStateException("unexpected programming defect"));
         assertThatThrownBy(() -> active.page(window())).isInstanceOf(IllegalStateException.class);
+        assertThat(registry.get("tianshu.operation.log.query.unavailable").counter().count()).isEqualTo(2);
     }
 
     @Test void detailUsesTenantIdAndExactInstantAndReturnsNotFoundWhenAbsent() {
@@ -262,7 +268,12 @@ class DdcOperationLogQueryServiceTest {
         var beans = new StaticListableBeanFactory();
         if (enabled) beans.addBean("operationLogRepository", repository);
         return new DdcOperationLogQueryService(beans.getBeanProvider(OperationLogRepository.class), summary, detail,
-                validation, Clock.fixed(NOW, ZoneOffset.UTC), tenants);
+                validation, Clock.fixed(NOW, ZoneOffset.UTC), tenants, metrics);
+    }
+    private DdcOperationLogMetrics metrics() {
+        var beans = new StaticListableBeanFactory();
+        beans.addBean("registry", registry);
+        return new DdcOperationLogMetrics(beans.getBeanProvider(io.micrometer.core.instrument.MeterRegistry.class));
     }
     private WindowQuery capturedWindow() {
         var captured = org.mockito.ArgumentCaptor.forClass(WindowQuery.class);

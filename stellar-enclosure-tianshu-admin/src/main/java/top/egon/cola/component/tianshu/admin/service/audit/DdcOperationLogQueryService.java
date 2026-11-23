@@ -66,6 +66,7 @@ public class DdcOperationLogQueryService {
     @Qualifier("egonColaValidationUtils") private final ValidationUtils validation;
     @Qualifier("egonColaMybatisPlusClock") private final Clock clock;
     @Qualifier("ddcTenantRegistry") private final DdcTenantRegistry tenants;
+    @Qualifier("ddcOperationLogMetrics") private final DdcOperationLogMetrics auditMetrics;
 
     public DdcOperationLogPageResult page(@Valid @NotNull DdcOperationLogPageQuery query) {
         if (query == null) throw invalid();
@@ -155,13 +156,17 @@ public class DdcOperationLogQueryService {
     }
     private OperationLogRepository target() {
         OperationLogRepository target = read(repository::getIfAvailable);
-        if (target == null) throw new CommonException(DdcErrorStatus.OPERATION_LOG_UNAVAILABLE);
+        if (target == null) {
+            auditMetrics.queryUnavailable();
+            throw new CommonException(DdcErrorStatus.OPERATION_LOG_UNAVAILABLE);
+        }
         return target;
     }
     private <T> T read(Supplier<T> read) {
         try { return read.get(); }
         catch (RuntimeException failure) {
             if (!unavailable(failure)) throw failure;
+            auditMetrics.queryUnavailable();
             log.warn("Operation log target read unavailable; failureType={}", failure.getClass().getSimpleName());
             throw new CommonException(DdcErrorStatus.OPERATION_LOG_UNAVAILABLE, failure);
         }
