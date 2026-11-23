@@ -33,6 +33,7 @@ public class DdcOperationLogWebConfiguration {
     private static final String TARGET_ENABLED = "egon.cola.component.mybatis-plus.operation-log.target.enabled";
     private static final String ENABLED = "egon.cola.component.mybatis-plus.operation-log.enabled";
     private static final Pattern SAFE_TEMPLATE = Pattern.compile("(/[A-Za-z0-9._~-]+|/\\{[A-Za-z][A-Za-z0-9]*})+/?");
+    private static final Pattern PUBLIC_PREFIX = Pattern.compile("(/[A-Za-z0-9._~-]+)*/?");
     private static final Pattern PUBLIC_ID = Pattern.compile("[1-9][0-9]{0,18}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}");
     private static final Set<String> PUBLIC_PATH_KEYS = Set.of("id", "eventId", "pageId", "configId", "namespaceId", "templateId");
 
@@ -67,7 +68,7 @@ public class DdcOperationLogWebConfiguration {
         }
         String path = reviewedPath(request, pattern);
         return new OperationLogContextDTO(tenantId, actorType, actor, null, "HTTP",
-                request.getMethod(), publicUrl(origin, request.getContextPath() + path), pattern,
+                request.getMethod(), publicUrl(origin, path), pattern,
                 null, trace, null);
     }
 
@@ -93,15 +94,20 @@ public class DdcOperationLogWebConfiguration {
         if (!("https".equals(origin.getScheme()) || "http".equals(origin.getScheme()))
                 || origin.getHost() == null || origin.getUserInfo() != null
                 || origin.getQuery() != null || origin.getFragment() != null
-                || !(origin.getPath().isEmpty() || "/".equals(origin.getPath()))) {
+                || !PUBLIC_PREFIX.matcher(origin.getRawPath()).matches()
+                || !origin.normalize().getRawPath().equals(origin.getRawPath())) {
             throw new IllegalArgumentException("TIANSHU_OPERATION_LOG_ORIGIN_INVALID");
         }
         return origin;
     }
 
     private static String publicUrl(URI origin, String path) {
+        String prefix = origin.getPath();
+        if (prefix.endsWith("/")) {
+            prefix = prefix.substring(0, prefix.length() - 1);
+        }
         try {
-            return new URI(origin.getScheme(), null, origin.getHost(), origin.getPort(), path, null, null).toASCIIString();
+            return new URI(origin.getScheme(), null, origin.getHost(), origin.getPort(), prefix + path, null, null).toASCIIString();
         } catch (URISyntaxException failure) {
             throw new IllegalArgumentException("TIANSHU_OPERATION_LOG_ROUTE_INVALID", failure);
         }

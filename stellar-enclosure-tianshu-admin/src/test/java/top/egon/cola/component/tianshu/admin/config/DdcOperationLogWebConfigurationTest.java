@@ -63,6 +63,18 @@ class DdcOperationLogWebConfigurationTest {
     }
 
     @Test
+    void usesOnlyTheConfiguredPublicPrefixInTheRecordedUrl() {
+        var request = bindRequest("/proxy-private/api/v1/tianshu/configs/23");
+        request.setContextPath("/proxy-private");
+        request.addHeader("X-Forwarded-Prefix", "/proxy-private");
+        request.setAttribute(HandlerMapping.URI_TEMPLATE_VARIABLES_ATTRIBUTE, Map.of("id", "23"));
+
+        var context = provider("https://tianshu.example/console").get();
+
+        assertThat(context.requestUrl()).isEqualTo("https://tianshu.example/console/api/v1/tianshu/configs/23");
+    }
+
+    @Test
     void rejectsMissingAuthorityAndInvalidOriginsWithoutIncludingCredentials() {
         bindRequest("/api/v1/tianshu/configs/23");
         MDC.remove("userId");
