@@ -20,9 +20,11 @@ class DdcAdminUiI18nCatalogTest {
     @Test void operationLogsPublishBothLocalesAndTheConsoleNavigationLabel() {
         var catalog = new DdcAdminUiI18nCatalog(validation);
         assertThat(catalog.messages("tianshu.operationLogs", "zh-CN", false))
-                .containsEntry("title", "操作日志").containsKeys("api.page", "api.detail", "error.unavailable");
+                .containsEntry("title", "操作日志").containsEntry("filter.dateFrom", "起始日期（包含）")
+                .containsEntry("filter.dateTo", "结束日期（包含）").containsKeys("api.page", "api.detail", "error.unavailable");
         assertThat(catalog.messages("tianshu.operationLogs", "en-US", false))
-                .containsEntry("title", "Operation logs").containsKeys("api.page", "api.detail", "error.unavailable");
+                .containsEntry("title", "Operation logs").containsEntry("filter.dateFrom", "Start date (inclusive)")
+                .containsEntry("filter.dateTo", "End date (inclusive)").containsKeys("api.page", "api.detail", "error.unavailable");
         assertThat(catalog.messages("common", "zh-CN", false)).containsEntry("nav.operationLogs", "操作日志");
         assertThat(catalog.messages("common", "en-US", false)).containsEntry("nav.operationLogs", "Operation logs");
     }

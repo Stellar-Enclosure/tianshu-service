@@ -19,6 +19,12 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.P
 @PermissionMessage(pageCode = "tianshu.operationLogs", key = "filter.to", defaultLocale = "zh-CN",
         defaults = {@LocalizedText(locale = "en-US", text = "Occurred before"),
                 @LocalizedText(locale = "zh-CN", text = "发生时间终点")})
+@PermissionMessage(pageCode = "tianshu.operationLogs", key = "filter.dateFrom", defaultLocale = "zh-CN",
+        defaults = {@LocalizedText(locale = "en-US", text = "Start date (inclusive)"),
+                @LocalizedText(locale = "zh-CN", text = "起始日期（包含）")})
+@PermissionMessage(pageCode = "tianshu.operationLogs", key = "filter.dateTo", defaultLocale = "zh-CN",
+        defaults = {@LocalizedText(locale = "en-US", text = "End date (inclusive)"),
+                @LocalizedText(locale = "zh-CN", text = "结束日期（包含）")})
 @PermissionMessage(pageCode = "tianshu.operationLogs", key = "filter.actionCode", defaultLocale = "zh-CN",
         defaults = {@LocalizedText(locale = "en-US", text = "Action code"),
                 @LocalizedText(locale = "zh-CN", text = "动作代码")})
