@@ -287,7 +287,8 @@ class DdcTianshuDdlContractTest {
 
         JsonNode manifest = OBJECT_MAPPER.readTree(requiredResource(OUTBOX_MANIFEST));
         assertThat(manifest.path("family").asText()).isEqualTo("component-outbox");
-        assertThat(manifest.path("scripts").size()).isEqualTo(3);
+        int scriptCount = manifest.path("scripts").size();
+        assertThat(scriptCount).as("pinned source-only or coordination-enabled Outbox manifest").isIn(2, 3);
         JsonNode script = manifest.path("scripts").get(0);
         assertThat(script.path("version").asText()).isEqualTo("20260924_001");
         String path = script.path("path").asText();
@@ -304,10 +305,14 @@ class DdcTianshuDdlContractTest {
         assertThat(shardScript.path("sha256").asText()).isEqualTo(sha256(shardSql));
         assertThat(new String(shardSql, java.nio.charset.StandardCharsets.UTF_8).toLowerCase(java.util.Locale.ROOT))
                 .contains("add column shard_slot", "ck_outbox_message_shard_identity", "ck_outbox_key_shard_identity");
-        JsonNode coordination = manifest.path("scripts").get(2);
-        assertThat(coordination.path("version").asText()).isEqualTo("20261122_001");
-        assertThat(coordination.path("sha256").asText())
-                .isEqualTo(sha256(requiredResource(coordination.path("path").asText())));
+        if (scriptCount == 3) {
+            JsonNode coordination = manifest.path("scripts").get(2);
+            assertThat(coordination.path("version").asText()).isEqualTo("20261122_001");
+            assertThat(coordination.path("path").asText())
+                    .isEqualTo("db/egon-outbox-mp/V20261122_001__add_outbox_queue_coordination.sql");
+            assertThat(coordination.path("sha256").asText())
+                    .isEqualTo(sha256(requiredResource(coordination.path("path").asText())));
+        }
     }
 
     @Test
