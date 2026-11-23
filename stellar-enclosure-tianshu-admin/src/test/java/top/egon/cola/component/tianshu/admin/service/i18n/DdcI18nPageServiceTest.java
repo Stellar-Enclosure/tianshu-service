@@ -22,7 +22,7 @@ import top.egon.cola.component.tianshu.admin.repository.DdcI18nPageRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcI18nSourceMessageRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcI18nPublishedOverrideRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcMetadataScopeRepository;
-import top.egon.cola.component.tianshu.admin.repository.DdcOperationLogRepository;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogRecorder;
 import top.egon.cola.component.tianshu.admin.security.management.DdcAdminCapability;
 import top.egon.cola.platform.tianquan.jianshen.contract.permission.CanonicalJson;
 import java.time.Clock;
@@ -41,7 +41,7 @@ class DdcI18nPageServiceTest {
     private static final String OPERATION = "2dbecf98-a5e4-41a6-b805-9c2c5387be7c";
     private final DdcI18nPageRepository repository = mock(DdcI18nPageRepository.class);
     private final DdcI18nScopeValidator scopes = mock(DdcI18nScopeValidator.class);
-    private final DdcOperationLogRepository audit = mock(DdcOperationLogRepository.class);
+    private final OperationLogRecorder audit = mock(OperationLogRecorder.class);
     private final DdcCatalogActivationService activations = mock(DdcCatalogActivationService.class);
     private final DdcI18nSourceMessageRepository messages = mock(DdcI18nSourceMessageRepository.class);
     private final DdcI18nPublishedOverrideRepository publications = mock(DdcI18nPublishedOverrideRepository.class);
@@ -111,7 +111,9 @@ class DdcI18nPageServiceTest {
         verify(repository, never()).lockById(anyLong());
         verify(scopes, atLeastOnce()).requireWithMetadataFence(PAGE_SCOPE, DdcAdminCapability.PUBLISH);
         verify(publications, times(1)).insert(any()); verify(repository, times(1)).update(any());
-        verify(audit, times(1)).insert(argThat(log -> log.getOperationType().equals("I18N_PUBLISH") && !log.getOperationContent().contains("Draft")));
+        verify(audit, times(1)).recordInTransaction(argThat(event -> event.getActionCode().equals("TIANSHU_I18N_PUBLISH")
+                && event.getDetails().has("pageId") && !event.getDetails().toString().contains("Draft")),
+                argThat(method -> method.getName().equals("publish")));
         assertThatThrownBy(() -> service.publish(1L, new DdcI18nPublishCommand("5", OPERATION))).isInstanceOf(CommonException.class);
     }
 

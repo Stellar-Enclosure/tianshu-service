@@ -100,10 +100,6 @@ public final class DdcLegacyTableStrategy {
                 "port", "pid", "sdk_version", "status", "last_heartbeat_at", "created_at", "updated_at", "lease_id",
                 "lease_expire_at", "runtime_metadata", "biz_code", "resource_server_id", "resource_version",
                 "credential_id", "admission_expires_at"), Map.of(), null);
-        register(ordered, "ddc_operation_log", List.of("id", "app_code", "env", "namespace", "config_key", "operation_type",
-                "operator", "operator_ip", "operation_content", "created_at", "biz_code"), List.of("app_code", "env",
-                "namespace", "config_key", "operation_type", "operator", "operator_ip", "operation_content", "created_at",
-                "biz_code"), Map.of(), null);
         orderedMappings = List.copyOf(ordered);
         Map<String, DdcLegacyTableMappingBO> index = new LinkedHashMap<>();
         orderedMappings.forEach(mapping -> index.put(mapping.sourceTable(), mapping));

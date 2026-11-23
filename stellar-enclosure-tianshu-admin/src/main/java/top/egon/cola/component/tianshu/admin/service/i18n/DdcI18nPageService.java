@@ -1,8 +1,17 @@
 package top.egon.cola.component.tianshu.admin.service.i18n;
 
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import java.util.concurrent.TimeUnit;
+import java.lang.reflect.Method;
+import org.springframework.util.ReflectionUtils;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogEvent;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogRecorder;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogPhaseEnum;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogOutcomeEnum;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 import top.egon.cola.component.common.core.exception.CommonException;
@@ -11,7 +20,6 @@ import top.egon.cola.component.common.mybatis.business.EgonColaTenantIdProvider;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcCatalogSelectionBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcI18nPageBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcI18nPublishedOverrideBO;
-import top.egon.cola.component.tianshu.admin.model.bo.DdcOperationLogBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcI18nSourceMessageBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcI18nOverrideEntryBO;
 import top.egon.cola.component.tianshu.admin.model.command.DdcI18nCreateCommand;
@@ -27,15 +35,12 @@ import top.egon.cola.component.tianshu.admin.repository.DdcI18nPageRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcI18nPublishedOverrideRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcI18nSourceMessageRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcMetadataScopeRepository;
-import top.egon.cola.component.tianshu.admin.repository.DdcOperationLogRepository;
 import top.egon.cola.component.tianshu.admin.security.management.DdcAdminCapability;
 import top.egon.cola.platform.tianquan.jianshen.contract.permission.CanonicalJson;
 import top.egon.cola.platform.tianquan.jianshen.contract.permission.CatalogScope;
 import top.egon.cola.platform.tianquan.jianshen.contract.permission.I18nSourceRules;
 import top.egon.cola.platform.tianquan.jianshen.contract.permission.PermissionManifest;
 import java.time.Clock;
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
@@ -46,13 +51,21 @@ import java.util.UUID;
 
 /** Human draft and publication orchestration; source imports never call this service. */
 @Service("ddcI18nPageService")
-@RequiredArgsConstructor
+@Slf4j
+@RequiredArgsConstructor(onConstructor_ = @Autowired)
 public class DdcI18nPageService {
+    private static final Method CREATE_METHOD = ReflectionUtils.findMethod(
+            DdcI18nPageService.class, "create", DdcI18nCreateCommand.class);
+    private static final Method REPLACE_DRAFT_METHOD = ReflectionUtils.findMethod(
+            DdcI18nPageService.class, "replaceDraft", Long.class, DdcI18nDraftCommand.class);
+    private static final Method PUBLISH_METHOD = ReflectionUtils.findMethod(
+            DdcI18nPageService.class, "publish", Long.class, DdcI18nPublishCommand.class);
+
     private static final int SOURCE_PAGE_SIZE = 64;
     @Qualifier("ddcI18nPageRepository") private final DdcI18nPageRepository repository;
     @Qualifier("ddcI18nScopeValidator") private final DdcI18nScopeValidator scopes;
     @Qualifier("ddcI18nValidation") private final DdcI18nValidation validation;
-    @Qualifier("ddcOperationLogRepository") private final DdcOperationLogRepository operationLogs;
+    @Qualifier("operationLogRecorder") private final OperationLogRecorder operationLogs;
     @Qualifier("ddcCatalogActivationService") private final DdcCatalogActivationService activations;
     @Qualifier("ddcI18nSourceMessageRepository") private final DdcI18nSourceMessageRepository messages;
     @Qualifier("ddcI18nPublishedOverrideRepository") private final DdcI18nPublishedOverrideRepository publications;
@@ -63,6 +76,7 @@ public class DdcI18nPageService {
     @Qualifier("ddcPublishClock") private final Clock clock;
 
     public DdcI18nPageResult create(DdcI18nCreateCommand command) {
+        long started = System.nanoTime();
         DdcI18nScope scope = new DdcI18nScope(command.bizCode(), command.namespaceCode(), command.env(), command.appCode());
         scopes.require(scope, DdcAdminCapability.WRITE);
         validation.key(command.pageCode()); validation.name(command.name());
@@ -81,7 +95,7 @@ public class DdcI18nPageService {
                     .name(command.name()).defaultLocale(command.defaultLocale()).draftTranslations(draft)
                     .catalogScopeId(Long.valueOf(command.catalogScopeId())).draftActivationVersion(Long.valueOf(command.catalogActivationVersion()))
                     .draftSourceHashes(reviewed).build());
-            audit(page, "I18N_CREATE");
+            audit(page, "TIANSHU_I18N_CREATE", null, CREATE_METHOD, started);
             return result(page, selection, source);
         }));
     }
@@ -127,6 +141,7 @@ public class DdcI18nPageService {
     }
 
     public DdcI18nPageResult replaceDraft(Long id, DdcI18nDraftCommand command) {
+        long started = System.nanoTime();
         var prior = requirePage(id); assertScope(prior, DdcAdminCapability.WRITE);
         var selection = activations.resolve(target(prior), command.catalogActivationVersion());
         var source = sources(selection, prior.getPageCode(), false);
@@ -141,12 +156,13 @@ public class DdcI18nPageService {
             page.setName(command.name()).setDefaultLocale(command.defaultLocale()).setDraftTranslations(draft)
                     .setDraftActivationVersion(Long.valueOf(command.catalogActivationVersion())).setDraftSourceHashes(reviewed);
             page = repository.update(page).orElseThrow(DdcI18nPageService::conflict);
-            audit(page, "I18N_SAVE_DRAFT");
+            audit(page, "TIANSHU_I18N_SAVE_DRAFT", null, REPLACE_DRAFT_METHOD, started);
             return result(page, selection, source);
         }));
     }
 
     public DdcI18nPublishResult publish(Long id, DdcI18nPublishCommand command) {
+        long started = System.nanoTime();
         operation(command.operationId());
         var prior = requirePage(id); assertScope(prior, DdcAdminCapability.PUBLISH);
         String requestDigest = CanonicalJson.digest(Map.of("catalogScopeId", prior.getCatalogScopeId().toString(), "pageId", id.toString(),
@@ -179,7 +195,7 @@ public class DdcI18nPageService {
                     .setPublishedDefaultLocale(snapshot.getDefaultLocale()).setPublishedTranslations(snapshot.getTranslationsJson())
                     .setPublishedSourceHashes(snapshot.getReviewedSourceHashesJson()).setPublishedOperationId(snapshot.getPublishOperationId()).setPublishedAt(publishedAt);
             page = repository.update(page).orElseThrow(DdcI18nPageService::conflict);
-            audit(page, "I18N_PUBLISH");
+            audit(page, "TIANSHU_I18N_PUBLISH", command.operationId(), PUBLISH_METHOD, started);
             return publication(snapshot);
         }));
     }
@@ -327,12 +343,19 @@ public class DdcI18nPageService {
     private void operation(String operationId) {
         if (operationId == null || !UUID.fromString(operationId).toString().equals(operationId)) throw DdcI18nValidation.invalid("A canonical publication operation UUID is required");
     }
-    private void audit(DdcI18nPageBO page, String operation) {
-        var authentication = SecurityContextHolder.getContext().getAuthentication();
-        operationLogs.insert(DdcOperationLogBO.builder().bizCode(page.getBizCode()).appCode(page.getAppCode())
-                .env(page.getEnvCode()).namespace(page.getNamespaceCode()).resourceName(page.getPageCode())
-                .operationType(operation).operator(authentication.getName()).operationContent("pageId=" + page.getId() + ", revision=" + page.getVersion()
-                        + ", publishedVersion=" + page.getPublishedVersion()).createdAt(LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC)).build());
+    private void audit(DdcI18nPageBO page, String action, String operationId, Method method, long started) {
+        var details = JsonNodeFactory.instance.objectNode()
+                .put("pageId", decimal(page.getId()))
+                .put("revision", decimal(page.getVersion()));
+        if (page.getPublishedVersion() != null) {
+            details.put("publishedVersion", decimal(page.getPublishedVersion()));
+        }
+        operationLogs.recordInTransaction(OperationLogEvent.builder()
+                .operationId(operationId).moduleCode("I18N").actionCode(action).resourceType("I18N_PAGE")
+                .resourceId(decimal(page.getId())).bizCode(page.getBizCode()).appCode(page.getAppCode())
+                .env(page.getEnvCode()).namespaceCode(page.getNamespaceCode()).phase(OperationLogPhaseEnum.COMMAND)
+                .outcome(OperationLogOutcomeEnum.SUCCEEDED)
+                .durationMs(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).details(details).build(), method);
     }
     private static String decimal(Long value) { return value == null ? null : Long.toString(value); }
     private static CommonException conflict() { return new CommonException(56404, "TIANSHU_I18N_REVISION_CONFLICT", "The page changed; reload before saving or publishing"); }

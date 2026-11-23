@@ -1,31 +1,36 @@
 package top.egon.cola.component.tianshu.admin.service.list;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import java.util.concurrent.TimeUnit;
+import java.lang.reflect.Method;
+import org.springframework.util.ReflectionUtils;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogEvent;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogRecorder;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogPhaseEnum;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogOutcomeEnum;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 import top.egon.cola.component.common.core.exception.CommonException;
 import top.egon.cola.component.common.core.pojo.PageQuery;
 import top.egon.cola.component.common.core.excel.XlsxExport;
-import top.egon.cola.component.tianshu.admin.model.bo.DdcOperationLogBO;
 import top.egon.cola.component.tianshu.admin.model.command.DdcNamespaceExportCommand;
 import top.egon.cola.component.tianshu.admin.model.convertor.DdcNamespaceResultConverter;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcNamespaceResult;
 import top.egon.cola.component.tianshu.admin.permission.DdcPermissionCodes;
 import top.egon.cola.component.tianshu.admin.service.i18n.DdcAdminUiI18nService;
 import top.egon.cola.component.tianshu.admin.service.metadata.DdcNamespaceService;
-import top.egon.cola.component.tianshu.admin.repository.DdcOperationLogRepository;
 import top.egon.cola.platform.tianquan.jianshen.contract.authorization.DataScopeDecision;
 import top.egon.cola.platform.tianquan.jianshen.contract.authorization.SystemAuthorizationSnapshot;
 import top.egon.cola.platform.tianquan.jianshen.contract.permission.I18nSourceRules;
-import top.egon.cola.platform.tianquan.jianshen.contract.permission.CanonicalJson;
 import top.egon.cola.platform.tianquan.jianshen.starter.field.PermissionOutputProjection;
 import top.egon.cola.platform.tianquan.jianshen.starter.permission.PermissionExecutionGuard;
 
 import java.io.IOException;
-import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -33,8 +38,12 @@ import java.util.Objects;
 
 /** Bounded synchronous export over the same namespace search and authorized DTO projection. */
 @Service("ddcNamespaceExportService")
-@RequiredArgsConstructor
+@Slf4j
+@RequiredArgsConstructor(onConstructor_ = @Autowired)
 public class DdcNamespaceExportService {
+    private static final Method EXPORT_METHOD = ReflectionUtils.findMethod(
+            DdcNamespaceExportService.class, "export", DdcNamespaceExportCommand.class);
+
     private static final String EXPORT_API = "tianshu.api.namespace.export";
     private static final int MAX_ROWS = 50_000;
     private static final long MAX_BYTES = 64L * 1024 * 1024;
@@ -45,11 +54,13 @@ public class DdcNamespaceExportService {
     @Qualifier("ddcListTemplateService") private final DdcListTemplateService templates;
     @Qualifier("ddcAdminUiI18nService") private final DdcAdminUiI18nService i18n;
     @Qualifier("ddcNamespaceDataScopeGuard") private final DdcNamespaceDataScopeGuard dataScope;
-    @Qualifier("ddcOperationLogRepository") private final DdcOperationLogRepository audit;
+    @Qualifier("operationLogRecorder") private final OperationLogRecorder audit;
     private final PermissionOutputProjection projection;
     private final PermissionExecutionGuard execution;
+    @Qualifier("ddcMetadataTransactionTemplate") private final TransactionTemplate auditTransaction;
 
     public byte[] export(DdcNamespaceExportCommand command) throws IOException {
+        long started = System.nanoTime();
         Objects.requireNonNull(command, "export command");
         if (!List.of("FILTERED", "PAGE").contains(command.range()) || command.pageNo() < 1 || command.pageNo() > MAX_ROWS
                 || command.pageSize() < 1 || command.pageSize() > PageQuery.MAX_PAGE_SIZE) throw invalid();
@@ -78,7 +89,7 @@ public class DdcNamespaceExportService {
                         verifyAuthorization(initial, execution.require(EXPORT_API).snapshot());
                         verifyView(command, templates.load(DdcNamespaceListDefinition.DEFINITION.pageResourceKey(),
                                 DdcNamespaceListDefinition.DEFINITION.listKey(), command.catalogVersion(), false));
-                    }, count -> audit(initial, command, count));
+                    }, count -> audit(initial, command, count, started));
         } catch (XlsxExport.ExportLimitException limit) { throw tooLarge(); }
     }
 
@@ -103,14 +114,19 @@ public class DdcNamespaceExportService {
         return rows;
     }
 
-    private void audit(SystemAuthorizationSnapshot snapshot, DdcNamespaceExportCommand command, int count) {
-        var view = snapshot.permissionSnapshot(); var scope = view.catalogScope();
-        String actor = CanonicalJson.digest(Map.of("issuer", view.issuer(), "subject", view.subject()));
-        audit.insert(DdcOperationLogBO.builder().bizCode(scope.businessCode()).appCode(scope.applicationCode())
-                .env(scope.environment()).namespace(scope.namespaceCode()).resourceName("tianshu.page.namespaces")
-                .operationType("NAMESPACE_EXPORT_GENERATED").operator("user:" + actor)
-                .operationContent("range=" + command.range() + ", rows=" + count + ", templateId=" + command.templateId())
-                .createdAt(LocalDateTime.ofInstant(Instant.now(), ZoneOffset.UTC)).build());
+    private void audit(SystemAuthorizationSnapshot snapshot, DdcNamespaceExportCommand command, int count, long started) {
+        var scope = snapshot.permissionSnapshot().catalogScope();
+        var details = JsonNodeFactory.instance.objectNode().put("range", command.range()).put("rows", count);
+        if (command.templateId() != null) {
+            details.put("templateId", command.templateId());
+        }
+        var event = OperationLogEvent.builder()
+                .moduleCode("NAMESPACE").actionCode("TIANSHU_NAMESPACE_EXPORT_GENERATED").resourceType("NAMESPACE")
+                .bizCode(scope.businessCode()).appCode(scope.applicationCode()).env(scope.environment())
+                .namespaceCode(scope.namespaceCode()).phase(OperationLogPhaseEnum.COMMAND)
+                .outcome(OperationLogOutcomeEnum.SUCCEEDED)
+                .durationMs(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).details(details).build();
+        auditTransaction.executeWithoutResult(status -> audit.recordInTransaction(event, EXPORT_METHOD));
     }
 
     private static void verifyView(DdcNamespaceExportCommand command, DdcListTemplateService.View view) {

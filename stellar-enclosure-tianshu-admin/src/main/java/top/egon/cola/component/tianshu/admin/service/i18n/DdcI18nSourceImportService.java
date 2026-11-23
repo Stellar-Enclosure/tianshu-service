@@ -1,6 +1,16 @@
 package top.egon.cola.component.tianshu.admin.service.i18n;
 
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import java.util.concurrent.TimeUnit;
+import java.lang.reflect.Method;
+import org.springframework.util.ReflectionUtils;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogEvent;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogRecorder;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogPhaseEnum;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogOutcomeEnum;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
@@ -10,7 +20,6 @@ import top.egon.cola.component.tianshu.admin.model.bo.DdcI18nImportReceiptBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcI18nSourceMessageBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcI18nSourceVersionBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcMetadataScopeBO;
-import top.egon.cola.component.tianshu.admin.model.bo.DdcOperationLogBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcResourceMetadataProjectionBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcSourceImportGrantBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcSourceImportIdentityBO;
@@ -18,7 +27,6 @@ import top.egon.cola.component.tianshu.admin.repository.DdcI18nImportReceiptRepo
 import top.egon.cola.component.tianshu.admin.repository.DdcI18nSourceMessageRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcI18nSourceVersionRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcMetadataScopeRepository;
-import top.egon.cola.component.tianshu.admin.repository.DdcOperationLogRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcResourceMetadataProjectionRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcSourceImportGrantRepository;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextDTO;
@@ -33,8 +41,6 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.SourceImport
 import top.egon.cola.platform.tianquan.jianshen.contract.permission.SourceImportRequest;
 
 import java.time.Clock;
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -47,15 +53,19 @@ import java.util.UUID;
 
 /** Registers immutable candidate metadata; human translation pages and activation pointers are not dependencies. */
 @Service("ddcI18nSourceImportService")
-@RequiredArgsConstructor
+@Slf4j
+@RequiredArgsConstructor(onConstructor_ = @Autowired)
 public class DdcI18nSourceImportService {
+    private static final Method IMPORT_SOURCE_METHOD = ReflectionUtils.findMethod(
+            DdcI18nSourceImportService.class, "importSource", DdcSourceImportIdentityBO.class, SourceImportRequest.class);
+
     @Qualifier("ddcMetadataScopeRepository") private final DdcMetadataScopeRepository scopes;
     @Qualifier("ddcSourceImportGrantRepository") private final DdcSourceImportGrantRepository grants;
     @Qualifier("ddcI18nSourceVersionRepository") private final DdcI18nSourceVersionRepository sources;
     @Qualifier("ddcResourceMetadataProjectionRepository") private final DdcResourceMetadataProjectionRepository projections;
     @Qualifier("ddcI18nSourceMessageRepository") private final DdcI18nSourceMessageRepository messages;
     @Qualifier("ddcI18nImportReceiptRepository") private final DdcI18nImportReceiptRepository receipts;
-    @Qualifier("ddcOperationLogRepository") private final DdcOperationLogRepository operationLogs;
+    @Qualifier("operationLogRecorder") private final OperationLogRecorder operationLogs;
     @Qualifier("ddcTenantContextExecutor") private final DdcTenantContextExecutor contexts;
     @Qualifier("ddcMetadataTransactionTemplate") private final TransactionTemplate transaction;
     @Qualifier("ddcPublishClock") private final Clock clock;
@@ -63,12 +73,13 @@ public class DdcI18nSourceImportService {
     private final PermissionManifestCanonicalizer canonicalizer = new PermissionManifestCanonicalizer();
 
     public SourceImportReceipt importSource(DdcSourceImportIdentityBO identity, SourceImportRequest request) {
+        long started = System.nanoTime();
         Objects.requireNonNull(request, "source import request");
         requireTenant(identity, request.scope());
         validatePages(request.manifest());
         String manifest = canonicalizer.canonicalize(request.manifest());
         DdcTenantContextDTO context = context(identity);
-        return contexts.call(context, () -> Objects.requireNonNull(transaction.execute(status -> register(identity, request, manifest))));
+        return contexts.call(context, () -> Objects.requireNonNull(transaction.execute(status -> register(identity, request, manifest, started))));
     }
 
     public SourceImportReceipt receipt(DdcSourceImportIdentityBO identity, CatalogScope scope, String producerId, String operationId) {
@@ -89,7 +100,7 @@ public class DdcI18nSourceImportService {
         })));
     }
 
-    private SourceImportReceipt register(DdcSourceImportIdentityBO identity, SourceImportRequest request, String manifest) {
+    private SourceImportReceipt register(DdcSourceImportIdentityBO identity, SourceImportRequest request, String manifest, long started) {
         Long scopeId = Long.valueOf(request.scope().catalogScopeId());
         DdcSourceImportGrantBO grant = authorizeAndLock(identity, request.scope(), request.producerId());
         var previous = receipts.findByOperation(scopeId, request.producerId(), request.operationId());
@@ -131,13 +142,17 @@ public class DdcI18nSourceImportService {
                 .requestDigest(request.requestDigest()).grantId(grant.getId()).grantVersion(grant.getVersion())
                 .publisherIssuer(identity.issuer().toString()).publisherClientId(identity.principal().clientId())
                 .responseJson(json.writeReceipt(receipt)).build());
-        operationLogs.insert(DdcOperationLogBO.builder().bizCode(request.scope().businessCode()).appCode(request.scope().applicationCode())
-                .env(request.scope().environment()).namespace(request.scope().namespaceCode()).resourceName(request.producerId())
-                .operationType("METADATA_SOURCE_IMPORT").operator("service-grant:" + grant.getId())
-                .operationContent(CanonicalJson.write(Map.of("operationId", request.operationId(), "catalogScopeId", request.scope().catalogScopeId(),
-                        "producerVersion", request.producerVersion(), "sourceVersion", request.sourceVersion(), "receiptId", receipt.receiptId(),
-                        "grantId", grant.getId().toString(), "grantVersion", grant.getVersion().toString(), "publisher", identity.principal().clientId())))
-                .createdAt(LocalDateTime.ofInstant(importedAt, ZoneOffset.UTC)).build());
+        var details = JsonNodeFactory.instance.objectNode()
+                .put("catalogScopeId", request.scope().catalogScopeId()).put("producerVersion", request.producerVersion())
+                .put("sourceVersion", request.sourceVersion()).put("receiptId", receipt.receiptId());
+        operationLogs.recordInTransaction(OperationLogEvent.builder()
+                .operationId(request.operationId()).moduleCode("I18N").actionCode("TIANSHU_METADATA_SOURCE_IMPORT")
+                .resourceType("METADATA_SOURCE").resourceId(request.producerId())
+                .bizCode(request.scope().businessCode()).appCode(request.scope().applicationCode())
+                .env(request.scope().environment()).namespaceCode(request.scope().namespaceCode())
+                .phase(OperationLogPhaseEnum.COMMAND).outcome(OperationLogOutcomeEnum.SUCCEEDED)
+                .durationMs(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).details(details)
+                .build(), IMPORT_SOURCE_METHOD);
         return receipt;
     }
 

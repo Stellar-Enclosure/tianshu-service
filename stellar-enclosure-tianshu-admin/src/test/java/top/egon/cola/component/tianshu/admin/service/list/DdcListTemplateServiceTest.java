@@ -16,7 +16,7 @@ import top.egon.cola.component.tianshu.admin.model.bo.DdcListTemplateBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcMetadataScopeBO;
 import top.egon.cola.component.tianshu.admin.model.command.DdcListTemplateCommand;
 import top.egon.cola.component.tianshu.admin.repository.DdcMetadataScopeRepository;
-import top.egon.cola.component.tianshu.admin.repository.DdcOperationLogRepository;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogRecorder;
 import top.egon.cola.component.tianshu.admin.service.metadata.DdcScopeGate;
 import top.egon.cola.component.tianshu.admin.security.management.DdcListDelegationVerifier;
 import top.egon.cola.component.tianshu.api.list.ListDefinition;
@@ -60,7 +60,7 @@ class DdcListTemplateServiceTest {
     private static final Set<String> GRANTS = Set.of("TIANSHU_READ", "TIANSHU_NAMESPACE_TEMPLATE_PERSONAL");
     private final DdcListTemplateMapper mapper = mock(DdcListTemplateMapper.class);
     private final DdcMetadataScopeRepository scopes = mock(DdcMetadataScopeRepository.class);
-    private final DdcOperationLogRepository audit = mock(DdcOperationLogRepository.class);
+    private final OperationLogRecorder audit = mock(OperationLogRecorder.class);
     private final DdcScopeGate scopeGate = mock(DdcScopeGate.class);
     private final DdcListMetadataService metadata = mock(DdcListMetadataService.class);
     private final EgonColaIdentifierGenerator ids = mock(EgonColaIdentifierGenerator.class);
@@ -122,6 +122,10 @@ class DdcListTemplateServiceTest {
         verify(mapper).insertColumn(20L, 10L, 123L, "bizCode", 0);
         verify(mapper).insertColumn(20L, 10L, 123L, "description", 1);
         verify(mapper, never()).insertColumn(20L, 10L, 123L, "namespace", 2);
+        verify(audit).recordInTransaction(argThat(event ->
+                "TIANSHU_LIST_TEMPLATE_UPDATE".equals(event.getActionCode())
+                        && event.getDetails().path("templateId").asText().equals("123")),
+                argThat(method -> method.getName().equals("save")));
     }
 
     @Test void aUserCannotSubmitAForbiddenColumnOrEditAnotherUsersTemplate() throws Exception {

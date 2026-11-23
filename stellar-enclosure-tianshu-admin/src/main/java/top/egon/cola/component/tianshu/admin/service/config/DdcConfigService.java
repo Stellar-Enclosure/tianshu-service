@@ -1,10 +1,16 @@
 package top.egon.cola.component.tianshu.admin.service.config;
 
 import jakarta.validation.Valid;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogEvent;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogPhaseEnum;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogOutcomeEnum;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogRecorder;
+import java.lang.reflect.Method;
+import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.MDC;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
@@ -12,7 +18,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.annotation.Validated;
 import top.egon.cola.component.common.core.pojo.PageQuery;
 import top.egon.cola.component.tianshu.admin.common.DdcAdminException;
-import top.egon.cola.component.tianshu.admin.config.DdcAdminProperties;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcConfigItemBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcConfigVersionBO;
 import top.egon.cola.component.tianshu.admin.model.dto.DdcConfigCreateRequest;
@@ -20,7 +25,6 @@ import top.egon.cola.component.tianshu.admin.model.dto.DdcConfigQueryRequest;
 import top.egon.cola.component.tianshu.admin.model.dto.DdcConfigPreviewQuery;
 import top.egon.cola.component.tianshu.admin.model.dto.DdcConfigRollbackRequest;
 import top.egon.cola.component.tianshu.admin.model.dto.DdcConfigUpdateRequest;
-import top.egon.cola.component.tianshu.admin.model.bo.DdcOperationLogBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishTaskBO;
 import top.egon.cola.component.tianshu.admin.model.enums.ChangeType;
 import top.egon.cola.component.tianshu.admin.model.enums.PublishStatus;
@@ -36,7 +40,6 @@ import top.egon.cola.component.tianshu.admin.model.vo.DdcConfigPreviewVO.ConfigS
 import top.egon.cola.component.tianshu.admin.model.vo.DdcConfigPreviewVO.ConfigTargetVO;
 import top.egon.cola.component.tianshu.admin.repository.DdcConfigItemRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcConfigVersionRepository;
-import top.egon.cola.component.tianshu.admin.repository.DdcOperationLogRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcNamespaceEnvAppBindingRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcPublishTaskRepository;
 import top.egon.cola.component.tianshu.format.DdcConfigFormatStrategyRegistry;
@@ -74,6 +77,13 @@ public class DdcConfigService {
     public static final String DEFAULT_RESOURCE_NAME = DdcYamlConfigFormatStrategy.DEFAULT_RESOURCE_NAME;
     public static final String YAML_FORMAT = DdcConfigFormat.YAML.name();
 
+    private static final Method CREATE_METHOD = sourceMethod("create", DdcConfigCreateRequest.class, String.class);
+    private static final Method UPSERT_METHOD = sourceMethod("upsert", DdcConfigCreateRequest.class, Long.class, String.class);
+    private static final Method UPDATE_METHOD = sourceMethod("update", DdcConfigUpdateRequest.class, String.class);
+    private static final Method DELETE_BY_ID_METHOD = sourceMethod("delete", String.class, String.class, String.class);
+    private static final Method DELETE_BY_SCOPE_METHOD = sourceMethod("delete", String.class, String.class, String.class, Long.class, String.class, String.class);
+    private static final Method ROLLBACK_METHOD = sourceMethod("rollback", DdcConfigRollbackRequest.class, String.class);
+
     private static final Set<String> SUPPORTED_RESOURCE_NAMES = Set.of(DEFAULT_RESOURCE_NAME);
     private static final List<String> PREPARED_PUBLISH_STATUSES = List.of(
             PublishStatus.PUBLISHING.name(), PublishStatus.UNKNOWN.name());
@@ -82,29 +92,13 @@ public class DdcConfigService {
     @Qualifier("ddcConfigVersionRepository") private final DdcConfigVersionRepository versionRepository;
     @Qualifier("ddcConfigItemConverterImpl") private final DdcConfigItemConverter itemConverter;
     @Qualifier("ddcConfigVersionConverterImpl") private final DdcConfigVersionConverter versionConverter;
-    @Qualifier("ddcOperationLogRepository") private final DdcOperationLogRepository operationLogRepository;
+    @Qualifier("operationLogRecorder") private final OperationLogRecorder operationLogRecorder;
     @Qualifier("ddcNamespaceEnvAppBindingRepository") private final DdcNamespaceEnvAppBindingRepository bindingRepository;
     @Qualifier("ddcPublishTaskRepository") private final DdcPublishTaskRepository publishTaskRepository;
     @Qualifier("ddcYamlConfigValidator") private final DdcYamlConfigValidator yamlValidator;
     @Qualifier("ddcConfigManifestFactory") private final DdcConfigManifestFactory manifests;
     @Qualifier("ddcConfigPublicationPolicyResolver") private final DdcConfigManifestFactory.PublicationPolicyResolver policies;
     @Qualifier("ddcTenantRegistry") private final DdcTenantRegistry tenants;
-
-    public DdcConfigService(
-            @Qualifier("ddcConfigItemRepository") DdcConfigItemRepository configItemRepository,
-            @Qualifier("ddcConfigVersionRepository") DdcConfigVersionRepository versionRepository,
-            @Qualifier("ddcConfigItemConverterImpl") DdcConfigItemConverter itemConverter,
-            @Qualifier("ddcConfigVersionConverterImpl") DdcConfigVersionConverter versionConverter,
-            @Qualifier("ddcOperationLogRepository") DdcOperationLogRepository operationLogRepository,
-            @Qualifier("ddcNamespaceEnvAppBindingRepository") DdcNamespaceEnvAppBindingRepository bindingRepository,
-            @Qualifier("ddcPublishTaskRepository") DdcPublishTaskRepository publishTaskRepository,
-            ObjectProvider<DdcAdminProperties> propertiesProvider) {
-        this(configItemRepository, versionRepository, itemConverter, versionConverter, operationLogRepository,
-                bindingRepository, publishTaskRepository,
-                new DdcYamlConfigValidator(propertiesProvider.getIfAvailable(DdcAdminProperties::new).getMaxConfigBytes()),
-                new DdcConfigManifestFactory(new com.fasterxml.jackson.databind.ObjectMapper()),
-                (tenant, scope) -> { throw new DdcAdminException("TIANSHU_CONFIG_PUBLICATION_POLICY_UNAVAILABLE"); }, null);
-    }
 
     @Transactional(readOnly = true)
     public DdcConfigPreviewVO preview(@Valid DdcConfigPreviewQuery query) {
@@ -188,22 +182,28 @@ public class DdcConfigService {
 
     @Transactional
     public DdcConfigVO create(@Valid DdcConfigCreateRequest request, String operator) {
+        long startedAt = System.nanoTime();
         currentTenant();
         validateDraft(request);
         findScopeConfig(request.getBizCode(), request.getEnv(), request.getAppCode())
                 .ifPresent(item -> { throw new DdcAdminException("config item already exists"); });
-        return itemConverter.toConfigVO(createDraft(request, operator));
+        DdcConfigItemBO saved = createDraft(request, operator);
+        saveOperation(saved, "TIANSHU_CONFIG_CREATE", CREATE_METHOD, startedAt);
+        return itemConverter.toConfigVO(saved);
     }
 
     @Transactional
     public DdcConfigVO upsert(@Valid DdcConfigCreateRequest request, Long expectedVersion, String operator) {
+        long startedAt = System.nanoTime();
         currentTenant();
         validateDraft(request);
         DdcConfigItemBO existing = findScopeConfig(request.getBizCode(), request.getEnv(), request.getAppCode())
                 .orElse(null);
         if (existing == null) {
             if (expectedVersion != null && expectedVersion != 0L) throw new DdcAdminException("config version changed");
-            return itemConverter.toConfigVO(createDraft(request, operator));
+            DdcConfigItemBO saved = createDraft(request, operator);
+            saveOperation(saved, "TIANSHU_CONFIG_UPSERT", UPSERT_METHOD, startedAt);
+            return itemConverter.toConfigVO(saved);
         }
         if (Boolean.TRUE.equals(existing.getDeleted())) throw new DdcAdminException("deleted config resource cannot be reused");
         if (!Objects.equals(request.getResourceName(), existing.getResourceName())
@@ -218,7 +218,7 @@ public class DdcConfigService {
                 .setCurrentVersion(existing.getCurrentVersion() + 1).setUpdatedAt(LocalDateTime.now(java.time.ZoneOffset.UTC));
         DdcConfigItemBO saved = configItemRepository.update(existing);
         saveVersion(saved, oldContent, saved.getContent(), ChangeType.UPDATE, "upsert config draft", operator);
-        saveOperation(saved, ChangeType.UPDATE, operator, "upsert config draft");
+        saveOperation(saved, "TIANSHU_CONFIG_UPSERT", UPSERT_METHOD, startedAt);
         return itemConverter.toConfigVO(saved);
     }
 
@@ -231,12 +231,12 @@ public class DdcConfigService {
                 .publishedVersion(null).enabled(true).deleted(false).createdAt(now).updatedAt(now).build();
         DdcConfigItemBO saved = configItemRepository.insert(command);
         saveVersion(saved, null, saved.getContent(), ChangeType.CREATE, "create config", operator);
-        saveOperation(saved, ChangeType.CREATE, operator, "create config");
         return saved;
     }
 
     @Transactional
     public DdcConfigVO update(@Valid DdcConfigUpdateRequest request, String operator) {
+        long startedAt = System.nanoTime();
         currentTenant();
         if (request == null) throw new DdcAdminException("config update request is required");
         DdcConfigItemBO item = getConfig(request.getId());
@@ -248,42 +248,45 @@ public class DdcConfigService {
                 .setUpdatedAt(LocalDateTime.now(java.time.ZoneOffset.UTC));
         DdcConfigItemBO saved = configItemRepository.update(item);
         saveVersion(saved, oldContent, saved.getContent(), ChangeType.UPDATE, request.getChangeReason(), operator);
-        saveOperation(saved, ChangeType.UPDATE, operator, request.getChangeReason());
+        saveOperation(saved, "TIANSHU_CONFIG_UPDATE", UPDATE_METHOD, startedAt);
         return itemConverter.toConfigVO(saved);
     }
 
     @Transactional
     public DdcConfigVO delete(String configPublicId, String operator, String reason) {
+        long startedAt = System.nanoTime();
         currentTenant();
         DdcConfigItemBO item = getConfig(configPublicId);
         if (Boolean.TRUE.equals(item.getDeleted())) return config(item);
-        return delete(item, operator, reason);
+        return delete(item, operator, reason, DELETE_BY_ID_METHOD, startedAt);
     }
 
     @Transactional
     public DdcConfigVO delete(String bizCode, String env, String appCode, Long expectedVersion,
             String operator, String reason) {
+        long startedAt = System.nanoTime();
         currentTenant();
         DdcConfigItemBO item = findScopeConfig(bizCode, env, appCode).orElse(null);
         if (item == null) return null;
         if (Boolean.TRUE.equals(item.getDeleted())) return config(item);
         if (expectedVersion == null || !Objects.equals(expectedVersion, item.getCurrentVersion()))
             throw new DdcAdminException("config version changed");
-        return delete(item, operator, reason);
+        return delete(item, operator, reason, DELETE_BY_SCOPE_METHOD, startedAt);
     }
 
-    private DdcConfigVO delete(DdcConfigItemBO item, String operator, String reason) {
+    private DdcConfigVO delete(DdcConfigItemBO item, String operator, String reason, Method sourceMethod, long startedAt) {
         String oldContent = item.getContent();
         item.setDeleted(true).setEnabled(false).setCurrentVersion(item.getCurrentVersion() + 1)
                 .setUpdatedAt(LocalDateTime.now(java.time.ZoneOffset.UTC));
         DdcConfigItemBO saved = configItemRepository.update(item);
         saveVersion(saved, oldContent, oldContent, ChangeType.DELETE, reason, operator);
-        saveOperation(saved, ChangeType.DELETE, operator, reason);
+        saveOperation(saved, "TIANSHU_CONFIG_DELETE", sourceMethod, startedAt);
         return config(saved);
     }
 
     @Transactional
     public DdcConfigVO rollback(@Valid DdcConfigRollbackRequest request, String operator) {
+        long startedAt = System.nanoTime();
         var tenant = currentTenant();
         DdcConfigItemBO item = getConfig(request.getConfigId());
         DdcConfigVersionBO target = versionRepository.findByConfigIdAndVersion(request.getConfigId(), request.getVersion())
@@ -303,7 +306,7 @@ public class DdcConfigService {
                 .setCurrentVersion(item.getCurrentVersion() + 1).setUpdatedAt(LocalDateTime.now(java.time.ZoneOffset.UTC));
         DdcConfigItemBO saved = configItemRepository.update(item);
         saveVersion(saved, oldContent, saved.getContent(), ChangeType.ROLLBACK, request.getReason(), operator, fixedPolicy);
-        saveOperation(saved, ChangeType.ROLLBACK, operator, request.getReason());
+        saveOperation(saved, "TIANSHU_CONFIG_ROLLBACK", ROLLBACK_METHOD, startedAt);
         return config(saved);
     }
 
@@ -410,18 +413,22 @@ public class DdcConfigService {
         return new DdcConfigScopeVO(Long.toString(tenant.tenantId()), item.getBizCode(), item.getEnv(), item.getAppCode(), item.getResourceName());
     }
 
-    private void saveOperation(DdcConfigItemBO item, ChangeType changeType, String operator, String content) {
-        DdcOperationLogBO operation = new DdcOperationLogBO();
-        operation.setBizCode(item.getBizCode());
-        operation.setAppCode(item.getAppCode());
-        operation.setEnv(item.getEnv());
-        operation.setNamespace(null);
-        operation.setResourceName(item.getResourceName());
-        operation.setOperationType(changeType.name());
-        operation.setOperator(operator);
-        operation.setOperationContent(content);
-        operation.setCreatedAt(LocalDateTime.now(java.time.ZoneOffset.UTC));
-        operationLogRepository.insert(operation);
+    private void saveOperation(DdcConfigItemBO item, String actionCode, Method sourceMethod, long startedAt) {
+        operationLogRecorder.recordInTransaction(OperationLogEvent.builder()
+                .moduleCode("CONFIG").actionCode(actionCode).resourceType("CONFIG").resourceId(item.getPublicId())
+                .bizCode(item.getBizCode()).env(item.getEnv()).appCode(item.getAppCode())
+                .phase(OperationLogPhaseEnum.COMMAND).outcome(OperationLogOutcomeEnum.SUCCEEDED)
+                .durationMs(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt))
+                .details(JsonNodeFactory.instance.objectNode().put("revision", Long.toString(item.getCurrentVersion())))
+                .build(), sourceMethod);
+    }
+
+    private static Method sourceMethod(String name, Class<?>... parameters) {
+        try {
+            return DdcConfigService.class.getMethod(name, parameters);
+        } catch (NoSuchMethodException invalidDeclaration) {
+            throw new IllegalStateException("TIANSHU_CONFIG_OPERATION_METHOD_INVALID", invalidDeclaration);
+        }
     }
 
     private Optional<DdcConfigVersionBO> publishedVersion(DdcConfigItemBO item) {

@@ -123,6 +123,72 @@ class DdcConfigWorkerApplicationTest {
     }
 
     @Test
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    void workerAuditBoundaryPinsPublisherSourceAndDisablesObserverCaptureAndEveryTarget() throws Exception {
+        String prefix = "egon.cola.component.mybatis-plus.operation-log.";
+        for (String role : List.of("config-publisher", "config-observer")) {
+            var app = (SpringApplication) Class.forName(CONFIGURATION).getMethod("application", String.class).invoke(null, role);
+            var env = new MockEnvironment().withProperty(prefix + "target.enabled", "true")
+                    .withProperty(prefix + "enabled", "true").withProperty(prefix + "source-service", "tianshu-admin");
+            var listener = app.getListeners().stream().filter(value -> value.getClass().getName().endsWith("$WorkerBoundaryListener"))
+                    .findFirst().orElseThrow();
+            ((ApplicationListener) listener).onApplicationEvent(new ApplicationEnvironmentPreparedEvent(
+                    new DefaultBootstrapContext(), app, new String[0], env));
+            assertThat(env.getProperty(prefix + "target.enabled", Boolean.class)).as(role).isFalse();
+            if ("config-publisher".equals(role)) {
+                assertThat(env.getProperty(prefix + "source-service")).isEqualTo("tianshu-config-publisher");
+            } else {
+                assertThat(env.getProperty(prefix + "enabled", Boolean.class)).isFalse();
+            }
+        }
+    }
+
+    @Test
+    void publisherImportsOnlyTheAuditProducerAndNeverItsTargetHandler() throws Exception {
+        var imported = Class.forName(CONFIGURATION + "$PublisherApplication")
+                .getAnnotation(org.springframework.context.annotation.Import.class).value();
+        assertThat(imported).extracting(Class::getName)
+                .contains("top.egon.cola.component.tianshu.admin.outbox.DdcOperationLogOutboxAdapter$ProducerConfiguration")
+                .noneMatch(name -> name.endsWith("$AdminConsumptionConfiguration"));
+        var auto = org.springframework.core.annotation.AnnotatedElementUtils.findMergedAnnotation(
+                Class.forName(CONFIGURATION + "$PublisherApplication"), ImportAutoConfiguration.class);
+        assertThat(auto).isNotNull();
+        assertThat(auto.classes()).extracting(Class::getSimpleName).contains("EgonOperationLogAutoConfiguration");
+    }
+
+    @Test
+    void publisherAuditContextComesFromTheBoundTenantAndUsesAServiceMessageIdentity() throws Exception {
+        Class<?> publisher = Class.forName(CONFIGURATION + "$PublisherApplication");
+        var factory = publisher.getDeclaredMethod("operationLogContextProvider",
+                top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantRegistry.class);
+        assertThat(factory.trySetAccessible()).isTrue();
+        var tenants = mock(top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantRegistry.class);
+        org.mockito.Mockito.when(tenants.requireEnabledTenant(23L)).thenReturn(
+                new top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantBindingDTO(23L, "tenant-23", true));
+        @SuppressWarnings("unchecked")
+        var context = (java.util.function.Supplier<top.egon.cola.component.common.mybatis.operationlog.OperationLogContextDTO>)
+                factory.invoke(publisher.getConstructor().newInstance(), tenants);
+        var previous = org.slf4j.MDC.getCopyOfContextMap();
+        try {
+            org.slf4j.MDC.clear();
+            assertThatThrownBy(context::get).hasMessage("OPERATION_LOG_CONTEXT_INVALID");
+            org.slf4j.MDC.put("tenantId", "23");
+            org.slf4j.MDC.put("userId", "untrusted-http-user");
+            var trusted = context.get();
+            assertThat(trusted.tenantId()).isEqualTo(23L);
+            assertThat(trusted.actorType()).isEqualTo("SERVICE");
+            assertThat(trusted.actorId()).isEqualTo("tianshu-config-publisher");
+            assertThat(trusted.triggerType()).isEqualTo("MESSAGE");
+            assertThat(trusted.httpMethod()).isNull();
+            assertThat(trusted.requestUrl()).isNull();
+            assertThat(trusted.routePattern()).isNull();
+            verify(tenants).requireEnabledTenant(23L);
+        } finally {
+            if (previous == null) org.slf4j.MDC.clear(); else org.slf4j.MDC.setContextMap(previous);
+        }
+    }
+
+    @Test
     void workerAutoConfigurationIsAnExactWhitelistWithoutWebSecurityRedisDdcOrRpcDiscovery() throws Exception {
         Class<?> persistence = Class.forName(CONFIGURATION + "$PersistenceApplication");
         var imported = org.springframework.core.annotation.AnnotatedElementUtils

@@ -24,6 +24,12 @@ import top.egon.cola.component.tianshu.admin.repository.DdcPublishTaskRepository
 import top.egon.cola.component.tianshu.admin.service.publish.DdcConfigBaselineReconciler.TargetResultVO;
 import top.egon.cola.component.tianshu.model.config.DdcConfigScopeVO;
 
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogEvent;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogPhaseEnum;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogOutcomeEnum;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogRecorder;
+import java.lang.reflect.Method;
+import java.util.concurrent.TimeUnit;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -36,6 +42,7 @@ import java.util.Optional;
 @Validated
 @RequiredArgsConstructor(onConstructor_ = @Autowired)
 public class DdcNativeConfigRolloutService {
+    private static final Method RECONCILE_NATIVE_METHOD = sourceMethod();
     @NonNull @Qualifier("ddcConfigItemRepository") private final DdcConfigItemRepository items;
     @NonNull @Qualifier("ddcConfigVersionRepository") private final DdcConfigVersionRepository versions;
     @NonNull @Qualifier("ddcPublishTaskRepository") private final DdcPublishTaskRepository tasks;
@@ -44,9 +51,11 @@ public class DdcNativeConfigRolloutService {
     @NonNull @Qualifier("ddcNativeRolloutTransactionTemplate") private final TransactionTemplate transactions;
     @NonNull @Qualifier("jacksonObjectMapper") private final ObjectMapper json;
     @NonNull @Qualifier("ddcPublishClock") private final Clock clock;
+    @NonNull @Qualifier("operationLogRecorder") private final OperationLogRecorder operationLogRecorder;
 
     public boolean reconcileNative(@NotBlank String changeId, @Positive long configId, @Positive long revision,
             @Positive int attempt, @NotBlank String eventId) {
+        long startedAt = System.nanoTime();
         if (TransactionSynchronizationManager.isActualTransactionActive()) {
             throw new IllegalStateException("TIANSHU_CONFIG_ROLLOUT_TRANSACTION_FORBIDDEN");
         }
@@ -68,7 +77,7 @@ public class DdcNativeConfigRolloutService {
             return false;
         }
         if (!isCurrent(task)) {
-            finish(task, expected, task.getPlatformEvidence(), PublishStatus.SUPERSEDED, null);
+            finish(task, expected, task.getPlatformEvidence(), PublishStatus.SUPERSEDED, null, startedAt);
             return false;
         }
 
@@ -82,7 +91,7 @@ public class DdcNativeConfigRolloutService {
             var release = manifests.materialize(version, scope).baseline();
             applied = baselines.reconcile(release, () -> isCurrent(task));
         } catch (IllegalArgumentException invalidArtifact) {
-            return finish(task, expected, task.getPlatformEvidence(), PublishStatus.FAILED, "IMMUTABLE_RELEASE")
+            return finish(task, expected, task.getPlatformEvidence(), PublishStatus.FAILED, "IMMUTABLE_RELEASE", startedAt)
                     == PublishStatus.FAILED;
         }
 
@@ -93,7 +102,7 @@ public class DdcNativeConfigRolloutService {
         boolean failed = applied.stream().anyMatch(target -> "FAILED".equals(target.status()));
         PublishStatus desiredStatus = superseded ? PublishStatus.SUPERSEDED
                 : pending ? PublishStatus.PUBLISHING : failed ? PublishStatus.FAILED : PublishStatus.PLATFORM_APPLIED;
-        PublishStatus persisted = finish(task, expected, evidence, desiredStatus, failed ? "WORKLOAD_RECONCILE" : null);
+        PublishStatus persisted = finish(task, expected, evidence, desiredStatus, failed ? "WORKLOAD_RECONCILE" : null, startedAt);
         if (persisted == PublishStatus.PUBLISHING) {
             throw new IllegalStateException("TIANSHU_CONFIG_ROLLOUT_WILL_RETRY");
         }
@@ -108,7 +117,7 @@ public class DdcNativeConfigRolloutService {
     }
 
     private PublishStatus finish(DdcPublishTaskBO original, WakeupVO wakeup, JsonNode evidence,
-            PublishStatus desiredStatus, String failureStage) {
+            PublishStatus desiredStatus, String failureStage, long startedAt) {
         return Objects.requireNonNull(transactions.execute(status -> {
             var item = findItem(original, true).orElse(null);
             var currentTask = tasks.findForUpdateByChangeId(wakeup.changeId()).orElse(null);
@@ -131,8 +140,43 @@ public class DdcNativeConfigRolloutService {
                     LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC)) != 1) {
                 throw new OptimisticLockingFailureException("TIANSHU_CONFIG_ROLLOUT_CAS_FAILED");
             }
+            if (!state.name().equals(currentTask.getStatus())) {
+                recordExecution(currentTask, state, failureStage, startedAt);
+            }
             return state;
         }));
+    }
+
+    private void recordExecution(DdcPublishTaskBO task, PublishStatus state, String failureStage, long startedAt) {
+        OperationLogOutcomeEnum outcome = switch (state) {
+            case SUCCESS, PLATFORM_APPLIED -> OperationLogOutcomeEnum.SUCCEEDED;
+            case FAILED, TIMEOUT, SUPERSEDED -> OperationLogOutcomeEnum.FAILED;
+            case PARTIAL_SUCCESS -> OperationLogOutcomeEnum.PARTIAL_SUCCESS;
+            case UNKNOWN -> OperationLogOutcomeEnum.UNKNOWN;
+            default -> null;
+        };
+        if (outcome == null) {
+            return;
+        }
+        operationLogRecorder.recordInTransaction(OperationLogEvent.builder()
+                .operationId(task.getChangeId()).moduleCode("CONFIG").actionCode("TIANSHU_CONFIG_PUBLISH")
+                .resourceType("CONFIG").resourceId(task.getConfigId()).bizCode(task.getBizCode())
+                .env(task.getEnv()).appCode(task.getAppCode()).phase(OperationLogPhaseEnum.EXECUTION).outcome(outcome)
+                .reasonCode(state == PublishStatus.SUPERSEDED ? null : failureStage)
+                .durationMs(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt))
+                .details(json.createObjectNode().put("changeId", task.getChangeId())
+                        .put("targetRevision", Long.toString(task.getTargetVersion())).put("attempt", task.getAttemptCount())
+                        .put("publishStatus", state.name()).put("publishStage", state.name()))
+                .build(), RECONCILE_NATIVE_METHOD);
+    }
+
+    private static Method sourceMethod() {
+        try {
+            return DdcNativeConfigRolloutService.class.getMethod("reconcileNative", String.class, long.class,
+                    long.class, int.class, String.class);
+        } catch (NoSuchMethodException invalidDeclaration) {
+            throw new IllegalStateException("TIANSHU_ROLLOUT_OPERATION_METHOD_INVALID", invalidDeclaration);
+        }
     }
 
     private Optional<DdcConfigItemBO> findItem(DdcPublishTaskBO task, boolean lock) {

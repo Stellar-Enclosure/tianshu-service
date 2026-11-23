@@ -89,6 +89,50 @@ egon:
             ddc_si_embedding_chunk: { type: STANDARD_TENANT_ID }
             egon_cola_outbox_message: { type: SINGLE, data-source: tianshu_0, schema: egon_outbox }
             ddl_history: { type: SINGLE, data-source: tianshu_0, schema: egon_outbox }
+        operation-log:
+          enabled: "${TIANSHU_OPERATION_LOG_ENABLED:false}"
+          write-mode: OUTBOX
+          source-service: tianshu-admin
+          target:
+            enabled: "${TIANSHU_OPERATION_LOG_TARGET_ENABLED:false}"
+            max-age: "${TIANSHU_OPERATION_LOG_MAX_AGE:}"
+            transaction-timeout: "${TIANSHU_OPERATION_LOG_TARGET_TRANSACTION_TIMEOUT:5s}"
+            ddl:
+              enabled: "${TIANSHU_OPERATION_LOG_DDL_ENABLED:false}"
+              auto-migrate: "${TIANSHU_OPERATION_LOG_AUTO_MIGRATE:false}"
+            data-sources:
+              - name: tianshu_audit_0_primary
+                logical-name: tianshu_audit_0
+                role: PRIMARY
+                driver-class-name: org.postgresql.Driver
+                jdbc-url: "${TIANSHU_OPERATION_LOG_SHARD_0_PRIMARY_JDBC_URL:}"
+                username: "${TIANSHU_OPERATION_LOG_SHARD_0_PRIMARY_USERNAME:}"
+                password: "${TIANSHU_OPERATION_LOG_SHARD_0_PRIMARY_PASSWORD:}"
+              - name: tianshu_audit_0_replica
+                logical-name: tianshu_audit_0
+                role: REPLICA
+                driver-class-name: org.postgresql.Driver
+                jdbc-url: "${TIANSHU_OPERATION_LOG_SHARD_0_REPLICA_JDBC_URL:}"
+                username: "${TIANSHU_OPERATION_LOG_SHARD_0_REPLICA_USERNAME:}"
+                password: "${TIANSHU_OPERATION_LOG_SHARD_0_REPLICA_PASSWORD:}"
+              - name: tianshu_audit_1_primary
+                logical-name: tianshu_audit_1
+                role: PRIMARY
+                driver-class-name: org.postgresql.Driver
+                jdbc-url: "${TIANSHU_OPERATION_LOG_SHARD_1_PRIMARY_JDBC_URL:}"
+                username: "${TIANSHU_OPERATION_LOG_SHARD_1_PRIMARY_USERNAME:}"
+                password: "${TIANSHU_OPERATION_LOG_SHARD_1_PRIMARY_PASSWORD:}"
+              - name: tianshu_audit_1_replica
+                logical-name: tianshu_audit_1
+                role: REPLICA
+                driver-class-name: org.postgresql.Driver
+                jdbc-url: "${TIANSHU_OPERATION_LOG_SHARD_1_REPLICA_JDBC_URL:}"
+                username: "${TIANSHU_OPERATION_LOG_SHARD_1_REPLICA_USERNAME:}"
+                password: "${TIANSHU_OPERATION_LOG_SHARD_1_REPLICA_PASSWORD:}"
+      tianshu:
+        admin:
+          operation-log:
+            http-origin: "${TIANSHU_OPERATION_LOG_HTTP_ORIGIN:}"
       transactional-outbox:
         storage:
           data-source-bean-name: dataSource

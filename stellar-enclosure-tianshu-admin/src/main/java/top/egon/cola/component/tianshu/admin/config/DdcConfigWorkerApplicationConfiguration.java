@@ -36,6 +36,13 @@ import org.springframework.core.env.MapPropertySource;
 import org.springframework.core.env.Profiles;
 import org.springframework.transaction.support.TransactionTemplate;
 import top.egon.cola.component.common.id.autoconfigure.IdGeneratorAutoConfiguration;
+import top.egon.cola.component.common.mybatis.operationlog.EgonOperationLogAutoConfiguration;
+import top.egon.cola.component.common.mybatis.operationlog.EgonOperationLogProperties;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogContextDTO;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogRecorder;
+import top.egon.cola.component.tianshu.admin.outbox.DdcOperationLogOutboxAdapter;
+import org.slf4j.MDC;
+import java.util.function.Supplier;
 import top.egon.cola.component.common.id.probe.WorkerProcessProbe;
 import top.egon.cola.component.common.mybatis.autoconfigure.EgonColaMybatisPlusAutoConfiguration;
 import top.egon.cola.component.common.mybatis.autoconfigure.EgonColaShardingAutoConfiguration;
@@ -153,13 +160,37 @@ public final class DdcConfigWorkerApplicationConfiguration {
         values.put(OUTBOX + "annotation.enabled", false);
         values.put(OUTBOX + "retry.recover-exhausted", false);
         values.put(OUTBOX + "cleanup.enabled", false);
-        if ("config-observer".equals(role)) values.put(OUTBOX + "polling.enabled", false);
+        values.put(EgonOperationLogProperties.PREFIX + ".target.enabled", false);
+        if ("config-publisher".equals(role)) {
+            values.put(EgonOperationLogProperties.PREFIX + ".source-service", "tianshu-config-publisher");
+        } else {
+            values.put(OUTBOX + "polling.enabled", false);
+            values.put(EgonOperationLogProperties.PREFIX + ".enabled", false);
+        }
         return Map.copyOf(values);
     }
 
     @Import({PersistenceApplication.class, DdcConfigItemRepositoryImpl.class, DdcConfigVersionRepositoryImpl.class,
-            DdcPublishTaskRepositoryImpl.class, DdcConfigDispatchDeliveryHandler.class})
+            DdcPublishTaskRepositoryImpl.class, DdcConfigDispatchDeliveryHandler.class,
+            DdcOperationLogOutboxAdapter.ProducerConfiguration.class})
+    @ImportAutoConfiguration(EgonOperationLogAutoConfiguration.class)
     public static class PublisherApplication {
+        @Bean("operationLogContextProvider")
+        Supplier<OperationLogContextDTO> operationLogContextProvider(@Qualifier("ddcTenantRegistry") DdcTenantRegistry tenants) {
+            return () -> {
+                String current = MDC.get("tenantId");
+                if (current == null || !current.matches("[1-9][0-9]{0,18}")) {
+                    throw new IllegalStateException("OPERATION_LOG_CONTEXT_INVALID");
+                }
+                final Long tenant;
+                try { tenant = Long.valueOf(current); }
+                catch (NumberFormatException invalid) { throw new IllegalStateException("OPERATION_LOG_CONTEXT_INVALID", invalid); }
+                var binding = tenants.requireEnabledTenant(tenant);
+                return new OperationLogContextDTO(binding.getTenantId(), "SERVICE", "tianshu-config-publisher", null,
+                        "MESSAGE", null, null, null, null, MDC.get("traceId"), null);
+            };
+        }
+
         @Bean("stellarWorkerProbe")
         @ConditionalOnProperty(name = WorkerProcessProbe.ENABLED_PROPERTY, havingValue = "true")
         WorkerProcessProbe workerProbe(@Qualifier("applicationAvailability") ApplicationAvailability availability,
@@ -204,8 +235,9 @@ public final class DdcConfigWorkerApplicationConfiguration {
                 @Qualifier("ddcConfigManifestFactory") DdcConfigManifestFactory manifests,
                 @Qualifier("ddcConfigBaselineReconciler") DdcConfigBaselineReconciler baselines,
                 @Qualifier("ddcNativeRolloutTransactionTemplate") TransactionTemplate transactions,
-                @Qualifier("jacksonObjectMapper") ObjectMapper json, @Qualifier("ddcPublishClock") Clock clock) {
-            return new DdcNativeConfigRolloutService(items, versions, tasks, manifests, baselines, transactions, json, clock);
+                @Qualifier("jacksonObjectMapper") ObjectMapper json, @Qualifier("ddcPublishClock") Clock clock,
+                @Qualifier("operationLogRecorder") OperationLogRecorder recorder) {
+            return new DdcNativeConfigRolloutService(items, versions, tasks, manifests, baselines, transactions, json, clock, recorder);
         }
         @Bean("ddcConfigRolloutOutboxRoute") DdcConfigRolloutOutboxRouteDTO route() { return new DdcConfigRolloutOutboxRouteDTO("tianshu.config-rollout", "1"); }
         @Bean("ddcConfigPublisherNodeIdentityGuard") SmartInitializingSingleton nodeIdentity(Environment environment) {

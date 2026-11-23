@@ -1,6 +1,12 @@
 package top.egon.cola.component.tianshu.admin.service.publish;
 
 import jakarta.validation.Valid;
+import java.lang.reflect.Method;
+import java.util.concurrent.TimeUnit;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogEvent;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogPhaseEnum;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogOutcomeEnum;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogRecorder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
@@ -13,7 +19,6 @@ import top.egon.cola.component.tianshu.admin.common.DdcAdminException;
 import top.egon.cola.component.tianshu.admin.config.DdcAdminProperties;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcConfigItemBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcConfigVersionBO;
-import top.egon.cola.component.tianshu.admin.model.bo.DdcOperationLogBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcPublishTaskBO;
 import top.egon.cola.component.tianshu.admin.model.dto.DdcPublishRequest;
 import top.egon.cola.component.tianshu.admin.model.enums.ChangeType;
@@ -22,7 +27,6 @@ import top.egon.cola.component.tianshu.admin.model.enums.PublishStatus;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcPublishResultVO;
 import top.egon.cola.component.tianshu.admin.repository.DdcConfigItemRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcConfigVersionRepository;
-import top.egon.cola.component.tianshu.admin.repository.DdcOperationLogRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcPublishTaskRepository;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextDTO;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantRegistry;
@@ -43,10 +47,12 @@ import java.util.Objects;
 @Validated
 @RequiredArgsConstructor(onConstructor_ = @Autowired)
 public class DdcPublishService {
+    private static final Method PUBLISH_METHOD = sourceMethod("publish", DdcPublishRequest.class, String.class);
+    private static final Method RETRY_METHOD = sourceMethod("retry", String.class, String.class);
     @Qualifier("ddcConfigItemRepository") private final DdcConfigItemRepository items;
     @Qualifier("ddcConfigVersionRepository") private final DdcConfigVersionRepository versions;
     @Qualifier("ddcPublishTaskRepository") private final DdcPublishTaskRepository tasks;
-    @Qualifier("ddcOperationLogRepository") private final DdcOperationLogRepository audit;
+    @Qualifier("operationLogRecorder") private final OperationLogRecorder operationLogRecorder;
     @Qualifier("ddcPendingPublishDispatcher") private final DdcPendingPublishDispatcher dispatcher;
     @Qualifier("publishFailureRecorder") private final PublishFailureRecorder recovery;
     @Qualifier("egon.cola.component.tianshu.admin-top.egon.cola.component.tianshu.admin.config.DdcAdminProperties")
@@ -59,11 +65,12 @@ public class DdcPublishService {
     @Qualifier("ddcTenantRegistry") private final DdcTenantRegistry tenants;
 
     public DdcPublishResultVO publish(@Valid DdcPublishRequest request, String operator) {
+        long startedAt = System.nanoTime();
         validate(request);
         var tenant = currentTenant();
         long timeout = timeout(request.getTimeoutMs());
         try {
-            var result = transaction.execute(status -> prepare(tenant, request, timeout, operator));
+            var result = transaction.execute(status -> prepare(tenant, request, timeout, operator, startedAt));
             if (result == null) { throw new DdcAdminException("TIANSHU_CONFIG_PUBLICATION_UNAVAILABLE"); }
             return DdcPublishResultVO.from(result);
         } catch (RuntimeException uncertain) {
@@ -77,7 +84,7 @@ public class DdcPublishService {
         }
     }
 
-    private DdcPublishTaskBO prepare(DdcTenantContextDTO tenant, DdcPublishRequest request, long timeout, String operator) {
+    private DdcPublishTaskBO prepare(DdcTenantContextDTO tenant, DdcPublishRequest request, long timeout, String operator, long startedAt) {
         var config = items.findForPublishByBizCodeAndEnvAndAppCodeAndResourceName(request.getBizCode(),
                 request.getEnv(), request.getAppCode(), request.getResourceName())
                 .orElseThrow(() -> new DdcAdminException("config item not found"));
@@ -120,15 +127,14 @@ public class DdcPublishService {
         if (items.advancePublishedVersion(config.getPublicId(), previousPublished, revision, now()) != 1) {
             throw new org.springframework.dao.OptimisticLockingFailureException("native published pointer changed");
         }
-        audit.insert(DdcOperationLogBO.builder().tenantId(tenant.tenantId()).bizCode(config.getBizCode())
-                .appCode(config.getAppCode()).env(config.getEnv()).resourceName(config.getResourceName())
-                .operationType("PUBLISH").operator(operator).operationContent(request.getChangeId()).createdAt(now()).build());
+        recordAccepted(task, PUBLISH_METHOD, startedAt);
         return dispatcher.enqueueNative(task);
     }
 
     public DdcPublishResultVO retry(String changeId) { return retry(changeId, null); }
 
     public DdcPublishResultVO retry(String changeId, String operator) {
+        long startedAt = System.nanoTime();
         if (changeId == null || changeId.isBlank()) { throw new DdcAdminException("changeId is required"); }
         var tenant = currentTenant();
         var task = transaction.execute(status -> {
@@ -149,10 +155,31 @@ public class DdcPublishService {
             }
             current.setAttemptCount(Math.addExact(current.getAttemptCount(), 1)).setStatus("PENDING")
                     .setVersion(Math.addExact(current.getVersion(), 1L)).setUpdatedAt(now());
+            recordAccepted(current, RETRY_METHOD, startedAt);
             return dispatcher.enqueueNative(current);
         });
         if (task == null) { throw new DdcAdminException("TIANSHU_CONFIG_PUBLICATION_UNAVAILABLE"); }
         return DdcPublishResultVO.from(task);
+    }
+
+    private void recordAccepted(DdcPublishTaskBO task, Method sourceMethod, long startedAt) {
+        operationLogRecorder.recordInTransaction(OperationLogEvent.builder()
+                .operationId(task.getChangeId()).moduleCode("CONFIG").actionCode("TIANSHU_CONFIG_PUBLISH")
+                .resourceType("CONFIG").resourceId(task.getConfigId()).bizCode(task.getBizCode())
+                .env(task.getEnv()).appCode(task.getAppCode()).phase(OperationLogPhaseEnum.COMMAND)
+                .outcome(OperationLogOutcomeEnum.ACCEPTED)
+                .durationMs(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt))
+                .details(JsonNodeFactory.instance.objectNode().put("changeId", task.getChangeId())
+                        .put("targetRevision", Long.toString(task.getTargetVersion())).put("attempt", task.getAttemptCount()))
+                .build(), sourceMethod);
+    }
+
+    private static Method sourceMethod(String name, Class<?>... parameters) {
+        try {
+            return DdcPublishService.class.getMethod(name, parameters);
+        } catch (NoSuchMethodException invalidDeclaration) {
+            throw new IllegalStateException("TIANSHU_PUBLISH_OPERATION_METHOD_INVALID", invalidDeclaration);
+        }
     }
 
     private void validateReplay(DdcTenantContextDTO tenant, DdcPublishTaskBO task, DdcPublishRequest request, long timeout) {

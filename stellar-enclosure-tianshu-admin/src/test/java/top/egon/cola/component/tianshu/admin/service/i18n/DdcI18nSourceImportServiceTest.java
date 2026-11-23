@@ -22,7 +22,7 @@ import top.egon.cola.component.tianshu.admin.repository.DdcI18nImportReceiptRepo
 import top.egon.cola.component.tianshu.admin.repository.DdcI18nSourceMessageRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcI18nSourceVersionRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcMetadataScopeRepository;
-import top.egon.cola.component.tianshu.admin.repository.DdcOperationLogRepository;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogRecorder;
 import top.egon.cola.component.tianshu.admin.repository.DdcResourceMetadataProjectionRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcSourceImportGrantRepository;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextExecutor;
@@ -54,7 +54,7 @@ class DdcI18nSourceImportServiceTest {
     private final DdcResourceMetadataProjectionRepository projections = mock(DdcResourceMetadataProjectionRepository.class);
     private final DdcI18nSourceMessageRepository messages = mock(DdcI18nSourceMessageRepository.class);
     private final DdcI18nImportReceiptRepository receipts = mock(DdcI18nImportReceiptRepository.class);
-    private final DdcOperationLogRepository audit = mock(DdcOperationLogRepository.class);
+    private final OperationLogRecorder audit = mock(OperationLogRecorder.class);
     private final RecordingTransactionManager transactions = new RecordingTransactionManager();
     private final Map<String, DdcI18nImportReceiptBO> storedReceipts = new HashMap<>();
     private final Map<String, DdcI18nSourceVersionBO> storedSources = new HashMap<>();
@@ -113,7 +113,9 @@ class DdcI18nSourceImportServiceTest {
                 .containsExactlyInAnyOrder("APP", "MENU", "PAGE", "COMPONENT", "BUTTON", "API", "FIELD");
         assertThat(rows.getValue().stream().filter(row -> "FIELD".equals(row.getResourceType())).findFirst().orElseThrow().getReferencedPermissionCodesJson())
                 .isEqualTo("[\"order:field:read\",\"order:read\",\"order:write\"]");
-        verify(audit).insert(argThat(log -> "METADATA_SOURCE_IMPORT".equals(log.getOperationType()) && "service-grant:301".equals(log.getOperator())));
+        verify(audit).recordInTransaction(argThat(event -> "TIANSHU_METADATA_SOURCE_IMPORT".equals(event.getActionCode())
+                && event.getDetails().has("receiptId") && !event.getDetails().has("publisher")),
+                argThat(method -> method.getName().equals("importSource")));
     }
 
     @Test void exactRetryReturnsTheOriginalReceiptWithoutWritingAgainButStillChecksTheGrant() {

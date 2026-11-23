@@ -1,18 +1,19 @@
 package top.egon.cola.component.tianshu.admin.service.config;
 
+import java.lang.reflect.Method;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogEvent;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogRecorder;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogPhaseEnum;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogOutcomeEnum;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 import top.egon.cola.component.common.core.pojo.PageQuery;
 import top.egon.cola.component.common.id.snowflake.SnowflakeIdGenerator;
 import top.egon.cola.component.tianshu.admin.common.DdcAdminException;
-import top.egon.cola.component.tianshu.admin.config.DdcAdminProperties;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcConfigItemBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcConfigVersionBO;
-import top.egon.cola.component.tianshu.admin.model.bo.DdcOperationLogBO;
 import top.egon.cola.component.tianshu.admin.model.dto.DdcConfigCreateRequest;
 import top.egon.cola.component.tianshu.admin.model.dto.DdcConfigQueryRequest;
 import top.egon.cola.component.tianshu.admin.model.dto.DdcConfigPreviewQuery;
@@ -64,6 +65,7 @@ class DdcConfigServiceTest {
     private DdcConfigItemRepository itemRepository;
     private DdcConfigVersionRepository versionRepository;
     private DdcOperationLogRepository operationLogRepository;
+    private OperationLogRecorder recorder;
     private DdcNamespaceEnvAppBindingRepository bindingRepository;
     private DdcPublishTaskRepository publishTaskRepository;
     private DdcConfigService service;
@@ -82,14 +84,13 @@ class DdcConfigServiceTest {
         itemRepository = mock(DdcConfigItemRepository.class);
         versionRepository = mock(DdcConfigVersionRepository.class);
         operationLogRepository = mock(DdcOperationLogRepository.class);
+        recorder = mock(OperationLogRecorder.class);
         bindingRepository = mock(DdcNamespaceEnvAppBindingRepository.class);
         publishTaskRepository = mock(DdcPublishTaskRepository.class);
-        ObjectProvider<DdcAdminProperties> properties =
-                new DefaultListableBeanFactory().getBeanProvider(DdcAdminProperties.class);
         tenants = mock(DdcTenantRegistry.class);
         when(tenants.requireEnabledTenant(401L)).thenReturn(new DdcTenantBindingDTO(401L,"registered",true));
         service = new DdcConfigService(itemRepository, versionRepository, new DdcConfigItemConverterImpl(),
-                new DdcConfigVersionConverterImpl(), operationLogRepository, bindingRepository,
+                new DdcConfigVersionConverterImpl(), recorder, bindingRepository,
                 publishTaskRepository, new DdcYamlConfigValidator(1_048_576), manifests, policies, tenants);
         when(itemRepository.insert(any(DdcConfigItemBO.class))).thenAnswer(invocation -> {
             DdcConfigItemBO item = invocation.getArgument(0);
@@ -129,7 +130,7 @@ class DdcConfigServiceTest {
                 .hasMessage("TIANSHU_CONFIG_PREVIEW_REVISION_MISMATCH");
         verify(itemRepository, never()).update(any(DdcConfigItemBO.class));
         verify(versionRepository, never()).insert(any(DdcConfigVersionBO.class));
-        verifyNoInteractions(operationLogRepository, publishTaskRepository);
+        verifyNoInteractions(operationLogRepository, publishTaskRepository, recorder);
     }
 
     @Test
@@ -141,7 +142,7 @@ class DdcConfigServiceTest {
         var policy = new DdcConfigManifestFactory.PublicationPolicyVO(publishedScope, List.of(rule), List.of(TARGET),
                 null, Map.of(), Map.of("db.password", new DdcConfigBaselineVO.SecretReferenceVO("test-db-ref", "5")));
         var serviceWithHotRule = new DdcConfigService(itemRepository, versionRepository,
-                new DdcConfigItemConverterImpl(), new DdcConfigVersionConverterImpl(), operationLogRepository,
+                new DdcConfigItemConverterImpl(), new DdcConfigVersionConverterImpl(), recorder,
                 bindingRepository, publishTaskRepository, new DdcYamlConfigValidator(1_048_576), manifests,
                 (tenant, scope) -> policy, tenants);
         var existing = item(101L, "config-public-1", 4L, 2L, false, prior);
@@ -170,13 +171,20 @@ class DdcConfigServiceTest {
     }
 
     @Test
-    void legacyConstructorCannotPersistAnEditBeforeDiscoveringMissingTrustedNativeAuthority() {
+    void missingTrustedNativeAuthorityCannotPersistAnEdit() {
         var legacy = new DdcConfigService(itemRepository,versionRepository,new DdcConfigItemConverterImpl(),
-                new DdcConfigVersionConverterImpl(),operationLogRepository,bindingRepository,publishTaskRepository,
-                new DefaultListableBeanFactory().getBeanProvider(DdcAdminProperties.class));
+                new DdcConfigVersionConverterImpl(),recorder,bindingRepository,publishTaskRepository,
+                new DdcYamlConfigValidator(1_048_576), manifests, policies, null);
         assertThatThrownBy(() -> legacy.create(configRequest("infra","prod","gateway"),"test"))
                 .hasMessage("TIANSHU_TRUSTED_TENANT_REQUIRED");
-        verifyNoInteractions(itemRepository,versionRepository,operationLogRepository);
+        verifyNoInteractions(itemRepository,versionRepository,operationLogRepository,recorder);
+    }
+
+    @Test
+    void committedConfigCreateDoesNotAppendToRetiredOrdinaryLog() {
+        var result = service.create(configRequest("infra", "prod", "gateway"), "tester");
+        assertThat(result.getCurrentVersion()).isEqualTo(1L);
+        verifyNoInteractions(operationLogRepository);
     }
 
     @Test
@@ -194,11 +202,8 @@ class DdcConfigServiceTest {
         assertThat(version.getValue().getChangeType()).isEqualTo(ChangeType.CREATE.name());
         assertThat(manifests.materialize(version.getValue(), new DdcConfigScopeVO("401","infra","prod","gateway","application.yml"))
                 .baseline().getSource().getConfigId()).isEqualTo("101");
-        var operation = org.mockito.ArgumentCaptor.forClass(DdcOperationLogBO.class);
-        verify(operationLogRepository).insert(operation.capture());
-        assertThat(operation.getValue().getBizCode()).isEqualTo("infra");
-        assertThat(operation.getValue().getAppCode()).isEqualTo("gateway");
-        assertThat(operation.getValue().getOperationType()).isEqualTo(ChangeType.CREATE.name());
+        assertCommand("TIANSHU_CONFIG_CREATE", "1", "create", DdcConfigCreateRequest.class, String.class);
+        verifyNoInteractions(operationLogRepository);
     }
 
     @Test
@@ -218,6 +223,7 @@ class DdcConfigServiceTest {
         verify(versionRepository).insert(version.capture());
         assertThat(version.getValue().getConfigRevision()).isEqualTo(4L);
         assertThat(version.getValue().getOldContent()).isEqualTo("old");
+        assertCommand("TIANSHU_CONFIG_UPSERT", "4", "upsert", DdcConfigCreateRequest.class, Long.class, String.class);
     }
 
     @Test
@@ -263,6 +269,14 @@ class DdcConfigServiceTest {
         var restoredFixed=manifests.materialize(written.getAllValues().getLast(),scope).baseline();
         assertThat(restoredFixed.getStartupDependencies()).containsEntry("driver","old-fixed-version");
         assertThat(restoredFixed.getSecretReferences().get("database").getVersion()).isEqualTo("7");
+        var facts = org.mockito.ArgumentCaptor.forClass(OperationLogEvent.class);
+        var methods = org.mockito.ArgumentCaptor.forClass(Method.class);
+        verify(recorder, org.mockito.Mockito.times(2)).recordInTransaction(facts.capture(), methods.capture());
+        assertThat(facts.getAllValues()).extracting(OperationLogEvent::getActionCode)
+                .containsExactly("TIANSHU_CONFIG_DELETE", "TIANSHU_CONFIG_ROLLBACK");
+        assertThat(facts.getAllValues()).extracting(event -> event.getDetails().path("revision").textValue())
+                .containsExactly("3", "4");
+        assertThat(methods.getAllValues()).extracting(Method::getName).containsExactly("delete", "rollback");
     }
 
     @Test void legacyUnmanifestedRollbackIsReadOnlyAndCannotCreateANativeVersion() {
@@ -333,6 +347,84 @@ class DdcConfigServiceTest {
         assertThat(row.getConfigId()).isEqualTo("config-public-1");
         assertThat(row.getVersion()).isEqualTo(5L);
         assertThat(page.getRecords().getFirst().getVersion()).isEqualTo(5L);
+    }
+
+    @Test
+    void upsertCreateRecordsItsOuterActionOnlyOnce() {
+        service.upsert(configRequest("infra", "prod", "gateway"), 0L, "untrusted-input");
+        assertCommand("TIANSHU_CONFIG_UPSERT", "1", "upsert", DdcConfigCreateRequest.class, Long.class, String.class);
+    }
+
+    @Test
+    void updateRecordsOnlySafeRevisionAfterVersionWrite() {
+        var item = item(101L, "config-public-1", 3L, 2L, false, "feature: {enabled: false}");
+        when(itemRepository.findByPublicId("config-public-1")).thenReturn(Optional.of(item));
+        var request = new DdcConfigUpdateRequest();
+        request.setId("config-public-1"); request.setCurrentVersion(3L);
+        request.setContent("feature: {enabled: true}"); request.setChangeReason("private-reason");
+        service.update(request, "untrusted-input");
+        assertCommand("TIANSHU_CONFIG_UPDATE", "4", "update", DdcConfigUpdateRequest.class, String.class);
+    }
+
+    @Test
+    void repeatedOrMissingDeleteAndVersionFailureDoNotRecordSuccess() {
+        var item = item(101L, "config-public-1", 3L, 2L, true, "feature: {}");
+        when(itemRepository.findByPublicId("config-public-1")).thenReturn(Optional.of(item));
+        service.delete("config-public-1", "operator", "reason");
+        assertThat(service.delete("infra", "prod", "gateway", 3L, "operator", "reason")).isNull();
+        item.setDeleted(false);
+        when(itemRepository.findByBizCodeAndEnvAndAppCode("infra", "prod", "gateway")).thenReturn(List.of(item));
+        assertThatThrownBy(() -> service.delete("infra", "prod", "gateway", 2L, "operator", "reason"))
+                .hasMessage("config version changed");
+        verifyNoInteractions(recorder, operationLogRepository);
+    }
+
+    @Test
+    void failedVersionWriteDoesNotRecordAndRecorderFailurePropagates() {
+        when(versionRepository.insert(any())).thenThrow(new IllegalStateException("version-write-failed"));
+        assertThatThrownBy(() -> service.create(configRequest("infra", "prod", "gateway"), "test"))
+                .hasMessage("version-write-failed");
+        verifyNoInteractions(recorder);
+        org.mockito.Mockito.reset(versionRepository);
+        org.mockito.Mockito.doThrow(new IllegalStateException("audit-enqueue-failed"))
+                .when(recorder).recordInTransaction(any(), any(Method.class));
+        assertThatThrownBy(() -> service.create(configRequest("infra", "prod", "gateway"), "test"))
+                .hasMessage("audit-enqueue-failed");
+    }
+
+    @Test
+    void disabledRecorderKeepsCommandResultWithoutAnyNewOrOldLogWrite() {
+        var properties = new top.egon.cola.component.common.mybatis.operationlog.EgonOperationLogProperties();
+        var disabled = new OperationLogRecorder(properties, null, null, null, null, null, null, null);
+        var disabledService = new DdcConfigService(itemRepository, versionRepository, new DdcConfigItemConverterImpl(),
+                new DdcConfigVersionConverterImpl(), disabled, bindingRepository, publishTaskRepository,
+                new DdcYamlConfigValidator(1_048_576), manifests, policies, tenants);
+        assertThat(disabledService.create(configRequest("infra", "prod", "gateway"), "test").getCurrentVersion())
+                .isEqualTo(1L);
+        verify(versionRepository).insert(any());
+        verifyNoInteractions(operationLogRepository, recorder);
+    }
+
+    private void assertCommand(String action, String revision, String methodName, Class<?>... parameters) {
+        var fact = org.mockito.ArgumentCaptor.forClass(OperationLogEvent.class);
+        var method = org.mockito.ArgumentCaptor.forClass(Method.class);
+        verify(recorder).recordInTransaction(fact.capture(), method.capture());
+        var event = fact.getValue();
+        assertThat(event.getModuleCode()).isEqualTo("CONFIG");
+        assertThat(event.getActionCode()).isEqualTo(action);
+        assertThat(event.getResourceType()).isEqualTo("CONFIG");
+        assertThat(event.getResourceId()).isEqualTo("config-public-1");
+        assertThat(event.getBizCode()).isEqualTo("infra");
+        assertThat(event.getEnv()).isEqualTo("prod");
+        assertThat(event.getAppCode()).isEqualTo("gateway");
+        assertThat(event.getPhase()).isEqualTo(OperationLogPhaseEnum.COMMAND);
+        assertThat(event.getOutcome()).isEqualTo(OperationLogOutcomeEnum.SUCCEEDED);
+        assertThat(event.getActorId()).isNull();
+        assertThat(event.getDetails().properties()).hasSize(1);
+        assertThat(event.getDetails().path("revision").textValue()).isEqualTo(revision);
+        assertThat(method.getValue().getDeclaringClass()).isEqualTo(DdcConfigService.class);
+        assertThat(method.getValue().getName()).isEqualTo(methodName);
+        assertThat(method.getValue().getParameterTypes()).containsExactly(parameters);
     }
 
     private DdcConfigCreateRequest configRequest(String biz, String env, String app) {

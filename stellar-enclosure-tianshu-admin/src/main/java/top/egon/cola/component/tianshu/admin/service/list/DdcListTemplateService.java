@@ -1,6 +1,16 @@
 package top.egon.cola.component.tianshu.admin.service.list;
 
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import java.util.concurrent.TimeUnit;
+import java.lang.reflect.Method;
+import org.springframework.util.ReflectionUtils;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogEvent;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogRecorder;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogPhaseEnum;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogOutcomeEnum;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
@@ -13,9 +23,7 @@ import top.egon.cola.component.tianshu.admin.dao.DdcListTemplateMapper;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcListSelectionBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcListTemplateBO;
 import top.egon.cola.component.tianshu.admin.model.bo.DdcMetadataScopeBO;
-import top.egon.cola.component.tianshu.admin.model.bo.DdcOperationLogBO;
 import top.egon.cola.component.tianshu.admin.repository.DdcMetadataScopeRepository;
-import top.egon.cola.component.tianshu.admin.repository.DdcOperationLogRepository;
 import top.egon.cola.component.tianshu.admin.service.metadata.DdcScopeGate;
 import top.egon.cola.component.tianshu.api.list.ListDefinition;
 import top.egon.cola.component.tianshu.api.list.ListDefinitionBinding;
@@ -43,8 +51,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HexFormat;
@@ -55,15 +61,24 @@ import java.util.function.Supplier;
 
 /** Stores presentation preferences; the current host and field policy remain authoritative. */
 @Service("ddcListTemplateService")
-@RequiredArgsConstructor
+@Slf4j
+@RequiredArgsConstructor(onConstructor_ = @Autowired)
 public class DdcListTemplateService {
+    private static final Method SAVE_METHOD = ReflectionUtils.findMethod(DdcListTemplateService.class, "save",
+            String.class, String.class, String.class, String.class, String.class, String.class, String.class,
+            String.class, List.class, boolean.class);
+    private static final Method DELETE_METHOD = ReflectionUtils.findMethod(DdcListTemplateService.class, "delete",
+            String.class, String.class, String.class, String.class, String.class, String.class);
+    private static final Method DELEGATED_METHOD = ReflectionUtils.findMethod(DdcListTemplateService.class, "executeDelegated",
+            DdcListDelegationVerifier.VerifiedDelegation.class, ListDelegationRequest.class, Supplier.class);
+
     private static final String SYSTEM_OWNER = digest("system");
     private static final int MAX_TEMPLATES = 100;
     private static final int MAX_TEMPLATES_PER_TYPE = 50;
 
     @Qualifier("ddcListTemplateMapper") private final DdcListTemplateMapper mapper;
     @Qualifier("ddcMetadataScopeRepository") private final DdcMetadataScopeRepository scopes;
-    @Qualifier("ddcOperationLogRepository") private final DdcOperationLogRepository audit;
+    @Qualifier("operationLogRecorder") private final OperationLogRecorder audit;
     @Qualifier("ddcScopeGate") private final DdcScopeGate scopeGate;
     @Qualifier("ddcListMetadataService") private final DdcListMetadataService metadata;
     @Qualifier("egonColaIdentifierGenerator") private final EgonColaIdentifierGenerator ids;
@@ -112,11 +127,11 @@ public class DdcListTemplateService {
     @Transactional(timeout = 30)
     public TemplateView save(String pageKey, String listKey, String expectedCatalogVersion, String expectedDefinition,
             String type, String id, String expectedVersion, String name, List<String> requestedColumns, boolean defaultTemplate) {
-        return save(context(pageKey, listKey, expectedCatalogVersion, true), expectedDefinition, type, id, expectedVersion, name, requestedColumns, defaultTemplate);
+        return save(context(pageKey, listKey, expectedCatalogVersion, true), expectedDefinition, type, id, expectedVersion, name, requestedColumns, defaultTemplate, SAVE_METHOD, System.nanoTime());
     }
 
     private TemplateView save(Context context, String expectedDefinition, String type, String id, String expectedVersion,
-            String name, List<String> requestedColumns, boolean defaultTemplate) {
+            String name, List<String> requestedColumns, boolean defaultTemplate, Method method, long started) {
         String pageKey = context.definition().pageResourceKey(), listKey = context.definition().listKey();
         requireDefinition(context, expectedDefinition);
         boolean system = "SYSTEM".equals(type);
@@ -163,8 +178,8 @@ public class DdcListTemplateService {
         for (int index = 0; index < columns.size(); index++) {
             if (mapper.insertColumn(context.tenantId(), context.scopeId(), row.getId(), columns.get(index), index) != 1) throw conflict();
         }
-        audit(context, id == null ? "LIST_TEMPLATE_CREATE" : "LIST_TEMPLATE_UPDATE", row);
         recheck(context);
+        audit(context, id == null ? "TIANSHU_LIST_TEMPLATE_CREATE" : "TIANSHU_LIST_TEMPLATE_UPDATE", row, method, started);
         List<String> visible = system ? columns : ListTemplateResolver.visible(context.definition(), columns, readable)
                 .stream().map(ListDefinition.Column::columnKey).toList();
         return new TemplateView(row.getId().toString(), type, name, defaultTemplate, row.getVersion().toString(), visible);
@@ -198,10 +213,10 @@ public class DdcListTemplateService {
 
     @Transactional(timeout = 30)
     public void delete(String pageKey, String listKey, String expectedCatalogVersion, String type, String id, String version) {
-        delete(context(pageKey, listKey, expectedCatalogVersion, true), type, id, version);
+        delete(context(pageKey, listKey, expectedCatalogVersion, true), type, id, version, DELETE_METHOD, System.nanoTime());
     }
 
-    private void delete(Context context, String type, String id, String version) {
+    private void delete(Context context, String type, String id, String version, Method method, long started) {
         boolean system = "SYSTEM".equals(type);
         if (!system && !"PERSONAL".equals(type)) throw invalid();
         if (!context.access().allowed(system ? context.binding().systemTemplateApiKey() : context.binding().personalTemplateApiKey())) throw new AccessDeniedException("LIST_TEMPLATE_EDIT_DENIED");
@@ -210,8 +225,8 @@ public class DdcListTemplateService {
         if (row.getVersion() != expected) throw conflict();
         recheck(context);
         if (mapper.deleteTemplate(context.tenantId(), context.scopeId(), row.getId(), expected, context.subject(), now()) != 1) throw conflict();
-        audit(context, "LIST_TEMPLATE_DELETE", row);
         recheck(context);
+        audit(context, "TIANSHU_LIST_TEMPLATE_DELETE", row, method, started);
     }
 
     private Context context(String pageKey, String listKey, String expectedVersion, boolean lock) {
@@ -253,6 +268,7 @@ public class DdcListTemplateService {
     @Transactional(isolation = Isolation.REPEATABLE_READ, timeout = 30)
     public ListDelegationResponse executeDelegated(DdcListDelegationVerifier.VerifiedDelegation verified, ListDelegationRequest request,
             Supplier<DdcListDelegationVerifier.VerifiedDelegation> refresh) {
+        long started = System.nanoTime();
         Context context = delegatedContext(verified, request, request.operation() != ListDelegationRequest.Operation.LOAD, refresh);
         String digest = context.definition().digest();
         return switch (request.operation()) {
@@ -260,13 +276,13 @@ public class DdcListTemplateService {
             case SAVE_SYSTEM, SAVE_PERSONAL -> {
                 String type = request.operation() == ListDelegationRequest.Operation.SAVE_SYSTEM ? "SYSTEM" : "PERSONAL";
                 var saved = save(context, digest, type, request.templateId(), request.expectedVersion(), request.name(),
-                        request.columnKeys(), Boolean.TRUE.equals(request.defaultTemplate()));
+                        request.columnKeys(), Boolean.TRUE.equals(request.defaultTemplate()), DELEGATED_METHOD, started);
                 yield response(context, saved);
             }
             case SELECT -> { select(context, digest, request.templateId()); yield response(context, null); }
             case DELETE_SYSTEM, DELETE_PERSONAL -> {
                 String type = request.operation() == ListDelegationRequest.Operation.DELETE_SYSTEM ? "SYSTEM" : "PERSONAL";
-                delete(context, type, request.templateId(), request.expectedVersion()); yield response(context, null);
+                delete(context, type, request.templateId(), request.expectedVersion(), DELEGATED_METHOD, started); yield response(context, null);
             }
         };
     }
@@ -388,13 +404,16 @@ public class DdcListTemplateService {
                 || !oldView.permissionCodes().equals(newView.permissionCodes()) || !before.resourceCodes().equals(after.resourceCodes())
                 || !Objects.equals(before.policyBinding(), after.policyBinding())) throw conflict();
     }
-    private void audit(Context context, String action, DdcListTemplateBO row) {
+    private void audit(Context context, String action, DdcListTemplateBO row, Method method, long started) {
         CatalogScope scope = context.scope();
-        audit.insert(DdcOperationLogBO.builder().bizCode(scope.businessCode()).appCode(scope.applicationCode())
-                .env(scope.environment()).namespace(scope.namespaceCode()).resourceName(context.definition().pageResourceKey())
-                .operationType(action).operator("user:" + context.ownerDigest())
-                .operationContent("templateId=" + row.getId() + ", type=" + row.getTemplateType() + ", version=" + row.getVersion())
-                .createdAt(LocalDateTime.ofInstant(now(), ZoneOffset.UTC)).build());
+        var details = JsonNodeFactory.instance.objectNode().put("templateId", row.getId().toString())
+                .put("type", row.getTemplateType()).put("version", row.getVersion().toString());
+        audit.recordInTransaction(OperationLogEvent.builder()
+                .moduleCode("LIST").actionCode(action).resourceType("LIST_TEMPLATE").resourceId(row.getId().toString())
+                .bizCode(scope.businessCode()).appCode(scope.applicationCode()).env(scope.environment())
+                .namespaceCode(scope.namespaceCode()).phase(OperationLogPhaseEnum.COMMAND)
+                .outcome(OperationLogOutcomeEnum.SUCCEEDED)
+                .durationMs(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).details(details).build(), method);
     }
     private static void requireDefinition(Context context, String digest) { if (!context.definition().digest().equals(digest)) throw conflict(); }
     private static Instant now() { return Instant.now().truncatedTo(ChronoUnit.MICROS); }

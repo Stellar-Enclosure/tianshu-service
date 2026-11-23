@@ -50,6 +50,16 @@ class DdcProfileParityTest {
             "Stellar-Enclosure-COLA/source-projects/stellar-enclosure-source-light/src/main/resources/application.yml");
 
     @Test
+    void operationLogCaptureAndTargetAreIndependentlyDisabledByDefault() {
+        Properties shared = load("egon-tianshu-persistence.yml");
+        String prefix = "egon.cola.component.mybatis-plus.operation-log.";
+        assertThat(shared.getProperty(prefix + "enabled")).isEqualTo("${TIANSHU_OPERATION_LOG_ENABLED:false}");
+        assertThat(shared.getProperty(prefix + "write-mode")).isEqualTo("OUTBOX");
+        assertThat(shared.getProperty(prefix + "target.enabled"))
+                .isEqualTo("${TIANSHU_OPERATION_LOG_TARGET_ENABLED:false}");
+    }
+
+    @Test
     void migratedAdminProfilesDoNotReintroduceTheLegacyRedisIdentity() {
         Path root = repositoryRoot();
         for (String module : List.of("yuheng", "tianquan-shoubing", "tianquan-jianshen")) {

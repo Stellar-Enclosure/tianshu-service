@@ -17,7 +17,9 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.boot.transaction.autoconfigure.TransactionAutoConfiguration;
 import org.springframework.boot.validation.autoconfigure.ValidationAutoConfiguration;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.ApplicationContext;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
@@ -25,6 +27,10 @@ import org.springframework.transaction.TransactionSystemException;
 import org.springframework.transaction.support.TransactionTemplate;
 import top.egon.cola.component.common.id.snowflake.SnowflakeIdGenerator;
 import top.egon.cola.component.common.core.validation.ValidationUtils;
+import top.egon.cola.component.common.mybatis.operationlog.EgonOperationLogAutoConfiguration;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogContextDTO;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogRecorder;
+import top.egon.cola.component.tianshu.admin.outbox.DdcOperationLogOutboxAdapter;
 import top.egon.cola.component.common.mybatis.autoconfigure.EgonColaMybatisPlusAutoConfiguration;
 import top.egon.cola.component.common.mybatis.autoconfigure.EgonColaShardingAutoConfiguration;
 import top.egon.cola.component.outbox.autoconfigure.OutboxMybatisPlusAutoConfiguration;
@@ -45,7 +51,6 @@ import top.egon.cola.component.tianshu.admin.model.convertor.DdcConfigDispatchEv
 import top.egon.cola.component.tianshu.admin.model.convertor.DdcConfigItemConverterImpl;
 import top.egon.cola.component.tianshu.admin.model.convertor.DdcConfigProcessReceiptConverterImpl;
 import top.egon.cola.component.tianshu.admin.model.convertor.DdcConfigVersionConverterImpl;
-import top.egon.cola.component.tianshu.admin.model.convertor.DdcOperationLogConverterImpl;
 import top.egon.cola.component.tianshu.admin.model.convertor.DdcPublishTaskConverterImpl;
 import top.egon.cola.component.tianshu.admin.model.dto.DdcPublishRequest;
 import top.egon.cola.component.tianshu.admin.repository.DdcConfigBootBindingRepository;
@@ -53,13 +58,11 @@ import top.egon.cola.component.tianshu.admin.repository.DdcConfigItemRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcConfigProcessReceiptRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcConfigProcessReceiptRepository.AcceptanceEnum;
 import top.egon.cola.component.tianshu.admin.repository.DdcConfigVersionRepository;
-import top.egon.cola.component.tianshu.admin.repository.DdcOperationLogRepository;
 import top.egon.cola.component.tianshu.admin.repository.DdcPublishTaskRepository;
 import top.egon.cola.component.tianshu.admin.repository.impl.DdcConfigBootBindingRepositoryImpl;
 import top.egon.cola.component.tianshu.admin.repository.impl.DdcConfigItemRepositoryImpl;
 import top.egon.cola.component.tianshu.admin.repository.impl.DdcConfigProcessReceiptRepositoryImpl;
 import top.egon.cola.component.tianshu.admin.repository.impl.DdcConfigVersionRepositoryImpl;
-import top.egon.cola.component.tianshu.admin.repository.impl.DdcOperationLogRepositoryImpl;
 import top.egon.cola.component.tianshu.admin.repository.impl.DdcPublishTaskRepositoryImpl;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantBindingDTO;
 import top.egon.cola.component.tianshu.admin.security.tenancy.DdcTenantContextDTO;
@@ -72,6 +75,9 @@ import top.egon.cola.component.tianshu.admin.service.publish.DdcConfigManifestFa
 import top.egon.cola.component.tianshu.admin.service.publish.DdcConfigManifestFactory.PublicationPolicyVO;
 import top.egon.cola.component.tianshu.admin.service.publish.DdcPendingPublishDispatcher;
 import top.egon.cola.component.tianshu.admin.service.publish.DdcPublishService;
+import top.egon.cola.component.tianshu.admin.service.publish.DdcNativeConfigRolloutService;
+import top.egon.cola.component.tianshu.admin.service.publish.DdcConfigBaselineReconciler;
+import top.egon.cola.component.tianshu.admin.service.publish.DdcConfigBaselineReconciler.TargetResultVO;
 import top.egon.cola.component.tianshu.admin.service.publish.PublishFailureRecorder;
 import top.egon.cola.component.tianshu.format.DdcConfigCanonicalJson;
 import top.egon.cola.component.tianshu.model.config.DdcConfigBaselineVO.TargetBindingVO;
@@ -112,7 +118,7 @@ import static top.egon.cola.component.tianshu.admin.repository.DdcConfigProcessR
 /** Real Spring, ShardingSphere, Egon MP, and PostgreSQL proof for replica-independent delivery state. */
 class DdcConfigDeliveryPersistenceIT {
     private static final String DATABASE = "tianshu_step19_delivery";
-    private static final String ATOMIC_DATABASE = "tianshu_step27_atomic";
+    private static final String ATOMIC_DATABASE = "tianshu_operation_log_atomic_" + UUID.randomUUID().toString().replace("-", "");
     private static final String PERSISTENCE_YAML = "egon-tianshu-persistence.yml";
     private static final String ENABLED = "TIANSHU_CONFIG_DELIVERY_PERSISTENCE_IT_ENABLED";
     private static final Instant REPORTED = Instant.parse("2026-11-18T18:00:00Z");
@@ -128,9 +134,11 @@ class DdcConfigDeliveryPersistenceIT {
     void nativeIntakeCommitsVersionIntentTaskAuditAndOutboxOnOnePostgresqlTransaction() throws Exception {
         Assumptions.assumeTrue("true".equals(System.getenv("TIANSHU_CONFIG_NATIVE_PUBLISH_IT_ENABLED")),
                 "requires the dedicated disposable native publication database");
-        String url = required("TIANSHU_CONFIG_NATIVE_PUBLISH_IT_JDBC_URL");
+        String adminUrl = required("TIANSHU_CONFIG_NATIVE_PUBLISH_IT_JDBC_URL");
         String user = required("TIANSHU_CONFIG_NATIVE_PUBLISH_IT_DB_USERNAME");
         String password = required("TIANSHU_CONFIG_NATIVE_PUBLISH_IT_DB_PASSWORD");
+        try (var database = createNativeDatabase(adminUrl, user, password)) {
+        String url = database.url();
         var physical = ownedPrimary(url, user, password, ATOMIC_DATABASE);
         initializeSchema(url, user, password);
         try (var connection = physical.getConnection(); var command = connection.createStatement()) {
@@ -150,15 +158,19 @@ class DdcConfigDeliveryPersistenceIT {
         String adminPropertiesName = "egon.cola.component.tianshu.admin-top.egon.cola.component.tianshu.admin.config.DdcAdminProperties";
         runner(url, user, password, false)
                 .withConfiguration(AutoConfigurations.of(TransactionalOutboxAutoConfiguration.class,
-                        OutboxStateMachineAutoConfiguration.class, OutboxMybatisPlusAutoConfiguration.class))
+                        OutboxStateMachineAutoConfiguration.class, OutboxMybatisPlusAutoConfiguration.class,
+                        EgonOperationLogAutoConfiguration.class))
                 .withUserConfiguration(DdcOutboxConfiguration.class, DdcAdminOutboxDispatchConfiguration.class,
                         DdcConfigItemRepositoryImpl.class, DdcConfigItemConverterImpl.class,
                         DdcConfigVersionRepositoryImpl.class, DdcConfigVersionConverterImpl.class,
                         DdcPublishTaskRepositoryImpl.class, DdcPublishTaskConverterImpl.class,
-                        DdcOperationLogRepositoryImpl.class, DdcOperationLogConverterImpl.class,
+                        DdcOperationLogOutboxAdapter.ProducerConfiguration.class,
                         DdcConfigDispatchEventConverterImpl.class, DdcConfigDispatchDeliveryHandler.class,
                         DdcConfigManifestFactory.class, DdcPublishService.class, DdcPendingPublishDispatcher.class,
                         PublishFailureRecorder.class)
+                .withBean("operationLogContextProvider", Supplier.class, () -> (Supplier<OperationLogContextDTO>) () ->
+                        new OperationLogContextDTO(TENANT.tenantId(), "SERVICE", TENANT.actor(), null, "JOB",
+                                null, null, null, null, null, null))
                 .withBean("jacksonObjectMapper", ObjectMapper.class, () -> new ObjectMapper().findAndRegisterModules())
                 .withBean("ddcTenantRegistry", DdcTenantRegistry.class, () -> registry)
                 .withBean(adminPropertiesName, DdcAdminProperties.class, DdcAdminProperties::new)
@@ -172,9 +184,16 @@ class DdcConfigDeliveryPersistenceIT {
                         "egon.cola.component.transactional-outbox.polling.enabled=false",
                         "egon.cola.component.transactional-outbox.cleanup.enabled=false",
                         "egon.cola.component.transactional-outbox.state-machine.execution-timeout=1s",
-                        "egon.cola.component.transactional-outbox.node-id=atomic-test")
+                        "egon.cola.component.transactional-outbox.node-id=atomic-test",
+                        "egon.cola.component.mybatis-plus.operation-log.enabled=true",
+                        "egon.cola.component.mybatis-plus.operation-log.write-mode=OUTBOX",
+                        "egon.cola.component.mybatis-plus.operation-log.source-service=tianshu-admin")
                 .run(context -> {
                     assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean("ddcOperationLogDeliveryHandler");
+                    assertThat(context.getBean("deliveryHandlerRegistry",
+                            top.egon.cola.component.outbox.delivery.DeliveryHandlerRegistry.class).channels())
+                            .contains("tianshu.config-rollout").doesNotContain("tianshu.operation-log");
                     var executor = context.getBean(DdcTenantContextExecutor.class);
                     try (var binding = executor.bind(TENANT)) {
                         var producer = context.getBean(DdcPublishService.class);
@@ -189,7 +208,7 @@ class DdcConfigDeliveryPersistenceIT {
                                 context.getBean(DdcConfigRolloutOutboxRouteDTO.class), context.getBean(ValidationUtils.class));
                         var failureCase = new DdcPublishService(context.getBean(DdcConfigItemRepository.class),
                                 context.getBean(DdcConfigVersionRepository.class), tasks,
-                                context.getBean(DdcOperationLogRepository.class), failingDispatcher,
+                                context.getBean(OperationLogRecorder.class), failingDispatcher,
                                 context.getBean(PublishFailureRecorder.class), context.getBean(DdcAdminProperties.class),
                                 context.getBean(DdcYamlConfigValidator.class),
                                 context.getBean("ddcPublishTransactionTemplate", TransactionTemplate.class),
@@ -198,9 +217,78 @@ class DdcConfigDeliveryPersistenceIT {
                         assertThatThrownBy(() -> failureCase.publish(request("270010302", 2, 3), TENANT.actor()))
                                 .hasMessage("ATOMIC_FIXTURE_ENQUEUE_REJECTED");
                         verifyNativeAtomicRows(physical);
+                        var rollouts = nativeRollouts(context);
+                        try (var connection = physical.getConnection(); var command = connection.createStatement()) {
+                            command.execute("ALTER TABLE egon_outbox.egon_cola_outbox_message ADD CONSTRAINT "
+                                    + "fixture_reject_operation_log CHECK (channel <> 'tianshu.operation-log') NOT VALID");
+                        } catch (SQLException failure) { throw new IllegalStateException(failure); }
+                        try {
+                            assertThatThrownBy(() -> producer.publish(request("270010303", 2, 3), TENANT.actor()))
+                                    .hasRootCauseInstanceOf(SQLException.class);
+                            verifyNativeAtomicRows(physical);
+                            assertThatThrownBy(() -> rollouts.reconcileNative(committed, 27001, 2, 1, "atomic-wakeup"))
+                                    .hasRootCauseInstanceOf(SQLException.class);
+                            assertThat(tasks.findByChangeId(committed).orElseThrow().getStatus()).isEqualTo("PENDING");
+                            verifyNativeAtomicRows(physical);
+                        } finally {
+                            try (var connection = physical.getConnection(); var command = connection.createStatement()) {
+                                command.execute("ALTER TABLE egon_outbox.egon_cola_outbox_message DROP CONSTRAINT fixture_reject_operation_log");
+                            } catch (SQLException failure) { throw new IllegalStateException(failure); }
+                        }
+                        assertThat(rollouts.reconcileNative(committed, 27001, 2, 1, "atomic-wakeup")).isTrue();
+                        verifyNativeExecutionRows(physical);
+                        assertThat(rollouts.reconcileNative(committed, 27001, 2, 1, "atomic-wakeup-replay")).isTrue();
+                        assertThat(auditExecutionCount(physical)).isEqualTo(1);
                         verifyNativeTaskFence(tasks, committed);
                     }
                 });
+        }
+    }
+
+    private static DdcNativeConfigRolloutService nativeRollouts(ApplicationContext context) {
+        var baseline = mock(DdcConfigBaselineReconciler.class);
+        when(baseline.reconcile(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(List.of(new TargetResultVO("atomic-binding", "1", "isolated", "platform-prod",
+                        "workload-atomic", "baseline", "cm-atomic", "1", "rv-atomic", Instant.now(), "APPLIED", null)));
+        return new DdcNativeConfigRolloutService(context.getBean(DdcConfigItemRepository.class),
+                context.getBean(DdcConfigVersionRepository.class), context.getBean(DdcPublishTaskRepository.class),
+                context.getBean(DdcConfigManifestFactory.class), baseline,
+                context.getBean("ddcPublishTransactionTemplate", TransactionTemplate.class),
+                context.getBean("jacksonObjectMapper", ObjectMapper.class), context.getBean("ddcPublishClock", Clock.class),
+                context.getBean(OperationLogRecorder.class));
+    }
+
+    private static void verifyNativeExecutionRows(PGSimpleDataSource source) {
+        try (var connection = source.getConnection(); var query = connection.createStatement();
+             var rows = query.executeQuery("""
+                     SELECT t.status, t.xmin::text, a.xmin::text,
+                            a.payload::jsonb ->> 'operationId', a.payload::jsonb ->> 'outcome',
+                            a.payload::jsonb #>> '{details,publishStage}', a.payload::jsonb #>> '{details,attempt}',
+                            a.payload::jsonb ->> 'handlerMethod'
+                     FROM public.ddc_publish_task_t0 t CROSS JOIN egon_outbox.egon_cola_outbox_message a
+                     WHERE t.change_id='270010301' AND a.channel='tianshu.operation-log'
+                       AND a.payload::jsonb ->> 'phase'='EXECUTION'
+                     """)) {
+            assertThat(rows.next()).isTrue();
+            assertThat(rows.getString(1)).isEqualTo("PLATFORM_APPLIED");
+            assertThat(rows.getString(2)).isEqualTo(rows.getString(3));
+            assertThat(rows.getString(4)).isEqualTo("270010301");
+            assertThat(rows.getString(5)).isEqualTo("SUCCEEDED");
+            assertThat(rows.getString(6)).isEqualTo("PLATFORM_APPLIED");
+            assertThat(rows.getString(7)).isEqualTo("1");
+            assertThat(rows.getString(8)).isEqualTo(DdcNativeConfigRolloutService.class.getName()
+                    + "#reconcileNative(java.lang.String,long,long,int,java.lang.String)");
+            assertThat(rows.next()).isFalse();
+        } catch (SQLException failure) { throw new IllegalStateException(failure); }
+    }
+
+    private static long auditExecutionCount(PGSimpleDataSource source) {
+        try (var connection = source.getConnection(); var query = connection.createStatement();
+             var rows = query.executeQuery("SELECT count(*) FROM egon_outbox.egon_cola_outbox_message "
+                     + "WHERE channel='tianshu.operation-log' AND payload::jsonb ->> 'phase'='EXECUTION'")) {
+            assertThat(rows.next()).isTrue();
+            return rows.getLong(1);
+        } catch (SQLException failure) { throw new IllegalStateException(failure); }
     }
 
     private static void verifyNativeTaskFence(DdcPublishTaskRepository tasks, String changeId) {
@@ -241,13 +329,20 @@ class DdcConfigDeliveryPersistenceIT {
                      SELECT i.published_version, i.current_version, i.xmin::text,
                             v.xmin::text, t.xmin::text, a.xmin::text, o.xmin::text,
                             v.manifest_json ->> 'schemaVersion', t.platform_evidence ->> 'schemaVersion',
-                            o.channel, o.status
+                            a.payload::jsonb ->> 'actionCode', a.payload::jsonb ->> 'phase',
+                            a.payload::jsonb ->> 'outcome', a.payload::jsonb ->> 'operationId',
+                            a.payload::jsonb #>> '{details,targetRevision}', a.payload::jsonb #>> '{details,attempt}',
+                            a.payload::jsonb ->> 'handlerMethod',
+                            (SELECT count(*) FROM public.ddc_operation_log_t0),
+                            (SELECT count(*) FROM egon_outbox.egon_cola_outbox_message),
+                            (SELECT count(*) FROM public.ddc_config_version_t0),
+                            (SELECT count(*) FROM public.ddc_publish_task_t0)
                      FROM public.ddc_config_item_t0 i
                      JOIN public.ddc_config_version_t0 v ON v.tenant_id=i.tenant_id AND v.config_id=i.id
                      JOIN public.ddc_publish_task_t0 t ON t.tenant_id=i.tenant_id AND t.config_id=i.id
-                     JOIN public.ddc_operation_log_t0 a ON a.tenant_id=i.tenant_id
+                     CROSS JOIN egon_outbox.egon_cola_outbox_message a
                      CROSS JOIN egon_outbox.egon_cola_outbox_message o
-                     WHERE i.id=27001
+                     WHERE i.id=27001 AND a.channel='tianshu.operation-log' AND o.channel='tianshu.config-rollout'
                      """)) {
             assertThat(rows.next()).isTrue();
             assertThat(rows.getLong(1)).isEqualTo(2);
@@ -258,9 +353,42 @@ class DdcConfigDeliveryPersistenceIT {
             }
             assertThat(rows.getString(8)).isEqualTo("1");
             assertThat(rows.getString(9)).isEqualTo("1");
-            assertThat(rows.getString(10)).isEqualTo("tianshu.config-rollout");
-            assertThat(rows.getString(11)).isEqualTo("PENDING");
+            assertThat(rows.getString(10)).isEqualTo("TIANSHU_CONFIG_PUBLISH");
+            assertThat(rows.getString(11)).isEqualTo("COMMAND");
+            assertThat(rows.getString(12)).isEqualTo("ACCEPTED");
+            assertThat(rows.getString(13)).isEqualTo("270010301");
+            assertThat(rows.getString(14)).isEqualTo("2");
+            assertThat(rows.getString(15)).isEqualTo("1");
+            assertThat(rows.getString(16)).isEqualTo(DdcPublishService.class.getName()
+                    + "#publish(" + DdcPublishRequest.class.getName() + ",java.lang.String)");
+            assertThat(rows.getLong(17)).as("retired ordinary log remains empty").isZero();
+            assertThat(rows.getLong(18)).as("one business event plus one audit event, despite replay and failures").isEqualTo(2);
+            assertThat(rows.getLong(19)).isEqualTo(1);
+            assertThat(rows.getLong(20)).isEqualTo(1);
             assertThat(rows.next()).isFalse();
+        }
+    }
+
+    private static NativeDatabaseVO createNativeDatabase(String adminUrl, String user, String password) throws SQLException {
+        if (!adminUrl.matches("jdbc:postgresql://127\\.0\\.0\\.1:[0-9]{1,5}/postgres")) {
+            throw new IllegalStateException("TIANSHU_NATIVE_ATOMIC_ISOLATED_ADMIN_REQUIRED");
+        }
+        var admin = new PGSimpleDataSource();
+        admin.setURL(adminUrl); admin.setUser(user); admin.setPassword(password);
+        try (var connection = admin.getConnection(); var statement = connection.createStatement()) {
+            try (var rows = statement.executeQuery("SELECT NOT pg_is_in_recovery()")) {
+                if (!rows.next() || !rows.getBoolean(1)) throw new IllegalStateException("TIANSHU_NATIVE_ATOMIC_PRIMARY_REQUIRED");
+            }
+            statement.execute("CREATE DATABASE " + ATOMIC_DATABASE);
+        }
+        return new NativeDatabaseVO(admin, adminUrl.substring(0, adminUrl.lastIndexOf('/') + 1) + ATOMIC_DATABASE);
+    }
+
+    private record NativeDatabaseVO(PGSimpleDataSource admin, String url) implements AutoCloseable {
+        @Override public void close() throws SQLException {
+            try (var connection = admin.getConnection(); var statement = connection.createStatement()) {
+                statement.execute("DROP DATABASE " + ATOMIC_DATABASE + " WITH (FORCE)");
+            }
         }
     }
 
@@ -669,7 +797,8 @@ class DdcConfigDeliveryPersistenceIT {
     private ApplicationContextRunner runner(String url, String user, String password, boolean receiptClock) {
         var runner = new ApplicationContextRunner().withInitializer(context -> {
             try {
-                var properties = new YamlPropertySourceLoader().load("tianshu-persistence", new ClassPathResource(PERSISTENCE_YAML));
+                var properties = new YamlPropertySourceLoader().load("tianshu-persistence",
+                        new ByteArrayResource(fixturePersistenceYaml().getBytes(StandardCharsets.UTF_8)));
                 properties.forEach(context.getEnvironment().getPropertySources()::addLast);
             } catch (java.io.IOException error) {
                 throw new IllegalStateException("TIANSHU_TEST_PERSISTENCE_YAML_REQUIRED", error);
@@ -688,11 +817,7 @@ class DdcConfigDeliveryPersistenceIT {
     }
 
     private void initializeSchema(String url, String user, String password) throws Exception {
-        var resource = new ClassPathResource(PERSISTENCE_YAML);
-        String yaml;
-        try (var input = resource.getInputStream()) {
-            yaml = new String(input.readAllBytes(), StandardCharsets.UTF_8);
-        }
+        String yaml = fixturePersistenceYaml();
         yaml = yaml.replace("\"${TIANSHU_JDBC_URL:${spring.datasource.url}}\"", JSON.writeValueAsString(url))
                 .replace("\"${TIANSHU_DB_USERNAME:${spring.datasource.username}}\"", JSON.writeValueAsString(user))
                 .replace("\"${TIANSHU_DB_PASSWORD:${spring.datasource.password}}\"", JSON.writeValueAsString(password));
@@ -700,6 +825,32 @@ class DdcConfigDeliveryPersistenceIT {
                 PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
         Files.writeString(configuration, yaml);
         DdcPersistenceMigrationCli.main(new String[]{"initialize", "--target-config", configuration.toString()});
+    }
+
+    // Fresh disposable fixture only. These additive routes do not prove that an existing
+    // managed history accepts a changed source-routing fingerprint.
+    private static String fixturePersistenceYaml() throws java.io.IOException {
+        String yaml;
+        try (var input = new ClassPathResource(PERSISTENCE_YAML).getInputStream()) {
+            yaml = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+        }
+        boolean coordinatedManifest;
+        try (var input = new ClassPathResource("db/egon-outbox-mp/manifest.json").getInputStream()) {
+            var scripts = JSON.readTree(input).path("scripts");
+            coordinatedManifest = false;
+            for (var script : scripts) {
+                if ("20261122_001".equals(script.path("version").asText())) coordinatedManifest = true;
+            }
+        }
+        if (coordinatedManifest && !yaml.contains("egon_cola_outbox_queue_member")) {
+            yaml = yaml.replace("ignored-tables: [egon_cola_outbox_message, ddl_history]",
+                    "ignored-tables: [egon_cola_outbox_message, egon_cola_outbox_queue_member, egon_cola_outbox_queue_lease, ddl_history]");
+            yaml = yaml.replace("            egon_cola_outbox_message: { type: SINGLE, data-source: tianshu_0, schema: egon_outbox }",
+                    "            egon_cola_outbox_queue_member: { type: SINGLE, data-source: tianshu_0, schema: egon_outbox }\n"
+                    + "            egon_cola_outbox_queue_lease: { type: SINGLE, data-source: tianshu_0, schema: egon_outbox }\n"
+                    + "            egon_cola_outbox_message: { type: SINGLE, data-source: tianshu_0, schema: egon_outbox }");
+        }
+        return yaml;
     }
 
     private static PGSimpleDataSource ownedPrimary(String url, String user, String password) throws Exception {

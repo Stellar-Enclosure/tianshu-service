@@ -35,15 +35,15 @@ class DdcAdminOutboxDispatchConfigurationTest {
     private final TransactionalOutboxProperties flags = new TransactionalOutboxProperties();
     private final DeliveryHandler business = handler("tianshu.ai-publication");
     private final DeliveryHandler publisher = handler(route.channel());
-    private final DeliveryHandlerRegistry registered = new DeliveryHandlerRegistry(List.of(business, publisher));
+    private final DeliveryHandlerRegistry registered = new DeliveryHandlerRegistry(List.of(business, publisher, handler("tianshu.operation-log")));
 
     @Test
     void producerCanValidateNativeWakeupWhileAdminPollsOnlyBusinessChannels() {
         assertThat(registered.required(route.channel())).isSameAs(publisher);
         when(store.claimDue(any(), anyInt(), any(), any())).thenReturn(List.of());
         dispatcher().submitDue();
-        verify(store).claimDue(eq(Set.of("tianshu.ai-publication")), anyInt(), any(), any());
-        assertThat(registered.channels()).containsExactlyInAnyOrder("tianshu.ai-publication", route.channel());
+        verify(store).claimDue(eq(Set.of("tianshu.ai-publication", "tianshu.operation-log")), anyInt(), any(), any());
+        assertThat(registered.channels()).containsExactlyInAnyOrder("tianshu.ai-publication", "tianshu.operation-log", route.channel());
     }
 
     @Test

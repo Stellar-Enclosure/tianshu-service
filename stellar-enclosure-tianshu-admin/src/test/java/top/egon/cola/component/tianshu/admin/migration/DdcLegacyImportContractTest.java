@@ -226,8 +226,9 @@ class DdcLegacyImportContractTest {
                 "ddc_config_version",
                 "ddc_publish_task",
                 "ddc_publish_ack",
-                "ddc_instance",
-                "ddc_operation_log");
+                "ddc_instance");
+        assertThatThrownBy(() -> new DdcLegacyTableStrategy().targetTableName("ddc_operation_log"))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

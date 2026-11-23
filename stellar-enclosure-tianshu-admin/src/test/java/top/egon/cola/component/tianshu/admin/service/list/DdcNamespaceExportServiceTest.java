@@ -14,7 +14,7 @@ import top.egon.cola.component.tianshu.admin.model.vo.DdcNamespaceResult;
 import top.egon.cola.component.tianshu.admin.model.vo.DdcPageResult;
 import top.egon.cola.component.tianshu.admin.service.i18n.DdcAdminUiI18nService;
 import top.egon.cola.component.tianshu.admin.service.metadata.DdcNamespaceService;
-import top.egon.cola.component.tianshu.admin.repository.DdcOperationLogRepository;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogRecorder;
 import top.egon.cola.platform.tianquan.jianshen.contract.authorization.DataScopeDecision;
 import top.egon.cola.platform.tianquan.jianshen.contract.authorization.Decision;
 import top.egon.cola.platform.tianquan.jianshen.contract.authorization.SystemAuthorizationSnapshot;
@@ -26,6 +26,7 @@ import top.egon.cola.platform.tianquan.jianshen.starter.security.CurrentRbac3Use
 import top.egon.cola.platform.tianquan.jianshen.starter.security.Rbac3UserDetails;
 
 import java.io.ByteArrayInputStream;
+import org.springframework.transaction.support.TransactionTemplate;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -43,9 +44,10 @@ class DdcNamespaceExportServiceTest {
     private final PermissionOutputProjection projection = mock(PermissionOutputProjection.class);
     private final PermissionExecutionGuard execution = mock(PermissionExecutionGuard.class);
     private final CurrentRbac3User users = mock(CurrentRbac3User.class);
-    private final DdcOperationLogRepository audit = mock(DdcOperationLogRepository.class);
+    private final OperationLogRecorder audit = mock(OperationLogRecorder.class);
+    private final TransactionTemplate auditTransaction = mock(TransactionTemplate.class);
     private final DdcNamespaceDataScopeGuard dataScope = new DdcNamespaceDataScopeGuard(users);
-    private final DdcNamespaceExportService service = new DdcNamespaceExportService(namespaces, converter, templates, i18n, dataScope, audit, projection, execution);
+    private final DdcNamespaceExportService service = new DdcNamespaceExportService(namespaces, converter, templates, i18n, dataScope, audit, projection, execution, auditTransaction);
     private final Rbac3UserDetails user = mock(Rbac3UserDetails.class);
     private final SystemAuthorizationSnapshot snapshot = mock(SystemAuthorizationSnapshot.class);
     private final String digest = DdcNamespaceListDefinition.DEFINITION.digest();
@@ -53,6 +55,11 @@ class DdcNamespaceExportServiceTest {
             "zh-CN", "1", digest, null, null);
 
     @BeforeEach void setup() throws Exception {
+        doAnswer(call -> {
+            call.<java.util.function.Consumer<org.springframework.transaction.TransactionStatus>>getArgument(0)
+                    .accept(mock(org.springframework.transaction.TransactionStatus.class));
+            return null;
+        }).when(auditTransaction).executeWithoutResult(any());
         var scope = new CatalogScope("10", "20", "xingyuan", "tianshu", "default", "test");
         var view = new EffectivePermissionSnapshot("https://identity.example/tenants/20", "alice", scope, "1", "2", "3",
                 new EffectivePermissionSnapshot.ActiveRoleContext("tianshu", List.of("7"), List.of("7")),
@@ -107,7 +114,12 @@ class DdcNamespaceExportServiceTest {
                 "zh-CN", "1", digest, null, null);
         service.export(defaultRange);
         verify(namespaces).page("trade", "needle", new PageQuery(1, 500));
-        verify(audit).insert(argThat(log -> log.getOperationContent().contains("range=FILTERED")));
+        var writes = inOrder(auditTransaction, audit);
+        writes.verify(auditTransaction).executeWithoutResult(any());
+        writes.verify(audit).recordInTransaction(argThat(event ->
+                "TIANSHU_NAMESPACE_EXPORT_GENERATED".equals(event.getActionCode())
+                        && "FILTERED".equals(event.getDetails().path("range").asText())),
+                argThat(method -> method.getName().equals("export")));
     }
 
     @Test void aConfiguredRestrictedDataScopeFailsClosedBeforeQuerying() {

@@ -1,5 +1,10 @@
 package top.egon.cola.component.tianshu.admin.service.publish;
 
+import java.lang.reflect.Method;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogEvent;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogRecorder;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogPhaseEnum;
+import top.egon.cola.component.common.mybatis.operationlog.OperationLogOutcomeEnum;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.Validation;
 import org.junit.jupiter.api.AfterEach;
@@ -57,7 +62,13 @@ public class DdcPublishPreparationTest {
         assertThat(fixture.messages).hasSize(1);
         assertThat(fixture.messages.getFirst().channel()).isEqualTo("tianshu.config-rollout");
         assertThat(fixture.messages.getFirst().payload()).isInstanceOf(DdcConfigRolloutRequestedEvent.class);
-        verify(fixture.audit).insert(any());
+        assertAccepted(1, "publish");
+        verifyNoInteractions(fixture.audit);
+    }
+
+    @Test void acceptedPublicationDoesNotAppendToRetiredOrdinaryLog() {
+        assertThat(fixture.service.publish(request("123", 1), "test").getStatus()).isEqualTo("PENDING");
+        verifyNoInteractions(fixture.audit);
     }
 
     @Test void outboxFailureRollsBackVersionTaskPointerAndAuditIntentTogether() {
@@ -69,6 +80,7 @@ public class DdcPublishPreparationTest {
         assertThat(fixture.versionRows).isEmpty();
         assertThat(fixture.taskRows).isEmpty();
         assertThat(fixture.messages).isEmpty();
+        assertThat(fixture.facts).isEmpty();
     }
 
     @Test void repeatedChangeIdReturnsTheExactCommittedPublicationWithoutAnotherRevisionOrEvent() {
@@ -77,6 +89,7 @@ public class DdcPublishPreparationTest {
         assertThat(duplicate.getTargetVersion()).isEqualTo(2L);
         assertThat(fixture.versionRows).hasSize(1);
         assertThat(fixture.messages).hasSize(1);
+        assertThat(fixture.facts).hasSize(1);
         assertThatThrownBy(() -> fixture.service.publish(request("123", 2), "test"))
                 .hasMessageContaining("different publication");
     }
@@ -114,6 +127,70 @@ public class DdcPublishPreparationTest {
         assertThat(fixture.item.getPublishedVersion()).isEqualTo(2L);
     }
 
+    @Test void auditFailureRollsBackTaskPointerAndVersionBeforeAnyBusinessEvent() {
+        doThrow(new IllegalStateException("audit-enqueue-failed")).when(fixture.recorder)
+                .recordInTransaction(any(), any(Method.class));
+        assertThatThrownBy(() -> fixture.service.publish(request("123", 1), "test"))
+                .hasMessage("audit-enqueue-failed");
+        assertThat(fixture.item.getCurrentVersion()).isEqualTo(1L);
+        assertThat(fixture.taskRows).isEmpty();
+        assertThat(fixture.versionRows).isEmpty();
+        assertThat(fixture.messages).isEmpty();
+    }
+
+    @Test void commitUnknownReturnsCommittedTaskWithoutDuplicatingItsAudit() {
+        var actual = fixture.transactions.getTransactionManager();
+        var uncertain = new TransactionTemplate(new org.springframework.transaction.PlatformTransactionManager() {
+            public org.springframework.transaction.TransactionStatus getTransaction(TransactionDefinition definition) {
+                return actual.getTransaction(definition);
+            }
+            public void commit(org.springframework.transaction.TransactionStatus status) {
+                actual.commit(status);
+                throw new IllegalStateException("commit-reply-lost");
+            }
+            public void rollback(org.springframework.transaction.TransactionStatus status) { actual.rollback(status); }
+        });
+        var result = fixture.createService(uncertain).publish(request("123", 1), "test");
+        assertThat(result.getStatus()).isEqualTo("PENDING");
+        assertThat(fixture.facts).hasSize(1);
+        assertThat(fixture.messages).hasSize(1);
+        assertAccepted(1, "publish");
+    }
+
+    @Test void realRetryAddsOneAcceptedFactWithSameRootAndIncrementedAttempt() {
+        fixture.service.publish(request("123", 1), "test");
+        fixture.taskRows.get("123").setStatus("FAILED");
+        when(fixture.tasks.resetNativeForRetry(any(), any(), any())).thenReturn(1);
+        fixture.service.retry("123", "test");
+        assertThat(fixture.facts).hasSize(2);
+        var retry = fixture.facts.getLast();
+        assertThat(retry.getOperationId()).isEqualTo("123");
+        assertThat(retry.getOutcome()).isEqualTo(OperationLogOutcomeEnum.ACCEPTED);
+        assertThat(retry.getDetails().path("attempt").intValue()).isEqualTo(2);
+        assertThat(retry.getDetails().path("targetRevision").textValue()).isEqualTo("2");
+        assertThat(fixture.messages).hasSize(2);
+        assertThatThrownBy(() -> fixture.service.retry("123", "test")).hasMessageContaining("not current and retryable");
+        assertThat(fixture.facts).hasSize(2);
+    }
+
+    private void assertAccepted(int attempt, String methodName) {
+        var event = fixture.facts.getFirst();
+        assertThat(event.getModuleCode()).isEqualTo("CONFIG");
+        assertThat(event.getResourceType()).isEqualTo("CONFIG");
+        assertThat(event.getActionCode()).isEqualTo("TIANSHU_CONFIG_PUBLISH");
+        assertThat(event.getResourceId()).isEqualTo("config-1");
+        assertThat(event.getOperationId()).isEqualTo("123");
+        assertThat(event.getPhase()).isEqualTo(OperationLogPhaseEnum.COMMAND);
+        assertThat(event.getOutcome()).isEqualTo(OperationLogOutcomeEnum.ACCEPTED);
+        assertThat(event.getDetails().properties()).hasSize(3);
+        assertThat(event.getDetails().path("targetRevision").textValue()).isEqualTo("2");
+        assertThat(event.getDetails().path("attempt").intValue()).isEqualTo(attempt);
+        var source = org.mockito.ArgumentCaptor.forClass(Method.class);
+        verify(fixture.recorder).recordInTransaction(any(), source.capture());
+        assertThat(source.getValue().getDeclaringClass()).isEqualTo(DdcPublishService.class);
+        assertThat(source.getValue().getName()).isEqualTo(methodName);
+    }
+
     public static DdcPublishRequest request(String changeId, long expected) {
         var request = new DdcPublishRequest();
         request.setChangeId(changeId); request.setBizCode("reader"); request.setEnv("test"); request.setAppCode("app");
@@ -128,6 +205,8 @@ public class DdcPublishPreparationTest {
         public final DdcConfigVersionRepository versions = mock(DdcConfigVersionRepository.class);
         final DdcPublishTaskRepository tasks = mock(DdcPublishTaskRepository.class);
         final DdcOperationLogRepository audit = mock(DdcOperationLogRepository.class);
+        final OperationLogRecorder recorder = mock(OperationLogRecorder.class);
+        final List<OperationLogEvent> facts = new ArrayList<>();
         final TransactionalOutbox outbox = mock(TransactionalOutbox.class);
         final DdcTenantRegistry tenants = mock(DdcTenantRegistry.class);
         public final DdcConfigManifestFactory manifests = new DdcConfigManifestFactory(new ObjectMapper());
@@ -165,17 +244,23 @@ public class DdcPublishPreparationTest {
                 Map<Long,DdcConfigVersionBO> oldVersions;
                 Map<String,DdcPublishTaskBO> oldTasks;
                 List<OutboxMessage> oldMessages;
+                List<OperationLogEvent> oldFacts;
                 @Override protected Object doGetTransaction() { return new Object(); }
                 @Override protected void doBegin(Object ignored,TransactionDefinition definition) {
                     previous=new DdcConfigItemBO(); BeanUtils.copyProperties(item,previous);
-                    oldVersions=new LinkedHashMap<>(versionRows); oldTasks=new LinkedHashMap<>(taskRows); oldMessages=new ArrayList<>(messages);
+                    oldVersions=new LinkedHashMap<>(versionRows); oldTasks=new LinkedHashMap<>(taskRows); oldMessages=new ArrayList<>(messages); oldFacts=new ArrayList<>(facts);
                 }
                 @Override protected void doCommit(DefaultTransactionStatus status) { }
                 @Override protected void doRollback(DefaultTransactionStatus status) {
                     BeanUtils.copyProperties(previous,item);
-                    versionRows.clear();versionRows.putAll(oldVersions);taskRows.clear();taskRows.putAll(oldTasks);messages.clear();messages.addAll(oldMessages);
+                    versionRows.clear();versionRows.putAll(oldVersions);taskRows.clear();taskRows.putAll(oldTasks);messages.clear();messages.addAll(oldMessages);facts.clear();facts.addAll(oldFacts);
                 }
             };
+            doAnswer(call -> {
+                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+                facts.add(call.getArgument(0));
+                return null;
+            }).when(recorder).recordInTransaction(any(), any(Method.class));
             var validation = new ValidationUtils(Validation.buildDefaultValidatorFactory().getValidator());
             dispatcher = new DdcPendingPublishDispatcher(new DdcConfigDispatchEventConverterImpl(), outbox,
                     new DdcConfigRolloutOutboxRouteDTO("tianshu.config-rollout","1"),validation);
@@ -186,7 +271,7 @@ public class DdcPublishPreparationTest {
             service = createService(transactions);
         }
         DdcPublishService createService(TransactionTemplate transaction) {
-            return new DdcPublishService(items,versions,tasks,audit,dispatcher,new PublishFailureRecorder(tasks),properties,
+            return new DdcPublishService(items,versions,tasks,recorder,dispatcher,new PublishFailureRecorder(tasks),properties,
                     new DdcYamlConfigValidator(properties.getMaxConfigBytes()),transaction,Clock.systemUTC(),manifests,policies,tenants);
         }
     }
