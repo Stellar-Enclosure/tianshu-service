@@ -30,6 +30,18 @@ class DdcPermissionMetadataBootstrapTest {
     @TempDir Path temporary;
 
     @Test
+    void bootstrapReceiptUsesItsDedicatedTableWithoutReadingOrWritingOrdinaryLogs() throws Exception {
+        var fixture = database(null, false);
+        new DdcPermissionMetadataBootstrapRepository("metadata", CLOCK)
+                .initialize(fixture.connection(), command(), DIGEST, null);
+        assertTrue(fixture.sql().stream().anyMatch(sql -> sql.startsWith("SELECT command_digest, receipt FROM ")
+                && sql.contains("ddc_metadata_bootstrap_receipt_t0") && sql.contains("operation_id=? FOR UPDATE")));
+        assertTrue(fixture.sql().stream().anyMatch(sql -> sql.startsWith("INSERT INTO ")
+                && sql.contains("ddc_metadata_bootstrap_receipt_t0")));
+        assertTrue(fixture.sql().stream().noneMatch(sql -> sql.contains("ddc_operation_log")));
+    }
+
+    @Test
     void oneTransactionCreatesOnlyExplicitTargetAndPublisherGrantAndDurableReceipt() throws Exception {
         var fixture = database(null, false);
         String receipt = new DdcPermissionMetadataBootstrapRepository("metadata", CLOCK).initialize(fixture.connection(), command(), DIGEST, null);
@@ -178,10 +190,10 @@ class DdcPermissionMetadataBootstrapTest {
             PreparedStatement statement = mock(PreparedStatement.class); ResultSet rows = mock(ResultSet.class);
             when(statement.executeQuery()).thenReturn(rows); when(rows.next()).thenReturn(false);
             when(statement.executeUpdate()).thenReturn(1);
-            if (sql.startsWith("SELECT operation_type") && original != null) {
-                when(rows.next()).thenReturn(true, false); when(rows.getString(1)).thenReturn("PAC_BOOTSTRAP_METADATA_B0"); when(rows.getString(2)).thenReturn(original);
+            if (sql.startsWith("SELECT command_digest, receipt") && original != null) {
+                when(rows.next()).thenReturn(true, false); when(rows.getString(1)).thenReturn(DIGEST); when(rows.getString(2)).thenReturn(original);
             }
-            if (auditFails && sql.startsWith("INSERT INTO") && sql.contains("ddc_operation_log_t0")) {
+            if (auditFails && sql.startsWith("INSERT INTO") && sql.contains("ddc_metadata_bootstrap_receipt_t0")) {
                 when(statement.executeUpdate()).thenThrow(new SQLException("audit unavailable"));
             }
             return statement;

@@ -34,6 +34,159 @@ class DdcTianshuDdlIT {
 
     private static final String MANIFEST_RESOURCE = "db/egon-mp/repository-manifest.json";
     private static final ValidatorFactory VALIDATOR_FACTORY = Validation.buildDefaultValidatorFactory();
+    private static final String PAC_OPERATION = "ef236f7a-3840-4664-afc5-7c2690765c09";
+    private static final String PAC_DIGEST = "a".repeat(64);
+
+    @Test
+    void pacMigrationPreservesOriginalTextUtcAndIgnoresOrdinaryHistory() throws Exception {
+        withPacSchema(fixture -> {
+            String original = "{\r\n  \"operationId\":\"" + PAC_OPERATION + "\", \"commandDigest\":\""
+                    + PAC_DIGEST + "\", \"stage\":\"B0\", \"note\":\"雪😀\", \"nested\":"
+                    + "[".repeat(15) + "0" + "]".repeat(15) + "\r\n}\n";
+            insertLegacyReceipt(fixture.source(), 1, "pac-b0:" + PAC_OPERATION, "PAC_BOOTSTRAP_METADATA_B0", original, false);
+            insertLegacyReceipt(fixture.source(), 2, "ordinary-entry", "CONFIG_SAVE", "{invalid ordinary JSON", false);
+            var target = new EgonColaDdlTargetBO("pac", fixture.schema(), RoleEnum.MASTER_DATA,
+                    interruptCommit(fixture.source(), 1, true), fixture.current(), routeFingerprint());
+            runner().run(List.of(target));
+            runner().run(List.of(new EgonColaDdlTargetBO("pac", fixture.schema(), RoleEnum.MASTER_DATA,
+                    fixture.source(), fixture.current(), routeFingerprint())));
+            DdcDatabaseReadyValidator.validateTianshuSchema(fixture.source(), routeFingerprint(), fixture.current());
+            assertThatThrownBy(() -> DdcDatabaseReadyValidator.validateTianshuSchema(
+                    fixture.source(), routeFingerprint(), fixture.previous()))
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("TIANSHU_DDL_HISTORY_PREFIX_MISMATCH");
+            try (var connection = fixture.source().getConnection(); var query = connection.createStatement();
+                 var rows = query.executeQuery("SELECT tenant_id,operation_id,command_digest,receipt,recorded_at "
+                         + "FROM ddc_metadata_bootstrap_receipt_t0")) {
+                assertThat(rows.next()).isTrue();
+                assertThat(rows.getLong(1)).isEqualTo(20);
+                assertThat(rows.getString(2)).isEqualTo(PAC_OPERATION);
+                assertThat(rows.getString(3)).isEqualTo(PAC_DIGEST);
+                assertThat(rows.getString(4)).isEqualTo(original);
+                assertThat(rows.getObject(5, java.time.OffsetDateTime.class).toInstant())
+                        .isEqualTo(java.time.Instant.parse("2026-10-25T23:59:59.123456Z"));
+                assertThat(rows.next()).isFalse();
+                query.execute("DROP TABLE ddc_operation_log_t0");
+                assertThat(resumeBootstrap(connection, fixture.schema(), original)).isEqualTo(original);
+            }
+            String nextOperation = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+            try (var connection = fixture.source().getConnection(); var statement = connection.createStatement()) {
+                statement.execute("ALTER TABLE ddc_metadata_bootstrap_receipt_t0 ADD CONSTRAINT fixture_receipt_failure "
+                        + "CHECK(operation_id<>'"+nextOperation+"')");
+                assertThatThrownBy(() -> initializeBootstrap(connection,fixture.schema(),nextOperation,null))
+                        .isInstanceOf(InvocationTargetException.class)
+                        .rootCause().isInstanceOfSatisfying(SQLException.class,
+                                failure -> assertThat(failure.getSQLState()).isEqualTo("23514"));
+                try (var rows = statement.executeQuery("SELECT (SELECT count(*) FROM ddc_biz_t0), "
+                        + "(SELECT count(*) FROM ddc_metadata_bootstrap_receipt_t0)")) {
+                    assertThat(rows.next()).isTrue();
+                    assertThat(rows.getInt(1)).isZero();
+                    assertThat(rows.getInt(2)).isEqualTo(1);
+                }
+                connection.setAutoCommit(true);
+                statement.execute("ALTER TABLE ddc_metadata_bootstrap_receipt_t0 DROP CONSTRAINT fixture_receipt_failure");
+                String created = initializeBootstrap(connection,fixture.schema(),nextOperation,null);
+                assertThat(initializeBootstrap(connection,fixture.schema(),nextOperation,created)).isEqualTo(created);
+            }
+            assertThatThrownBy(() -> runner().run(List.of(new EgonColaDdlTargetBO("old", fixture.schema(),
+                    RoleEnum.MASTER_DATA, fixture.source(), fixture.previous(), routeFingerprint()))))
+                    .isInstanceOf(IllegalStateException.class).hasStackTraceContaining("MANIFEST_PREFIX_MISMATCH");
+        });
+    }
+
+    @Test
+    void everyInvalidPacCandidateRollsBackTheNewTableAndHistory() throws Exception {
+        String valid = "{\"operationId\":\""+PAC_OPERATION+"\",\"commandDigest\":\""+PAC_DIGEST+"\"}";
+        List<BadPacCandidate> candidates = List.of(
+                new BadPacCandidate("ordinary-key", "PAC_BOOTSTRAP_METADATA_B0", valid, false),
+                new BadPacCandidate("pac-b0:"+PAC_OPERATION, "CONFIG_SAVE", valid, false),
+                new BadPacCandidate("pac-b0:"+PAC_OPERATION, "PAC_BOOTSTRAP_METADATA_B0", valid, true),
+                new BadPacCandidate("pac-b0:"+PAC_OPERATION, "PAC_BOOTSTRAP_METADATA_B0", "{broken", false),
+                new BadPacCandidate("pac-b0:"+PAC_OPERATION, "PAC_BOOTSTRAP_METADATA_B0", valid.replace(PAC_OPERATION,
+                        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), false),
+                new BadPacCandidate("pac-b0:"+PAC_OPERATION, "PAC_BOOTSTRAP_METADATA_B0", valid.replace(PAC_DIGEST,
+                        "A".repeat(64)), false),
+                new BadPacCandidate("pac-b0:"+PAC_OPERATION, "PAC_BOOTSTRAP_METADATA_B0", null, false),
+                new BadPacCandidate("pac-b0:"+PAC_OPERATION, "PAC_BOOTSTRAP_METADATA_B0",
+                        valid.substring(0,valid.length()-1)+",\"note\":\""+"雪".repeat(349_526)+"\"}", false),
+                new BadPacCandidate("pac-b0:"+PAC_OPERATION, "PAC_BOOTSTRAP_METADATA_B0",
+                        valid.substring(0,valid.length()-1)+",\"nested\":"+"[".repeat(16)+"0"+"]".repeat(16)+"}", false),
+                new BadPacCandidate("pac-b0:"+PAC_OPERATION, "PAC_BOOTSTRAP_METADATA_B0",
+                        valid.substring(0,valid.length()-1)+",\"nested\":{\"x\":1,\"x\":2}}", false),
+                new BadPacCandidate("pac-b0:"+PAC_OPERATION, "PAC_BOOTSTRAP_METADATA_B0",
+                        valid.substring(0,valid.length()-1)+",\"note\":\""+"😀".repeat(524_289)+"\"}", false));
+        for (BadPacCandidate bad : candidates) {
+            withPacSchema(fixture -> {
+                insertLegacyReceipt(fixture.source(), 1, "pac-b0:bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                        "PAC_BOOTSTRAP_METADATA_B0", valid.replace(PAC_OPERATION, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"), false);
+                insertLegacyReceipt(fixture.source(), 2, bad.key(), bad.type(), bad.receipt(), bad.deleted());
+                assertThatThrownBy(() -> runner().run(List.of(new EgonColaDdlTargetBO("pac", fixture.schema(),
+                        RoleEnum.MASTER_DATA, fixture.source(), fixture.current(), routeFingerprint()))))
+                        .isInstanceOf(IllegalStateException.class).hasMessageContaining("DDL_TARGET_FAILED");
+                try (var connection = fixture.source().getConnection(); var query = connection.createStatement();
+                     var rows = query.executeQuery("SELECT to_regclass('"+fixture.schema()+".ddc_metadata_bootstrap_receipt_t0') IS NULL, "
+                             + "NOT EXISTS(SELECT 1 FROM ddl_history WHERE version='20261123_001'), "
+                             + "(SELECT count(*) FROM ddc_operation_log_t0)")) {
+                    assertThat(rows.next()).isTrue();
+                    assertThat(rows.getBoolean(1)).isTrue();
+                    assertThat(rows.getBoolean(2)).isTrue();
+                    assertThat(rows.getInt(3)).isEqualTo(2);
+                }
+            });
+        }
+    }
+
+    private static void withPacSchema(PacFixtureCheck check) throws Exception {
+        var current = manifest();
+        assertThat(current.scripts().getLast().version()).isEqualTo("20261123_001");
+        var previous = new EgonColaDdlManifestBO(current.family(), current.scripts().subList(0,current.scripts().size()-1),
+                current.freshBaselineVersion());
+        try (OwnedDatabase database = freshDatabase()) {
+            var source = database.source();
+            runner().run(List.of(new EgonColaDdlTargetBO("pac","public",RoleEnum.MASTER_DATA,source,previous,routeFingerprint())));
+            check.verify(new PacFixture(source,"public",previous,current));
+        }
+    }
+
+    private static void insertLegacyReceipt(DataSource source, long id, String key, String type, String receipt,
+                                            boolean deleted) throws SQLException {
+        try (var connection = source.getConnection(); var statement = connection.prepareStatement(
+                "INSERT INTO ddc_operation_log_t0(id,tenant_id,create_user_id,create_time,update_user_id,update_time,version,"
+                        + "public_id,operation_type,operation_content,created_at,deleted_at) "
+                        + "VALUES (?,20,'fixture',clock_timestamp(),'fixture',clock_timestamp(),0,?,?,?,"
+                        + "timestamp '2026-10-25 23:59:59.123456',?)")) {
+            statement.setLong(1,id); statement.setString(2,key); statement.setString(3,type); statement.setString(4,receipt);
+            statement.setObject(5,deleted ? java.time.LocalDateTime.parse("2026-10-26T00:00:00") : null);
+            statement.executeUpdate();
+        }
+    }
+
+    private static String resumeBootstrap(Connection connection, String schema, String original) throws Exception {
+        return initializeBootstrap(connection,schema,PAC_OPERATION,original);
+    }
+
+    private static String initializeBootstrap(Connection connection,String schema,String operation,String expected) throws Exception {
+        String json = """
+                {"schemaVersion":1,"operationId":"%s","target":{"catalogScopeId":"10","tenantId":"20",
+                "businessCode":"xingyuan","applicationCode":"tianshu","namespaceCode":"default","environment":"test"},
+                "connectionFile":"/tmp/unused-pac-it.json","actorId":"operator-1","ddcBusinessId":"ddc-business-1",
+                "ddcApplicationId":"ddc-app-1","ids":{"business":"101","environment":"102","application":"103",
+                "namespace":"104","binding":"105","metadataScope":"106","audit":"107"},
+                "sourceImportGrants":[{"id":"108","producerId":"tianshu-java","issuer":"https://idp.example/tenant",
+                "clientId":"rbac-publisher","resourceUri":"https://metadata.example"}]}
+                """.formatted(operation);
+        Class<?> cli = Class.forName("top.egon.cola.component.tianshu.admin.bootstrap.DdcPermissionMetadataBootstrapCli");
+        var parse = cli.getDeclaredMethod("readCommand",byte[].class); parse.setAccessible(true);
+        Object command = parse.invoke(null,(Object)json.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        Class<?> repository = Class.forName("top.egon.cola.component.tianshu.admin.bootstrap.DdcPermissionMetadataBootstrapRepository");
+        var constructor = repository.getDeclaredConstructor(String.class,Clock.class); constructor.setAccessible(true);
+        var initialize = repository.getDeclaredMethod("initialize",Connection.class,command.getClass(),String.class,String.class);
+        initialize.setAccessible(true);
+        return (String)initialize.invoke(constructor.newInstance(schema,Clock.systemUTC()),connection,command,PAC_DIGEST,expected);
+    }
+
+    private record PacFixture(PGSimpleDataSource source,String schema,EgonColaDdlManifestBO previous,EgonColaDdlManifestBO current) { }
+    private record BadPacCandidate(String key,String type,String receipt,boolean deleted) { }
+    @FunctionalInterface private interface PacFixtureCheck { void verify(PacFixture fixture) throws Exception; }
 
     @AfterAll
     static void closeValidatorFactory() {
@@ -42,18 +195,9 @@ class DdcTianshuDdlIT {
 
     @Test
     void blankSchemaInitializesAndReentersWhileDriftIsRejectedAndUnknownCommitIsVerified() throws Exception {
-        Assumptions.assumeTrue("true".equalsIgnoreCase(System.getenv("TIANSHU_AI_PERSISTENCE_IT_ENABLED")),
-                "requires an explicitly configured disposable PostgreSQL DDL target");
-        PGSimpleDataSource dataSource = dataSource();
-        String schema = "tianshu_it_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
-        boolean schemaCreated = false;
-        try (Connection connection = dataSource.getConnection(); var statement = connection.createStatement()) {
-            statement.execute("CREATE SCHEMA \"" + schema + "\"");
-            schemaCreated = true;
-        }
-
-        try {
-            dataSource.setCurrentSchema(schema);
+        try (OwnedDatabase database = freshDatabase()) {
+            PGSimpleDataSource dataSource = database.source();
+            String schema = "public";
             EgonColaDdlManifestBO manifest = manifest();
             int expectedSteps = manifest.scripts().size() - manifest.startingIndex(null);
             EgonColaDdlTargetBO target = new EgonColaDdlTargetBO("tianshu-it", schema, RoleEnum.MASTER_DATA,
@@ -83,36 +227,39 @@ class DdcTianshuDdlIT {
                 update.setString(2, lastScript.path());
                 assertThat(update.executeUpdate()).isEqualTo(1);
             }
-        } finally {
-            dataSource.setCurrentSchema("public");
-            if (schemaCreated) {
-                try (Connection connection = dataSource.getConnection(); var statement = connection.createStatement()) {
-                    statement.execute("DROP SCHEMA \"" + schema + "\" CASCADE");
-                }
-            }
         }
     }
 
     @Test
     void physicalPrimaryReadinessRejectsSameNameWeakenedBootTenantConstraint() throws Exception {
-        String url = System.getenv("TIANSHU_CLOUD_DELIVERY_READINESS_JDBC_URL");
-        Assumptions.assumeTrue(url != null && !url.isBlank(), "requires a dedicated readiness database");
-        assertThat(url).matches("jdbc:postgresql://127\\.0\\.0\\.1:[0-9]{1,5}/tianshu_step18_readiness");
-        var primary = new PGSimpleDataSource();
-        primary.setURL(url);
-        primary.setUser(requiredEnvironment("TIANSHU_AI_PERSISTENCE_IT_DDL_DB_USERNAME"));
-        primary.setPassword(requiredEnvironment("TIANSHU_AI_PERSISTENCE_IT_DDL_DB_PASSWORD"));
-        try (Connection connection = primary.getConnection(); var statement = connection.createStatement();
-             var rows = statement.executeQuery("SELECT current_database(), inet_server_addr()::text")) {
-            assertThat(rows.next()).isTrue();
-            assertThat(rows.getString(1)).isEqualTo("tianshu_step18_readiness");
-            assertThat(rows.getString(2)).startsWith("127.0.0.1");
-        }
+        try (OwnedDatabase database = freshDatabase()) {
+        PGSimpleDataSource primary = database.source();
         EgonColaDdlManifestBO manifest = manifest();
         String fingerprint = routeFingerprint();
         runner().run(List.of(new EgonColaDdlTargetBO("tianshu-it", "public", RoleEnum.MASTER_DATA,
                 primary, manifest, fingerprint)));
         DdcDatabaseReadyValidator.validateTianshuSchema(primary, fingerprint, manifest);
+        try (var connection = primary.getConnection(); var statement = connection.createStatement()) {
+            statement.execute("ALTER TABLE ddc_metadata_bootstrap_receipt_t0 RENAME CONSTRAINT "
+                    + "ck_metadata_bootstrap_receipt_length TO fixture_original_length");
+            try {
+                for (String weak : List.of("char_length(receipt)<=1048576", "NOT(char_length(receipt) BETWEEN 1 AND 1048576)",
+                        "char_length(receipt)>=1048576 AND char_length(receipt)<=1")) {
+                    statement.execute("ALTER TABLE ddc_metadata_bootstrap_receipt_t0 ADD CONSTRAINT "
+                            + "ck_metadata_bootstrap_receipt_length CHECK("+weak+")");
+                    try {
+                        assertThatThrownBy(() -> DdcDatabaseReadyValidator.validateTianshuSchema(primary,fingerprint,manifest))
+                                .isInstanceOf(IllegalStateException.class).hasMessageContaining("TIANSHU_PAC_RECEIPT_CONSTRAINT_MISMATCH");
+                    } finally {
+                        statement.execute("ALTER TABLE ddc_metadata_bootstrap_receipt_t0 DROP CONSTRAINT ck_metadata_bootstrap_receipt_length");
+                    }
+                }
+            } finally {
+                statement.execute("ALTER TABLE ddc_metadata_bootstrap_receipt_t0 RENAME CONSTRAINT "
+                        + "fixture_original_length TO ck_metadata_bootstrap_receipt_length");
+            }
+        }
+        DdcDatabaseReadyValidator.validateTianshuSchema(primary,fingerprint,manifest);
 
         String rename = "ALTER TABLE public.ddc_config_boot_binding_t0 RENAME CONSTRAINT ";
         String table = "ALTER TABLE public.ddc_config_boot_binding_t0 ";
@@ -132,24 +279,19 @@ class DdcTianshuDdlIT {
             }
         }
         DdcDatabaseReadyValidator.validateTianshuSchema(primary, fingerprint, manifest);
+        }
     }
 
     @Test
-    void multiTargetRunResumesAfterSecondPrimaryRollsBackNewSqlAndItsHistory() throws Exception {
-        String port = System.getenv("TIANSHU_CLOUD_DELIVERY_MULTITARGET_PORT");
-        Assumptions.assumeTrue(port != null && !port.isBlank(), "requires two dedicated migration test databases");
-        assertThat(port).matches("[0-9]{1,5}");
-        var manifest = manifest();
-        var previous = new EgonColaDdlManifestBO(manifest.family(), manifest.scripts().subList(0, manifest.scripts().size() - 1),
-                manifest.freshBaselineVersion());
-        var first = ownedTarget(port, "tianshu_step18_ddl_a");
-        var second = ownedTarget(port, "tianshu_step18_ddl_b");
-        String schema = "tianshu_multi_" + UUID.randomUUID().toString().replace("-", "");
-        try (Connection a = first.getConnection(); var statementA = a.createStatement();
-             Connection b = second.getConnection(); var statementB = b.createStatement()) {
-            try {
-                statementA.execute("CREATE SCHEMA " + schema);
-                statementB.execute("CREATE SCHEMA " + schema);
+    void multiTargetRunResumesAfterSecondTargetRollsBackNewSqlAndItsHistory() throws Exception {
+        try (OwnedDatabase databaseA = freshDatabase(); OwnedDatabase databaseB = freshDatabase()) {
+            var manifest = manifest();
+            var previous = new EgonColaDdlManifestBO(manifest.family(), manifest.scripts().subList(0, manifest.scripts().size() - 1),
+                    manifest.freshBaselineVersion());
+            var first = databaseA.source();
+            var second = databaseB.source();
+            String schema = "public";
+            try (Connection a = first.getConnection(); Connection b = second.getConnection()) {
                 String fingerprint = routeFingerprint();
                 var oldFirst = new EgonColaDdlTargetBO("a", schema, RoleEnum.MASTER_DATA, first, previous, fingerprint);
                 var oldSecond = new EgonColaDdlTargetBO("b", schema, RoleEnum.MASTER_DATA, second, previous, fingerprint);
@@ -165,36 +307,40 @@ class DdcTianshuDdlIT {
                 var currentSecond = new EgonColaDdlTargetBO("b", schema, RoleEnum.MASTER_DATA, second, manifest, fingerprint);
                 assertThat(runner().run(List.of(currentFirst, currentSecond)))
                         .filteredOn(result -> result.status() == EgonColaDdlResult.StatusEnum.APPLIED)
-                        .singleElement().satisfies(result -> assertThat(result.version()).isEqualTo("20261117_001"));
+                        .singleElement().satisfies(result -> assertThat(result.version()).isEqualTo("20261123_001"));
                 assertLatestMigration(b, schema, true);
-            } finally {
-                try {
-                    statementB.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
-                } finally {
-                    statementA.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
-                }
             }
         }
     }
 
-    private static PGSimpleDataSource ownedTarget(String port, String database) throws SQLException {
-        var target = new PGSimpleDataSource();
-        target.setURL("jdbc:postgresql://127.0.0.1:" + port + '/' + database);
-        target.setUser(requiredEnvironment("TIANSHU_AI_PERSISTENCE_IT_DDL_DB_USERNAME"));
-        target.setPassword(requiredEnvironment("TIANSHU_AI_PERSISTENCE_IT_DDL_DB_PASSWORD"));
-        try (Connection connection = target.getConnection(); var statement = connection.createStatement();
-             var rows = statement.executeQuery("SELECT current_database(), inet_server_addr()::text")) {
-            assertThat(rows.next()).isTrue();
-            assertThat(rows.getString(1)).isEqualTo(database);
-            assertThat(rows.getString(2)).startsWith("127.0.0.1");
+    private static OwnedDatabase freshDatabase() throws Exception {
+        Assumptions.assumeTrue("true".equalsIgnoreCase(System.getenv("TIANSHU_AI_PERSISTENCE_IT_ENABLED")),
+                "requires an explicitly configured disposable PostgreSQL DDL target");
+        var admin = dataSource();
+        assertThat(admin.getServerNames()).containsExactly("127.0.0.1");
+        assertThat(admin.getDatabaseName()).isEqualTo("postgres");
+        String name = "tianshu_pac_it_"+UUID.randomUUID().toString().replace("-", "");
+        try (var connection = admin.getConnection(); var statement = connection.createStatement()) {
+            statement.execute("CREATE DATABASE "+name);
         }
-        return target;
+        var source = dataSource();
+        source.setDatabaseName(name);
+        source.setCurrentSchema("public");
+        return new OwnedDatabase(admin,source,name);
+    }
+
+    private record OwnedDatabase(PGSimpleDataSource admin,PGSimpleDataSource source,String name) implements AutoCloseable {
+        @Override public void close() throws SQLException {
+            try (var connection = admin.getConnection(); var statement = connection.createStatement()) {
+                statement.execute("DROP DATABASE "+name);
+            }
+        }
     }
 
     private static void assertLatestMigration(Connection connection, String schema, boolean applied) throws SQLException {
         try (var statement = connection.prepareStatement("SELECT to_regclass(?) IS NOT NULL, EXISTS (SELECT 1 FROM "
-                + schema + ".ddl_history WHERE version='20261117_001')")) {
-            statement.setString(1, schema + ".ddc_config_boot_binding_t0");
+                + schema + ".ddl_history WHERE version='20261123_001')")) {
+            statement.setString(1, schema + ".ddc_metadata_bootstrap_receipt_t0");
             try (var rows = statement.executeQuery()) {
                 assertThat(rows.next()).isTrue();
                 assertThat(rows.getBoolean(1)).isEqualTo(applied);

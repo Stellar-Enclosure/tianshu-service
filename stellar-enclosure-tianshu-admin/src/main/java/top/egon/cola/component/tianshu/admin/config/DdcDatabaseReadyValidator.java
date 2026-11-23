@@ -258,10 +258,73 @@ public class DdcDatabaseReadyValidator implements SmartInitializingSingleton {
             if (serviceObservation) {
                 DdcCloudDeliveryReadyValidator.validateServiceObservation(connection);
             }
+            if (manifest.scripts().stream().anyMatch(script -> "20261123_001".equals(script.version()))) {
+                validateBootstrapReceipt(connection);
+            }
             validateHistory(connection, manifest, routeFingerprint);
         } catch (SQLException failure) {
             throw new IllegalStateException("TIANSHU_DATABASE_SCHEMA_NOT_READY", failure);
         }
+    }
+
+    private static void validateBootstrapReceipt(Connection connection) throws SQLException {
+        String table = "ddc_metadata_bootstrap_receipt_t0";
+        Map<String, String> types = Map.of("tenant_id", "int8", "operation_id", "varchar", "command_digest", "bpchar",
+                "receipt", "text", "recorded_at", "timestamptz");
+        Set<String> actual = new LinkedHashSet<>();
+        try (var columns = connection.getMetaData().getColumns(null, "public", table, null)) {
+            while (columns.next()) {
+                String name = columns.getString("COLUMN_NAME");
+                actual.add(name);
+                if (!types.getOrDefault(name, "").equals(columns.getString("TYPE_NAME"))
+                        || columns.getInt("NULLABLE") != DatabaseMetaData.columnNoNulls
+                        || "operation_id".equals(name) && columns.getInt("COLUMN_SIZE") != 36
+                        || "command_digest".equals(name) && columns.getInt("COLUMN_SIZE") != 64
+                        || "recorded_at".equals(name) && columns.getInt("DECIMAL_DIGITS") != 6) {
+                    throw new IllegalStateException("TIANSHU_PAC_RECEIPT_COLUMN_MISMATCH: " + name);
+                }
+            }
+        }
+        if (!actual.equals(types.keySet())) throw new IllegalStateException("TIANSHU_PAC_RECEIPT_COLUMNS_MISSING");
+        Map<Short, String> primaryKey = new java.util.TreeMap<>();
+        try (var keys = connection.getMetaData().getPrimaryKeys(null, "public", table)) {
+            while (keys.next()) {
+                if (!"pk_tianshu_metadata_bootstrap_receipt".equals(keys.getString("PK_NAME"))) {
+                    throw new IllegalStateException("TIANSHU_PAC_RECEIPT_PRIMARY_KEY_MISMATCH");
+                }
+                primaryKey.put(keys.getShort("KEY_SEQ"), keys.getString("COLUMN_NAME"));
+            }
+        }
+        if (!List.copyOf(primaryKey.values()).equals(List.of("tenant_id", "operation_id"))) {
+            throw new IllegalStateException("TIANSHU_PAC_RECEIPT_PRIMARY_KEY_MISMATCH");
+        }
+        Map<String, String> checks = new java.util.HashMap<>();
+        try (var statement = connection.prepareStatement("SELECT c.conname, pg_catalog.pg_get_constraintdef(c.oid) "
+                + "FROM pg_catalog.pg_constraint c JOIN pg_catalog.pg_class t ON t.oid=c.conrelid "
+                + "JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname='public' AND t.relname=?")) {
+            statement.setString(1, table);
+            try (var rows = statement.executeQuery()) {
+                while (rows.next()) checks.put(rows.getString(1), rows.getString(2).toLowerCase(java.util.Locale.ROOT));
+            }
+        }
+        String tenant = normalizedReceiptCheck(checks, "ck_metadata_bootstrap_receipt_tenant");
+        String operation = normalizedReceiptCheck(checks, "ck_metadata_bootstrap_receipt_operation");
+        String digest = normalizedReceiptCheck(checks, "ck_metadata_bootstrap_receipt_digest");
+        String length = normalizedReceiptCheck(checks, "ck_metadata_bootstrap_receipt_length");
+        String utf16Length = "char_lengthreceipt+char_lengthregexp_replacereceipt,'["
+                + Character.toString(1) + "-" + Character.toString(0xffff) + "]','','g'";
+        if (!tenant.equals("checktenant_id>0")
+                || !operation.equals("checkoperation_id~'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'")
+                || !digest.equals("checkcommand_digest~'^[0-9a-f]{64}$'")
+                || !length.equals("check" + utf16Length + ">=1and" + utf16Length + "<=1048576")) {
+            throw new IllegalStateException("TIANSHU_PAC_RECEIPT_CONSTRAINT_MISMATCH");
+        }
+    }
+
+    private static String normalizedReceiptCheck(Map<String, String> checks, String name) {
+        String value = checks.get(name);
+        if (value == null) throw new IllegalStateException("TIANSHU_PAC_RECEIPT_CONSTRAINT_MISSING: " + name);
+        return value.replaceAll("\\s+", "").replace("(", "").replace(")", "").replace("::text", "");
     }
 
     private EgonColaDdlManifestBO loadTianshuManifest() {

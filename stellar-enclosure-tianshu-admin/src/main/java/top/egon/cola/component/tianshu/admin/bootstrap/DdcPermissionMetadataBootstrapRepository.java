@@ -1,6 +1,7 @@
 package top.egon.cola.component.tianshu.admin.bootstrap;
 
 import top.egon.cola.platform.tianquan.jianshen.contract.permission.CanonicalJson;
+import lombok.extern.slf4j.Slf4j;
 
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -16,9 +17,10 @@ import java.util.Map;
 import java.util.Set;
 
 /** Privileged, explicit B0 transaction against the current single-primary t0 topology. Never registered as a Spring bean. */
+@Slf4j
 final class DdcPermissionMetadataBootstrapRepository {
     private static final Set<String> TABLES = Set.of("ddc_biz", "ddc_env", "ddc_app", "ddc_namespace", "ddc_namespace_env_app",
-            "ddc_metadata_scope", "ddc_source_import_grant", "ddc_operation_log");
+            "ddc_metadata_scope", "ddc_source_import_grant", "ddc_metadata_bootstrap_receipt");
     private final String schema;
     private final Clock clock;
 
@@ -72,12 +74,15 @@ final class DdcPermissionMetadataBootstrapRepository {
                         Map.of(), false, now);
             }
             String result = result(command, digest, now);
-            Map<String, Object> audit = new LinkedHashMap<>();
-            audit.put("public_id", "pac-b0:" + command.operationId()); audit.put("operation_type", "PAC_BOOTSTRAP_METADATA_B0");
-            audit.put("operator", command.actorId()); audit.put("operation_content", result); audit.put("created_at", LocalDateTime.ofInstant(now, ZoneOffset.UTC));
-            audit.put("biz_code", target.businessCode()); audit.put("app_code", target.applicationCode());
-            audit.put("env", target.environment()); audit.put("namespace", target.namespaceCode());
-            insert(connection, command, "ddc_operation_log", ids.audit(), audit, now);
+            try (var statement = connection.prepareStatement("INSERT INTO " + table("ddc_metadata_bootstrap_receipt")
+                    + " (tenant_id, operation_id, command_digest, receipt, recorded_at) VALUES (?,?,?,?,?)")) {
+                statement.setLong(1, number(target.tenantId()));
+                statement.setString(2, command.operationId());
+                statement.setString(3, digest);
+                statement.setString(4, result);
+                statement.setObject(5, now.atOffset(ZoneOffset.UTC));
+                if (statement.executeUpdate() != 1) conflict();
+            }
             connection.commit();
             return result;
         } catch (SQLException | RuntimeException failure) {
@@ -87,14 +92,17 @@ final class DdcPermissionMetadataBootstrapRepository {
     }
 
     private String receipt(Connection connection, DdcPermissionMetadataBootstrapCommand command) throws SQLException {
-        try (var statement = connection.prepareStatement("SELECT operation_type, operation_content, deleted_at FROM " + table("ddc_operation_log")
-                + " WHERE tenant_id=? AND public_id=? FOR UPDATE")) {
-            statement.setLong(1, number(command.target().tenantId())); statement.setString(2, "pac-b0:" + command.operationId());
+        try (var statement = connection.prepareStatement("SELECT command_digest, receipt FROM " + table("ddc_metadata_bootstrap_receipt")
+                + " WHERE tenant_id=? AND operation_id=? FOR UPDATE")) {
+            statement.setLong(1, number(command.target().tenantId())); statement.setString(2, command.operationId());
             try (var rows = statement.executeQuery()) {
                 if (!rows.next()) return null;
-                if (!"PAC_BOOTSTRAP_METADATA_B0".equals(rows.getString(1)) || rows.getObject(3) != null) conflict();
+                String digest = rows.getString(1);
                 String result = rows.getString(2);
                 if (result == null || result.length() > 1024 * 1024 || rows.next()) conflict();
+                var parsed = DdcPermissionMetadataBootstrapCli.object(result);
+                if (digest == null || !digest.matches("[0-9a-f]{64}") || !digest.equals(parsed.get("commandDigest"))
+                        || !command.operationId().equals(parsed.get("operationId"))) conflict();
                 return result;
             }
         }

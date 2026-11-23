@@ -123,7 +123,11 @@ class DdcTianshuDdlContractTest {
 
         assertThat(manifest.path("family").asText()).isEqualTo("tianshu");
         assertThat(typedManifest.family()).isEqualTo("tianshu");
-        assertThat(manifest.path("scripts").size()).isEqualTo(11);
+        assertThat(manifest.path("scripts").size()).isEqualTo(12);
+        JsonNode receipt = manifest.path("scripts").get(11);
+        assertThat(receipt.path("version").asText()).isEqualTo("20261123_001");
+        assertThat(receipt.path("path").asText()).isEqualTo("db/egon-mp/V20261123_001__tianshu_metadata_bootstrap_receipt.sql");
+        assertThat(receipt.path("sha256").asText()).isEqualTo(sha256(requiredResource(receipt.path("path").asText())));
         JsonNode v001 = manifest.path("scripts").get(0);
         JsonNode v002 = manifest.path("scripts").get(1);
         JsonNode v003 = manifest.path("scripts").get(2);
@@ -165,7 +169,7 @@ class DdcTianshuDdlContractTest {
         assertThat(v010.path("sha256").asText()).isEqualTo(sha256(requiredResource(ROLLOUT_SQL)));
         assertThat(typedManifest.scripts().subList(typedManifest.startingIndex(null), typedManifest.scripts().size()))
                 .extracting(EgonColaDdlManifestBO.ScriptBO::version).containsExactly("20261018_001", "20261022_001",
-                        "20261023_001", "20261028_001", "20261116_001", "20261117_001", "20261118_001", "20261119_001");
+                        "20261023_001", "20261028_001", "20261116_001", "20261117_001", "20261118_001", "20261119_001", "20261123_001");
         JsonNode service = manifest.path("scripts").get(10);
         assertThat(service.path("version").asText()).isEqualTo("20261119_001");
         assertThat(service.path("path").asText()).isEqualTo("db/egon-mp/V20261119_001__tianshu_service_observation.sql");
@@ -283,7 +287,7 @@ class DdcTianshuDdlContractTest {
 
         JsonNode manifest = OBJECT_MAPPER.readTree(requiredResource(OUTBOX_MANIFEST));
         assertThat(manifest.path("family").asText()).isEqualTo("component-outbox");
-        assertThat(manifest.path("scripts").size()).isEqualTo(2);
+        assertThat(manifest.path("scripts").size()).isEqualTo(3);
         JsonNode script = manifest.path("scripts").get(0);
         assertThat(script.path("version").asText()).isEqualTo("20260924_001");
         String path = script.path("path").asText();
@@ -300,6 +304,10 @@ class DdcTianshuDdlContractTest {
         assertThat(shardScript.path("sha256").asText()).isEqualTo(sha256(shardSql));
         assertThat(new String(shardSql, java.nio.charset.StandardCharsets.UTF_8).toLowerCase(java.util.Locale.ROOT))
                 .contains("add column shard_slot", "ck_outbox_message_shard_identity", "ck_outbox_key_shard_identity");
+        JsonNode coordination = manifest.path("scripts").get(2);
+        assertThat(coordination.path("version").asText()).isEqualTo("20261122_001");
+        assertThat(coordination.path("sha256").asText())
+                .isEqualTo(sha256(requiredResource(coordination.path("path").asText())));
     }
 
     @Test
