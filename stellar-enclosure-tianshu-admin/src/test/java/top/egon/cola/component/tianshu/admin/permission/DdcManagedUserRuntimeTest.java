@@ -139,7 +139,8 @@ class DdcManagedUserRuntimeTest {
                 count++;
             }
         }
-        assertThat(count).isEqualTo(88);
+        // The observed baseline has 120 protected methods. Audit list and detail add two.
+        assertThat(count).isEqualTo(122);
         verifyNoInteractions(fixture.loader());
     }
 
@@ -153,6 +154,24 @@ class DdcManagedUserRuntimeTest {
         authenticate(snapshot(fixture.manifest(), Set.of(DdcPermissionCodes.READ), ARTIFACT), Set.of(DdcPermissionCodes.WRITE));
         when(fixture.loader().load(USER)).thenReturn(snapshot(fixture.manifest(), Set.of(DdcPermissionCodes.READ), ARTIFACT));
         assertThatThrownBy(() -> fixture.execution().require("tianshu.api.config.list")).isInstanceOf(AuthorizationDeniedException.class);
+    }
+
+    @Test void operationLogPermissionsRemainIndependentWhileUsingTheExistingReadScope() throws Exception {
+        String page = "tianshu.api.operationLogs.page";
+        String detail = "tianshu.api.operationLogs.detail";
+        var scoped = Set.of(DdcPermissionCodes.READ);
+
+        var general = fixture(Set.of(DdcPermissionCodes.READ), scoped);
+        assertThatThrownBy(() -> general.execution().require(page)).isInstanceOf(AuthorizationDeniedException.class);
+
+        var list = fixture(Set.of(DdcPermissionCodes.READ, DdcPermissionCodes.OPERATION_LOG_READ), scoped);
+        assertThat(list.execution().require(page).permissions()).contains(DdcPermissionCodes.OPERATION_LOG_READ);
+        assertThatThrownBy(() -> list.execution().require(detail)).isInstanceOf(AuthorizationDeniedException.class);
+
+        var both = fixture(Set.of(DdcPermissionCodes.READ, DdcPermissionCodes.OPERATION_LOG_READ,
+                DdcPermissionCodes.OPERATION_LOG_DETAIL), scoped);
+        assertThat(both.execution().require(detail).permissions())
+                .contains(DdcPermissionCodes.OPERATION_LOG_READ, DdcPermissionCodes.OPERATION_LOG_DETAIL);
     }
 
     @Test void executingArtifactMustMatchTheCurrentActivation() throws Exception {
@@ -357,6 +376,15 @@ class DdcManagedUserRuntimeTest {
         Map<String, Set<String>> mapping = new HashMap<>();
         manifest.permissionDefinitions().forEach(value -> mapping.put(value.code(), Set.of(value.code())));
         mapping.put(DdcPermissionCodes.AI_PUBLISH, Set.of(DdcPermissionCodes.AI_WRITE));
+        var shared = new org.springframework.beans.factory.config.YamlPropertiesFactoryBean();
+        shared.setResources(new org.springframework.core.io.ClassPathResource("egon-tianshu-persistence.yml"));
+        var configured = Objects.requireNonNull(shared.getObject());
+        String scopePrefix = "egon.cola.platform.tianquan.jianshen.user-scope-policy.permission-scopes.";
+        for (String audit : List.of(DdcPermissionCodes.OPERATION_LOG_READ, DdcPermissionCodes.OPERATION_LOG_DETAIL)) {
+            String scope = configured.getProperty(scopePrefix + audit + "[0]");
+            assertThat(scope).as("OAuth scope for %s", audit).isEqualTo(DdcPermissionCodes.READ);
+            mapping.put(audit, Set.of(scope));
+        }
         policy.setPermissionScopes(mapping);
         var loader = mock(SingleFlightSnapshotLoader.class);
         var snapshot = snapshot(manifest, permissions, ARTIFACT);

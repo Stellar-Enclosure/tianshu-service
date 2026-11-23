@@ -778,6 +778,9 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.P
 @PermissionMessage(pageCode = "common", key = "nav.namespaces", defaultLocale = "zh-CN",
         defaults = {@LocalizedText(locale = "en-US", text = "Namespaces"),
                 @LocalizedText(locale = "zh-CN", text = "命名空间")})
+@PermissionMessage(pageCode = "common", key = "nav.operationLogs", defaultLocale = "zh-CN",
+        defaults = {@LocalizedText(locale = "en-US", text = "Operation logs"),
+                @LocalizedText(locale = "zh-CN", text = "操作日志")})
 @PermissionMessage(pageCode = "common", key = "nav.prompts", defaultLocale = "zh-CN",
         defaults = {@LocalizedText(locale = "en-US", text = "Prompts"),
                 @LocalizedText(locale = "zh-CN", text = "Prompt 管理")})

@@ -165,6 +165,8 @@ public enum DdcErrorStatus implements ErrorStatus {
             "TIANSHU_NAMESPACE_BINDING_NOT_FOUND",
             "namespace environment app binding not found"
     ),
+    /** 审计查询目标未启用或暂不可用。 The operation-log query target is disabled or unavailable. */
+    OPERATION_LOG_UNAVAILABLE(56998, "TIANSHU_OPERATION_LOG_UNAVAILABLE", "operation log unavailable"),
     /**
      * Tianshu 内部处理发生未归类故障。 An unclassified internal Tianshu processing failure occurred.
      */

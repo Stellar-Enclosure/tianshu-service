@@ -15,6 +15,7 @@ public final class DdcAdminMessageSources {
             new SourcePage("tianshu.registry", "服务注册目录", DdcTianshuRegistryMessages.class),
             new SourcePage("tianshu.instances", "配置客户端实例", DdcTianshuInstancesMessages.class),
             new SourcePage("tianshu.publishTasks", "发布任务", DdcTianshuPublishTasksMessages.class),
+            new SourcePage("tianshu.operationLogs", "操作日志", DdcTianshuOperationLogsMessages.class),
             new SourcePage("tianshu.cache", "缓存管理", DdcTianshuCacheMessages.class),
             new SourcePage("tianshu.configs", "配置管理", DdcTianshuConfigsMessages.class),
             new SourcePage("tianshu.ai.resources", "AI资源管理", DdcTianshuAiResourcesMessages.class),

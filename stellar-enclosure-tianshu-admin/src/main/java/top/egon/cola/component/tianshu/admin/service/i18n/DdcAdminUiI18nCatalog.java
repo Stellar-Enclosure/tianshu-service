@@ -24,7 +24,7 @@ public class DdcAdminUiI18nCatalog {
     public static final String DEFAULT_LOCALE = "zh-CN";
     public static final List<String> PAGE_CODES = List.of("common", "tianshu.auth", "tianshu.bizs", "tianshu.envs",
             "tianshu.apps", "tianshu.namespaces", "tianshu.bindings", "tianshu.registry", "tianshu.instances",
-            "tianshu.publishTasks", "tianshu.cache", "tianshu.configs", "tianshu.ai.resources", "tianshu.ai.editor", "tianshu.i18n");
+            "tianshu.publishTasks", "tianshu.operationLogs", "tianshu.cache", "tianshu.configs", "tianshu.ai.resources", "tianshu.ai.editor", "tianshu.i18n");
 
     private final DdcI18nValidation validation;
     private final Map<String, Page> pages;

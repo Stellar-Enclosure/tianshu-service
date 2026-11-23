@@ -138,6 +138,55 @@ class PermissionProducerCoverageTest {
     }
 
     @Test
+    void auditApiAndEveryReachableAuditFieldAreExported() throws Exception {
+        var resources = new TreeMap<String, PermissionManifest.ResourceDefinition>();
+        var definitions = new TreeSet<String>();
+        var labels = new TreeSet<String>();
+        for (var fragment : fragments()) {
+            fragment.resources().forEach(resource -> assertThat(resources.put(resource.key(), resource)).isNull());
+            fragment.permissionDefinitions().forEach(definition -> definitions.add(definition.code()));
+            fragment.messages().forEach(message -> labels.add(message.pageCode() + ":" + message.key()));
+        }
+        assertThat(definitions.stream().filter(code -> code.startsWith("TIANSHU_OPERATION_LOG_")))
+                .containsExactlyInAnyOrder("TIANSHU_OPERATION_LOG_READ", "TIANSHU_OPERATION_LOG_DETAIL");
+
+        var controller = Class.forName(ROOT + "admin.controller.audit.DdcOperationLogController");
+        var mappings = new Mappings();
+        var fields = new TreeSet<String>();
+        var external = new TreeSet<String>();
+        var paths = new TreeMap<String, String>();
+        for (var method : controller.getDeclaredMethods()) {
+            RequestMappingInfo mapping = mappings.mapping(method, controller);
+            if (mapping == null) {
+                continue;
+            }
+            var declaration = method.getAnnotation(PermissionResource.class);
+            assertThat(declaration).isNotNull();
+            var exported = resources.get(declaration.key());
+            assertThat(exported).isNotNull();
+            assertThat(exported.type()).isEqualTo(ResourceType.API);
+            assertThat(strings(exported.target().get("methods"))).containsExactlyInAnyOrder("GET", "HEAD");
+            assertThat(strings(exported.target().get("paths"))).containsExactlyElementsOf(mapping.getPatternValues());
+            assertThat(labels).contains(exported.i18n().pageCode() + ":" + exported.i18n().labelKey());
+            assertThat(mapping.getPatternValues()).hasSize(1);
+            paths.put(declaration.key(), mapping.getPatternValues().iterator().next());
+            walk(method.getGenericReturnType(), true, resources, fields, external, new HashSet<>());
+            for (Type parameter : method.getGenericParameterTypes()) {
+                walk(parameter, false, resources, fields, external, new HashSet<>());
+            }
+        }
+        assertThat(paths).containsExactlyInAnyOrderEntriesOf(Map.of(
+                "tianshu.api.operationLogs.detail", "/api/v1/tianshu/operation-logs/{eventId}",
+                "tianshu.api.operationLogs.page", "/api/v1/tianshu/operation-logs/page"));
+        assertThat(fields).isNotEmpty()
+                .allSatisfy(key -> assertThat(labels).contains(resources.get(key).i18n().pageCode() + ":"
+                        + resources.get(key).i18n().labelKey()));
+        assertThat(resources.keySet().stream().filter(key -> key.startsWith("tianshu.field.DdcOperationLog")))
+                .containsExactlyInAnyOrderElementsOf(fields);
+        assertThat(external).containsExactly("top.egon.cola.component.common.core.pojo.ResultRecord");
+    }
+
+    @Test
     void sourceLabelsAndConsoleDefaultsComeFromTheSameManifestDeclarations() throws Exception {
         List<PermissionManifest> fragments = fragments();
         Map<String, PermissionManifest.Message> messages = new TreeMap<>();

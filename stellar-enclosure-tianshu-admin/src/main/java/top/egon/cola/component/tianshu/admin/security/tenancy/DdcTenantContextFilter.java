@@ -103,7 +103,8 @@ public class DdcTenantContextFilter extends OncePerRequestFilter {
 
     private boolean requiresExpectedTenant(String path) {
         return path != null && (path.startsWith("/api/v1/tianshu/ai/")
-                || path.startsWith("/api/v1/tianshu/i18n/"));
+                || path.startsWith("/api/v1/tianshu/i18n/")
+                || path.startsWith("/api/v1/tianshu/operation-logs/"));
     }
 
     private boolean hasControlCharacter(String value) {

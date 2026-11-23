@@ -1,5 +1,12 @@
 egon:
   cola:
+    platform:
+      tianquan:
+        jianshen:
+          user-scope-policy:
+            permission-scopes:
+              "TIANSHU_OPERATION_LOG_READ": ["TIANSHU_READ"]
+              "TIANSHU_OPERATION_LOG_DETAIL": ["TIANSHU_READ"]
     component:
       mybatis-plus:
         enabled: true

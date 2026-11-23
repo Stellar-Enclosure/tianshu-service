@@ -17,6 +17,16 @@ class DdcAdminUiI18nCatalogTest {
         }
     }
 
+    @Test void operationLogsPublishBothLocalesAndTheConsoleNavigationLabel() {
+        var catalog = new DdcAdminUiI18nCatalog(validation);
+        assertThat(catalog.messages("tianshu.operationLogs", "zh-CN", false))
+                .containsEntry("title", "操作日志").containsKeys("api.page", "api.detail", "error.unavailable");
+        assertThat(catalog.messages("tianshu.operationLogs", "en-US", false))
+                .containsEntry("title", "Operation logs").containsKeys("api.page", "api.detail", "error.unavailable");
+        assertThat(catalog.messages("common", "zh-CN", false)).containsEntry("nav.operationLogs", "操作日志");
+        assertThat(catalog.messages("common", "en-US", false)).containsEntry("nav.operationLogs", "Operation logs");
+    }
+
     @Test void publicBundleContainsOnlyAuthMessagesAndDoesNotRequireTenantContext() {
         org.slf4j.MDC.clear();
         var catalog = new DdcAdminUiI18nCatalog(validation);

@@ -1,6 +1,7 @@
 package top.egon.cola.component.tianshu.admin.security.management;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import top.egon.cola.component.tianshu.admin.permission.DdcPermissionCodes;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -94,6 +95,10 @@ public class DdcAdminSecurityConfiguration {
                         .access(scopeAndPermission(DdcAdminCapability.WRITE))
                         .requestMatchers(HttpMethod.PUT, "/api/v1/tianshu/i18n/pages/*/draft")
                         .access(scopeAndPermission(DdcAdminCapability.WRITE))
+                        .requestMatchers(HttpMethod.GET, "/api/v1/tianshu/operation-logs/page")
+                        .access(operationLogPermission(DdcPermissionCodes.OPERATION_LOG_READ))
+                        .requestMatchers(HttpMethod.GET, "/api/v1/tianshu/operation-logs/*")
+                        .access(operationLogPermission(DdcPermissionCodes.OPERATION_LOG_READ, DdcPermissionCodes.OPERATION_LOG_DETAIL))
                         .requestMatchers("/api/v1/tianshu/ai/**")
                         .authenticated()
                         .requestMatchers("/api/v1/tianshu/cache/**")
@@ -196,6 +201,19 @@ public class DdcAdminSecurityConfiguration {
                     boolean granted = current != null && current.isAuthenticated()
                             && current.getPrincipal() instanceof top.egon.cola.platform.tianquan.jianshen.starter.security.Rbac3UserDetails user
                             && user.hasPermission(capability.value());
+                    return new org.springframework.security.authorization.AuthorizationDecision(granted);
+                });
+    }
+
+    private org.springframework.security.authorization.AuthorizationManager<org.springframework.security.web.access.intercept.RequestAuthorizationContext>
+            operationLogPermission(String... permissions) {
+        return org.springframework.security.authorization.AuthorizationManagers.allOf(
+                org.springframework.security.authorization.AuthorityAuthorizationManager.hasAuthority("SCOPE_TIANSHU_READ"),
+                (authentication, context) -> {
+                    var current = authentication.get();
+                    boolean granted = current != null && current.isAuthenticated()
+                            && current.getPrincipal() instanceof top.egon.cola.platform.tianquan.jianshen.starter.security.Rbac3UserDetails user
+                            && java.util.Arrays.stream(permissions).allMatch(user::hasPermission);
                     return new org.springframework.security.authorization.AuthorizationDecision(granted);
                 });
     }

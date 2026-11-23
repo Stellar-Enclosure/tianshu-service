@@ -91,12 +91,24 @@ import top.egon.cola.platform.tianquan.jianshen.contract.permission.annotation.P
 @PermissionMessage(pageCode = "tianshu.permissions", key = "permission.si.index.manage", defaultLocale = "en-US",
         defaults = {@LocalizedText(locale = "en-US", text = "Manage SI semantic index"),
                 @LocalizedText(locale = "zh-CN", text = "管理超级智能语义向量索引")})
+@PermissionDefinition(code = DdcPermissionCodes.OPERATION_LOG_READ, meaning = "List operation logs for the authenticated tenant",
+        labelPage = "tianshu.permissions", labelKey = "permission.operationLog.read")
+@PermissionMessage(pageCode = "tianshu.permissions", key = "permission.operationLog.read", defaultLocale = "en-US",
+        defaults = {@LocalizedText(locale = "en-US", text = "List tenant operation logs"),
+                @LocalizedText(locale = "zh-CN", text = "查看租户操作日志列表")})
+@PermissionDefinition(code = DdcPermissionCodes.OPERATION_LOG_DETAIL, meaning = "Read detailed fields of tenant operation logs",
+        labelPage = "tianshu.permissions", labelKey = "permission.operationLog.detail")
+@PermissionMessage(pageCode = "tianshu.permissions", key = "permission.operationLog.detail", defaultLocale = "en-US",
+        defaults = {@LocalizedText(locale = "en-US", text = "Read tenant operation log details"),
+                @LocalizedText(locale = "zh-CN", text = "查看租户操作日志详情")})
 public final class DdcPermissionCodes {
 
     public static final String READ = "TIANSHU_READ";
     public static final String WRITE = "TIANSHU_WRITE";
     public static final String PUBLISH = "TIANSHU_PUBLISH";
     public static final String CACHE = "TIANSHU_CACHE";
+    public static final String OPERATION_LOG_READ = "TIANSHU_OPERATION_LOG_READ";
+    public static final String OPERATION_LOG_DETAIL = "TIANSHU_OPERATION_LOG_DETAIL";
     public static final String I18N_READ = "TIANSHU_I18N_READ";
     public static final String AI_READ = "TIANSHU_AI_READ";
     public static final String AI_WRITE = "TIANSHU_AI_WRITE";
